@@ -27,6 +27,10 @@ RESULTS_DIR = Path(__file__).resolve().parent / "results"
 # and the detector half has to follow it.
 DETECTOR_RESULTS_SUBDIR = "detectors"
 DETECTOR_RESULTS_DIR = RESULTS_DIR / DETECTOR_RESULTS_SUBDIR
+# Rendering-primitive comparisons (issue #5) get their own directory for the same
+# reason, and carry their side-by-side clips beside the JSON that names them.
+PRIMITIVE_RESULTS_SUBDIR = "primitives"
+PRIMITIVE_RESULTS_DIR = RESULTS_DIR / PRIMITIVE_RESULTS_SUBDIR
 
 SD_MODELS_DIR_ENV = "SD_MODELS_DIR"
 SD_ENGINES_DIR_ENV = "SD_ENGINES_DIR"

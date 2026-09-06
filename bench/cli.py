@@ -25,7 +25,14 @@ from bench.detectors import (
 )
 from bench.disk import DiskRecord, Usage, read_disk, require_free_space
 from bench.fingerprint import read_clock_lock
-from bench.paths import DETECTOR_RESULTS_SUBDIR, RESULTS_DIR, resolve_engines_dir
+from bench.paths import (
+    DETECTOR_RESULTS_SUBDIR,
+    PRIMITIVE_RESULTS_SUBDIR,
+    RESULTS_DIR,
+    resolve_engines_dir,
+)
+from bench.primitive_results import format_primitive_report, load_primitive_results
+from bench.primitives import CASES, CaseConfig
 from bench.scenarios import SCENARIOS, ScenarioConfig
 
 # The directory name `create_prefix()` in wrapper.py builds for a UNet engine, with
@@ -34,8 +41,11 @@ from bench.scenarios import SCENARIOS, ScenarioConfig
 ENGINE_DIR_TEMPLATE = ("{model}--lcm_lora-{lcm}--tiny_vae-{tiny}--max_batch-{batch}"
                        "--min_batch-{batch}--res-{width}x{height}--lora-none--mode-{mode}")
 
-# What the one positional slot can name: a diffusion scenario or a detector.
-Target = Union[ScenarioConfig, DetectorConfig]
+# What the one positional slot can name: a diffusion scenario, a detector, or a
+# rendering-primitive case (issue #5). One slot for all three - a run measures one
+# thing, the names cannot collide, and someone holding a name should not have to
+# know which of three flags it belongs behind.
+Target = Union[ScenarioConfig, DetectorConfig, CaseConfig]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -47,7 +57,8 @@ def build_parser() -> argparse.ArgumentParser:
                "happen, there is no record.",
     )
     parser.add_argument("scenario", nargs="?",
-                        help="scenario or detector name; --list shows them all")
+                        help="scenario, detector or primitive-case name; --list "
+                             "shows them all")
     parser.add_argument("--list", action="store_true",
                         help="list the scenarios and detectors, and exit")
     parser.add_argument("--marginal", action="store_true",
@@ -56,6 +67,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--detector-report", action="store_true",
                         help="report the measured detector table spec 8.1 carries, "
                              "from the committed detector results, and exit")
+    parser.add_argument("--primitive-report", action="store_true",
+                        help="report the rendering-primitive decision block spec 8.2 "
+                             "carries, from the committed comparisons, and exit")
     parser.add_argument("--reps", type=int, help="timed reps (default: the scenario's)")
     parser.add_argument("--warmup", type=int, dest="warmup_reps",
                         help="warmup reps before timing (default: the scenario's)")
@@ -96,6 +110,21 @@ def build_parser() -> argparse.ArgumentParser:
                           help="permit fetching detector weights and the evidence "
                                "photographs (hundreds of MB) into the shared models root")
 
+    primitive = parser.add_argument_group("rendering primitives (issue #5)")
+    primitive.add_argument("--frames", type=int, metavar="N",
+                           help="consecutive clip frames to render per primitive "
+                                "(default: the case's)")
+    primitive.add_argument("--write-track", action="store_true",
+                           help="regenerate this case's committed box track by "
+                                "running the detector over the clip, and exit. The "
+                                "track is committed so that two comparisons render "
+                                "the same regions")
+    primitive.add_argument("--no-clips", dest="write_clips", action="store_false",
+                           help="skip the side-by-side clips; the Gate's manual "
+                                "verification step needs them, so this is for "
+                                "development only")
+    primitive.set_defaults(write_clips=True)
+
     parser.add_argument("--allow-engine-build", action="store_true",
                         help="permit compiling a TensorRT engine that is not cached "
                              "(~5.1 GB and several minutes)")
@@ -134,8 +163,11 @@ def resolve_target(args: argparse.Namespace) -> Tuple[str, Target]:
         changes = _rep_overrides(args)
         detector = DETECTORS[args.scenario]
         return "detector", (detector.replace(**changes) if changes else detector)
+    if args.scenario in CASES:
+        case = CASES[args.scenario]
+        return "primitive", (case.replace(frames=args.frames) if args.frames else case)
     raise SystemExit(
-        f"bench: unknown scenario or detector {args.scenario!r}. "
+        f"bench: unknown scenario, detector or case {args.scenario!r}. "
         f"Run `python -m bench --list`."
     )
 
@@ -245,6 +277,11 @@ def report_detectors(results_dir: Path, out: TextIO = sys.stdout) -> None:
     out.write(format_detector_report(load_detector_results(results_dir)) + "\n")
 
 
+def report_primitives(results_dir: Path, out: TextIO = sys.stdout) -> None:
+    """The decision block spec 8.2 carries, from the committed comparisons."""
+    out.write(format_primitive_report(load_primitive_results(results_dir)) + "\n")
+
+
 def list_targets(out: TextIO = sys.stdout) -> None:
     """Both registries, one name per line - whatever the positional slot accepts."""
     for name, scenario in SCENARIOS.items():
@@ -254,6 +291,10 @@ def list_targets(out: TextIO = sys.stdout) -> None:
         vocabulary = "open vocabulary" if config.open_vocabulary else "80 COCO classes"
         out.write(f"{name}\tdetector\t{config.imgsz}x{config.imgsz}\t{vocabulary}"
                   f"\t{config.role}\n")
+    for name, case in CASES.items():
+        priority = "priority case" if case.priority else "eventual case"
+        out.write(f"{name}\tprimitive case\t{case.clip}\t{case.region}"
+                  f"\t{case.frames} frames\t{priority}\n")
 
 
 def run_detector_target(args: argparse.Namespace, config: DetectorConfig) -> int:
@@ -288,6 +329,39 @@ def run_detector_target(args: argparse.Namespace, config: DetectorConfig) -> int
     return 0
 
 
+def run_primitive_target(args: argparse.Namespace, case: CaseConfig) -> int:
+    """Compare both rendering primitives on one case (issue #5). Imported late.
+
+    The comparison renders through the one cached TensorRT engine both primitives
+    share, so it goes through the same engine-build guard a diffusion run does.
+    `--write-track` is the other half of the same target: it regenerates the
+    committed boxes, which is a detector run rather than a diffusion one, and it
+    exits before the engine guard because it needs no engine.
+    """
+    from bench.primitive_runner import ENGINE_SCENARIO  # no torch at import time
+
+    if args.write_track:
+        from bench.primitive_runner import build_track
+
+        build_track(case)
+        return 0
+
+    engine_build_guard(SCENARIOS[ENGINE_SCENARIO], allow_build=args.allow_engine_build)
+
+    from bench.primitive_runner import run_case  # imports torch, like run_scenario
+
+    run_case(
+        case,
+        cooldown=args.cooldown,
+        results_dir=args.results_dir / PRIMITIVE_RESULTS_SUBDIR,
+        threshold_c=args.cooldown_threshold,
+        cap_s=args.cooldown_cap,
+        poll_interval_s=args.cooldown_poll,
+        write_clips=args.write_clips,
+    )
+    return 0
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -301,6 +375,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.detector_report:
         report_detectors(args.results_dir / DETECTOR_RESULTS_SUBDIR)
         return 0
+    if args.primitive_report:
+        report_primitives(args.results_dir / PRIMITIVE_RESULTS_SUBDIR)
+        return 0
     if not args.scenario:
         parser.print_usage()
         print("bench: name a scenario or a detector, or pass --list", file=sys.stderr)
@@ -310,6 +387,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     clock_lock_guard(args.require_locked_clocks)
     if kind == "detector":
         return run_detector_target(args, target)
+    if kind == "primitive":
+        return run_primitive_target(args, target)
 
     scenario = target
     disk = engine_build_guard(scenario, allow_build=args.allow_engine_build)

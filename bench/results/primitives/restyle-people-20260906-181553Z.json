@@ -1,0 +1,1114 @@
+{
+  "arms": [
+    {
+      "calls_per_frame": 6.0,
+      "calls_total": 288,
+      "cannot_express": "A small crop, cheaply. Every region gets the engine's full 512x512 canvas whatever its source size, so a 45 px-wide region is upscaled 11x before it is diffused and the model invents the detail it finds there - the small-crop quality floor. Cost scales with the object count, so the number of objects becomes a frame-budget decision rather than a detection one; and each object is diffused with no sight of the rest of the frame, so nothing ties two objects' output together.",
+      "clip_file": "restyle-people-20260906-181553Z-crop.mp4",
+      "clock_normalization": {
+        "basis_mhz": 2100.0,
+        "basis_source": "clocks.max.sm",
+        "method": "ms_per_frame * time-weighted mean SM clock / basis clock",
+        "ms_per_frame": 461.2621,
+        "note": "Clocks were not locked (unlocked), so the raw figure carries this run's clock. This is a first-order estimate of the same work at 2100 MHz, not a measurement, and not a substitute for `nvidia-smi --lock-gpu-clocks` from an elevated shell.",
+        "regime": "unlocked",
+        "sampled_mean_sm_clock_mhz": 1040.2
+      },
+      "denoise": {
+        "kind": "restyle",
+        "met": true,
+        "points": [
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 5.6607,
+            "outside_change": 0.0,
+            "region_change": 6.4637,
+            "resample_change": 0.803,
+            "strength": 0.323323,
+            "t_index": 45,
+            "timestep": 99
+          },
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 6.9776,
+            "outside_change": 0.0,
+            "region_change": 7.7806,
+            "resample_change": 0.803,
+            "strength": 0.494734,
+            "t_index": 40,
+            "timestep": 199
+          },
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 8.5555,
+            "outside_change": 0.0,
+            "region_change": 9.3585,
+            "resample_change": 0.803,
+            "strength": 0.638606,
+            "t_index": 35,
+            "timestep": 299
+          },
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 10.7319,
+            "outside_change": 0.0,
+            "region_change": 11.5349,
+            "resample_change": 0.803,
+            "strength": 0.757571,
+            "t_index": 30,
+            "timestep": 399
+          },
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 13.7913,
+            "outside_change": 0.0,
+            "region_change": 14.5943,
+            "resample_change": 0.803,
+            "strength": 0.8499,
+            "t_index": 25,
+            "timestep": 499
+          },
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 17.3362,
+            "outside_change": 0.0,
+            "region_change": 18.1392,
+            "resample_change": 0.803,
+            "strength": 0.915559,
+            "t_index": 20,
+            "timestep": 599
+          }
+        ],
+        "rule": "the least denoise whose mean absolute change inside the region, net of the resize control, reached 8/255",
+        "statement": "t_index 35 - timestep 299, denoise strength 0.64. Selected as the least denoise whose mean absolute change inside the region, net of the resize control, reached 8/255; it changed the region by 9.4/255 - 8.6 of it net of the 0.8/255 the resize alone costs - against 0.0/255 outside it.",
+        "strength": 0.638606,
+        "t_index": 35,
+        "timestep": 299
+      },
+      "expresses": true,
+      "flicker": {
+        "frame_pixels": 921600,
+        "mean_abs_diff": 1.624893,
+        "note": "mean absolute difference between consecutive outputs over the 225146 pixels per pair that were static in the source (within 2/255) and painted in both frames; 0-255 units, lower is steadier",
+        "pairs": 47,
+        "pairs_scored": 47,
+        "per_pair_abs_diff": [
+          1.443071,
+          1.76553,
+          1.936764,
+          1.934055,
+          1.842869,
+          1.59277,
+          1.587621,
+          1.711872,
+          1.60826,
+          1.755257,
+          1.811856,
+          1.836692,
+          1.966805,
+          1.754803,
+          1.545644,
+          1.452165,
+          1.878205,
+          1.549962,
+          1.570273,
+          1.49171,
+          1.467978,
+          1.522013,
+          1.720368,
+          1.404495,
+          1.367487,
+          1.444437,
+          1.780792,
+          1.836224,
+          1.518169,
+          1.745939,
+          1.825259,
+          1.702177,
+          1.726811,
+          1.634852,
+          1.447067,
+          1.588846,
+          1.794268,
+          1.361694,
+          1.334762,
+          1.627339,
+          1.570871,
+          1.44234,
+          1.575496,
+          1.354692,
+          1.46516,
+          1.528028,
+          1.54622
+        ],
+        "static_fraction": 0.244299,
+        "static_pixels": 225146,
+        "threshold": 2.0
+      },
+      "frames": 48,
+      "identity": null,
+      "latency": {
+        "max_ms": 3583.2181,
+        "mean_ms": 931.2339,
+        "median_ms": 513.5725,
+        "min_ms": 493.4534,
+        "p95_ms": 3066.0237,
+        "stdev_ms": 913.3476
+      },
+      "ms_per_frame": 931.2339,
+      "outside_change": 0.0,
+      "primitive": "crop",
+      "region_change": 9.3757,
+      "spec_option": "A"
+    },
+    {
+      "calls_per_frame": 1.0,
+      "calls_total": 48,
+      "cannot_express": "One prompt and one denoise per frame. Every object in the frame is rendered from the same text embedding at the same strength, so \"turn the dog into a cat and the man into a statue\" is two frames' work, not one. Nor can it spend detail where it matters: the whole frame is squeezed onto one 512x512 canvas, so a region occupying 45 px of a 1280 px-wide frame is diffused at ~18 px and comes back with roughly that much detail.",
+      "clip_file": "restyle-people-20260906-181553Z-masked.mp4",
+      "clock_normalization": {
+        "basis_mhz": 2100.0,
+        "basis_source": "clocks.max.sm",
+        "method": "ms_per_frame * time-weighted mean SM clock / basis clock",
+        "ms_per_frame": 78.5454,
+        "note": "Clocks were not locked (unlocked), so the raw figure carries this run's clock. This is a first-order estimate of the same work at 2100 MHz, not a measurement, and not a substitute for `nvidia-smi --lock-gpu-clocks` from an elevated shell.",
+        "regime": "unlocked",
+        "sampled_mean_sm_clock_mhz": 1040.2
+      },
+      "denoise": {
+        "kind": "restyle",
+        "met": true,
+        "points": [
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 7.7981,
+            "outside_change": 0.0,
+            "region_change": 10.3603,
+            "resample_change": 2.5622,
+            "strength": 0.323323,
+            "t_index": 45,
+            "timestep": 99
+          },
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 10.5022,
+            "outside_change": 0.0,
+            "region_change": 13.0644,
+            "resample_change": 2.5622,
+            "strength": 0.494734,
+            "t_index": 40,
+            "timestep": 199
+          },
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 14.0513,
+            "outside_change": 0.0,
+            "region_change": 16.6135,
+            "resample_change": 2.5622,
+            "strength": 0.638606,
+            "t_index": 35,
+            "timestep": 299
+          },
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 16.9428,
+            "outside_change": 0.0,
+            "region_change": 19.505,
+            "resample_change": 2.5622,
+            "strength": 0.757571,
+            "t_index": 30,
+            "timestep": 399
+          },
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 22.0481,
+            "outside_change": 0.0,
+            "region_change": 24.6103,
+            "resample_change": 2.5622,
+            "strength": 0.8499,
+            "t_index": 25,
+            "timestep": 499
+          },
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 28.9611,
+            "outside_change": 0.0,
+            "region_change": 31.5233,
+            "resample_change": 2.5622,
+            "strength": 0.915559,
+            "t_index": 20,
+            "timestep": 599
+          }
+        ],
+        "rule": "the least denoise whose mean absolute change inside the region, net of the resize control, reached 8/255",
+        "statement": "t_index 40 - timestep 199, denoise strength 0.49. Selected as the least denoise whose mean absolute change inside the region, net of the resize control, reached 8/255; it changed the region by 13.1/255 - 10.5 of it net of the 2.6/255 the resize alone costs - against 0.0/255 outside it.",
+        "strength": 0.494734,
+        "t_index": 40,
+        "timestep": 199
+      },
+      "expresses": true,
+      "flicker": {
+        "frame_pixels": 921600,
+        "mean_abs_diff": 1.434401,
+        "note": "mean absolute difference between consecutive outputs over the 225146 pixels per pair that were static in the source (within 2/255) and painted in both frames; 0-255 units, lower is steadier",
+        "pairs": 47,
+        "pairs_scored": 47,
+        "per_pair_abs_diff": [
+          1.334785,
+          1.476516,
+          1.377116,
+          1.605539,
+          1.45248,
+          1.452197,
+          1.642799,
+          1.745861,
+          1.711947,
+          1.641276,
+          1.426905,
+          1.320148,
+          1.300351,
+          1.456971,
+          1.314732,
+          1.418569,
+          1.200871,
+          1.316549,
+          1.365569,
+          1.312899,
+          1.37491,
+          1.54857,
+          1.651148,
+          1.601043,
+          1.370694,
+          1.406296,
+          1.425514,
+          1.293361,
+          1.367905,
+          1.269102,
+          1.457526,
+          1.475529,
+          1.491442,
+          1.320589,
+          1.225606,
+          1.491731,
+          1.325409,
+          1.180176,
+          1.265886,
+          1.569908,
+          1.315881,
+          1.427053,
+          1.367535,
+          1.435098,
+          1.62789,
+          1.541522,
+          1.715443
+        ],
+        "static_fraction": 0.244299,
+        "static_pixels": 225146,
+        "threshold": 2.0
+      },
+      "frames": 48,
+      "identity": null,
+      "latency": {
+        "max_ms": 545.0584,
+        "mean_ms": 158.5739,
+        "median_ms": 93.624,
+        "min_ms": 83.1428,
+        "p95_ms": 495.0813,
+        "stdev_ms": 140.1107
+      },
+      "ms_per_frame": 158.5739,
+      "outside_change": 0.0,
+      "primitive": "masked",
+      "region_change": 13.0432,
+      "spec_option": "B"
+    }
+  ],
+  "case": {
+    "becomes": null,
+    "clip": "people.mp4",
+    "denoise_ladder": [
+      20,
+      25,
+      30,
+      35,
+      40,
+      45
+    ],
+    "frames": 48,
+    "kind": "restyle",
+    "max_objects": 6,
+    "name": "restyle-people",
+    "note": "The v1 priority case: a subtle sub-region change on people, low denoise, region lower_half. This is where the decision is made.",
+    "priority": true,
+    "prompt": "trousers soaked through with a dark wet stain, damp fabric, wet denim, photograph",
+    "region": "lower_half",
+    "start_frame": 0,
+    "sweep_frames": 4,
+    "target": "person"
+  },
+  "clip": {
+    "fps": 25.0,
+    "frames_used": 48,
+    "height": 720,
+    "name": "people.mp4",
+    "sha256": "c509b3699045b605d62e66abf534ce096078b983a0b666e04039b1168dc7b54d",
+    "start_frame": 0,
+    "total_frames": 377,
+    "width": 1280
+  },
+  "comparison_clip": "restyle-people-20260906-181553Z-triptych.mp4",
+  "comparison_still": "restyle-people-20260906-181553Z-triptych.jpg",
+  "cooldown": {
+    "cap_s": 120.0,
+    "enabled": true,
+    "final_temperature_c": 63.0,
+    "outcome": "capped",
+    "reached": false,
+    "samples": [
+      [
+        0.06199999999807915,
+        75.0
+      ],
+      [
+        2.1089999999967404,
+        72.0
+      ],
+      [
+        4.139999999999418,
+        70.0
+      ],
+      [
+        6.186999999998079,
+        69.0
+      ],
+      [
+        8.218000000000757,
+        68.0
+      ],
+      [
+        10.264999999999418,
+        68.0
+      ],
+      [
+        12.31199999999808,
+        68.0
+      ],
+      [
+        14.343000000000757,
+        67.0
+      ],
+      [
+        16.389999999999418,
+        67.0
+      ],
+      [
+        18.421000000002095,
+        67.0
+      ],
+      [
+        20.48399999999674,
+        67.0
+      ],
+      [
+        22.514999999999418,
+        67.0
+      ],
+      [
+        24.56199999999808,
+        66.0
+      ],
+      [
+        26.593000000000757,
+        66.0
+      ],
+      [
+        28.639999999999418,
+        66.0
+      ],
+      [
+        30.671000000002095,
+        66.0
+      ],
+      [
+        32.70300000000134,
+        66.0
+      ],
+      [
+        34.75,
+        65.0
+      ],
+      [
+        36.78100000000268,
+        65.0
+      ],
+      [
+        38.82800000000134,
+        65.0
+      ],
+      [
+        40.85899999999674,
+        65.0
+      ],
+      [
+        42.90600000000268,
+        65.0
+      ],
+      [
+        44.93699999999808,
+        65.0
+      ],
+      [
+        46.96800000000076,
+        65.0
+      ],
+      [
+        49.03100000000268,
+        65.0
+      ],
+      [
+        51.06199999999808,
+        64.0
+      ],
+      [
+        53.10899999999674,
+        65.0
+      ],
+      [
+        55.15600000000268,
+        64.0
+      ],
+      [
+        57.18699999999808,
+        64.0
+      ],
+      [
+        59.23399999999674,
+        64.0
+      ],
+      [
+        61.28100000000268,
+        64.0
+      ],
+      [
+        63.32800000000134,
+        64.0
+      ],
+      [
+        65.375,
+        64.0
+      ],
+      [
+        67.4210000000021,
+        64.0
+      ],
+      [
+        69.46800000000076,
+        64.0
+      ],
+      [
+        71.51499999999942,
+        64.0
+      ],
+      [
+        73.59300000000076,
+        64.0
+      ],
+      [
+        75.6710000000021,
+        64.0
+      ],
+      [
+        77.75,
+        64.0
+      ],
+      [
+        79.84300000000076,
+        64.0
+      ],
+      [
+        81.88999999999942,
+        64.0
+      ],
+      [
+        83.93699999999808,
+        64.0
+      ],
+      [
+        86.0,
+        64.0
+      ],
+      [
+        88.25,
+        63.0
+      ],
+      [
+        90.5,
+        63.0
+      ],
+      [
+        92.78100000000268,
+        63.0
+      ],
+      [
+        95.06199999999808,
+        63.0
+      ],
+      [
+        97.34300000000076,
+        63.0
+      ],
+      [
+        99.59300000000076,
+        63.0
+      ],
+      [
+        101.76499999999942,
+        63.0
+      ],
+      [
+        104.0,
+        63.0
+      ],
+      [
+        106.1710000000021,
+        63.0
+      ],
+      [
+        108.38999999999942,
+        63.0
+      ],
+      [
+        110.63999999999942,
+        63.0
+      ],
+      [
+        112.84300000000076,
+        63.0
+      ],
+      [
+        115.125,
+        63.0
+      ],
+      [
+        117.31199999999808,
+        63.0
+      ],
+      [
+        119.38999999999942,
+        63.0
+      ],
+      [
+        121.43699999999808,
+        63.0
+      ]
+    ],
+    "threshold_c": 62.0,
+    "waited_s": 121.43699999999808
+  },
+  "hardware": {
+    "clock_lock": {
+      "applied_clock_mhz": null,
+      "current_sm_clock_mhz": 570.0,
+      "evidence": "clocks_event_reasons.applications_clocks_setting=Not Active",
+      "max_sm_clock_mhz": 2100.0,
+      "state": "unlocked"
+    },
+    "cuda_version": "12.8",
+    "driver_version": "595.79",
+    "enforced_power_limit_w": 115.0,
+    "gpu_name": "NVIDIA GeForce RTX 3080 Laptop GPU",
+    "hostname": "Ale-Zephyrus",
+    "nvidia_smi_captured_utc": "2026-09-06T18:12:07Z",
+    "nvidia_smi_raw": "Sun Sep  6 20:12:07 2026       \n+-----------------------------------------------------------------------------------------+\n| NVIDIA-SMI 595.79                 Driver Version: 595.79         CUDA Version: 13.2     |\n+-----------------------------------------+------------------------+----------------------+\n| GPU  Name                  Driver-Model | Bus-Id          Disp.A | Volatile Uncorr. ECC |\n| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |\n|                                         |                        |               MIG M. |\n|=========================================+========================+======================|\n|   0  NVIDIA GeForce RTX 3080 ...  WDDM  |   00000000:01:00.0 Off |                  N/A |\n| N/A   64C    P5             21W /  115W |     543MiB /  16384MiB |     28%      Default |\n|                                         |                        |                  N/A |\n+-----------------------------------------+------------------------+----------------------+\n\n+-----------------------------------------------------------------------------------------+\n| Processes:                                                                              |\n|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |\n|        ID   ID                                                               Usage      |\n|=========================================================================================|\n|    0   N/A  N/A            2120    C+G   ...esigner\\bin\\TouchDesigner.exe      N/A      |\n+-----------------------------------------------------------------------------------------+\n",
+    "power_limit_w": null,
+    "torch_version": "2.7.0+cu128",
+    "total_vram_mib": 16384.0
+  },
+  "kind": "primitive",
+  "one_step_finding": null,
+  "run": {
+    "detector_resident": "yolo-world-s-640",
+    "engine_scenario": "img2img-tensorrt-512x512-b1",
+    "finished_utc": "2026-09-06T18:15:35Z",
+    "gpu_samples": [
+      [
+        0.05961300000490155,
+        1110.0,
+        74.0
+      ],
+      [
+        0.6165929999988293,
+        1110.0,
+        74.0
+      ],
+      [
+        1.187384299999394,
+        1320.0,
+        74.0
+      ],
+      [
+        1.742656000002171,
+        1185.0,
+        74.0
+      ],
+      [
+        2.320320700004231,
+        1110.0,
+        75.0
+      ],
+      [
+        2.874410900003568,
+        1170.0,
+        76.0
+      ],
+      [
+        3.434659600003215,
+        1200.0,
+        76.0
+      ],
+      [
+        3.9951096000004327,
+        1110.0,
+        76.0
+      ],
+      [
+        4.563406699999177,
+        1110.0,
+        77.0
+      ],
+      [
+        5.117695200002345,
+        1230.0,
+        76.0
+      ],
+      [
+        5.697407400002703,
+        1110.0,
+        76.0
+      ],
+      [
+        6.275300400004198,
+        1110.0,
+        76.0
+      ],
+      [
+        6.937673500004166,
+        1110.0,
+        77.0
+      ],
+      [
+        7.5760255999994115,
+        1110.0,
+        75.0
+      ],
+      [
+        8.129117700002098,
+        1110.0,
+        76.0
+      ],
+      [
+        8.683466499998758,
+        1110.0,
+        77.0
+      ],
+      [
+        9.330031600002258,
+        1455.0,
+        76.0
+      ],
+      [
+        10.000044300002628,
+        1455.0,
+        73.0
+      ],
+      [
+        10.63257340000564,
+        1455.0,
+        73.0
+      ],
+      [
+        11.27698130000499,
+        1050.0,
+        72.0
+      ],
+      [
+        11.952210399998876,
+        915.0,
+        71.0
+      ],
+      [
+        12.562068500003079,
+        915.0,
+        71.0
+      ],
+      [
+        13.21445390000008,
+        930.0,
+        71.0
+      ],
+      [
+        13.879433500005689,
+        930.0,
+        69.0
+      ],
+      [
+        14.578956199999084,
+        930.0,
+        69.0
+      ],
+      [
+        15.21708960000251,
+        930.0,
+        70.0
+      ],
+      [
+        15.853308800004015,
+        930.0,
+        70.0
+      ],
+      [
+        16.477625100000296,
+        720.0,
+        70.0
+      ],
+      [
+        17.176919600002293,
+        795.0,
+        69.0
+      ],
+      [
+        17.84463730000425,
+        795.0,
+        70.0
+      ],
+      [
+        18.487395600001037,
+        870.0,
+        69.0
+      ],
+      [
+        19.16914220000035,
+        870.0,
+        69.0
+      ],
+      [
+        19.85714580000058,
+        870.0,
+        69.0
+      ],
+      [
+        20.5475149000049,
+        885.0,
+        70.0
+      ],
+      [
+        21.222072800002934,
+        885.0,
+        69.0
+      ],
+      [
+        21.85857699999906,
+        915.0,
+        69.0
+      ],
+      [
+        22.544315600003756,
+        915.0,
+        69.0
+      ],
+      [
+        23.211650199998985,
+        915.0,
+        69.0
+      ],
+      [
+        23.864692000002833,
+        885.0,
+        70.0
+      ],
+      [
+        24.575270699999237,
+        885.0,
+        68.0
+      ],
+      [
+        25.2194754000011,
+        945.0,
+        68.0
+      ],
+      [
+        25.93795500000124,
+        945.0,
+        69.0
+      ],
+      [
+        26.59201060000487,
+        795.0,
+        69.0
+      ],
+      [
+        27.22819200000231,
+        915.0,
+        69.0
+      ],
+      [
+        27.959307199998875,
+        930.0,
+        69.0
+      ],
+      [
+        28.577292400004808,
+        930.0,
+        69.0
+      ],
+      [
+        29.241656199999852,
+        945.0,
+        68.0
+      ],
+      [
+        29.890048900000693,
+        960.0,
+        68.0
+      ],
+      [
+        30.574985600003856,
+        975.0,
+        69.0
+      ],
+      [
+        31.255666400000337,
+        975.0,
+        68.0
+      ],
+      [
+        31.94381599999906,
+        900.0,
+        69.0
+      ],
+      [
+        32.58813760000339,
+        840.0,
+        68.0
+      ],
+      [
+        33.37855330000457,
+        735.0,
+        68.0
+      ],
+      [
+        34.08170719999907,
+        885.0,
+        68.0
+      ],
+      [
+        34.85506620000524,
+        960.0,
+        68.0
+      ],
+      [
+        35.43723220000538,
+        975.0,
+        70.0
+      ],
+      [
+        36.06302660000074,
+        1110.0,
+        76.0
+      ],
+      [
+        36.69902230000298,
+        1110.0,
+        76.0
+      ],
+      [
+        37.25731340000493,
+        1620.0,
+        75.0
+      ],
+      [
+        37.82789369999955,
+        1110.0,
+        76.0
+      ],
+      [
+        38.386667900005705,
+        1110.0,
+        77.0
+      ],
+      [
+        38.93935880000208,
+        1110.0,
+        78.0
+      ],
+      [
+        39.49371670000255,
+        1110.0,
+        78.0
+      ],
+      [
+        40.04942139999912,
+        1350.0,
+        78.0
+      ],
+      [
+        40.60166340000433,
+        1110.0,
+        79.0
+      ],
+      [
+        41.162744699999166,
+        1110.0,
+        79.0
+      ],
+      [
+        41.730021499999566,
+        1110.0,
+        79.0
+      ],
+      [
+        42.287286999999196,
+        1110.0,
+        79.0
+      ],
+      [
+        42.84087269999873,
+        1110.0,
+        79.0
+      ],
+      [
+        43.39612670000497,
+        1110.0,
+        80.0
+      ],
+      [
+        43.949448100000154,
+        1110.0,
+        80.0
+      ],
+      [
+        44.52356359999976,
+        1335.0,
+        80.0
+      ],
+      [
+        45.07799320000049,
+        1110.0,
+        80.0
+      ],
+      [
+        45.6294498999996,
+        1110.0,
+        80.0
+      ],
+      [
+        46.18431210000563,
+        1110.0,
+        80.0
+      ],
+      [
+        46.7538926000052,
+        1110.0,
+        81.0
+      ],
+      [
+        47.323722500004806,
+        1110.0,
+        80.0
+      ],
+      [
+        47.8866588000019,
+        1110.0,
+        81.0
+      ],
+      [
+        48.44081770000048,
+        1110.0,
+        81.0
+      ],
+      [
+        48.9975626000014,
+        1110.0,
+        81.0
+      ],
+      [
+        49.54885790000117,
+        1140.0,
+        81.0
+      ],
+      [
+        50.10625309999887,
+        1110.0,
+        82.0
+      ],
+      [
+        50.658578900001885,
+        1110.0,
+        81.0
+      ],
+      [
+        51.21052910000435,
+        1110.0,
+        81.0
+      ],
+      [
+        51.76355830000102,
+        1110.0,
+        82.0
+      ],
+      [
+        52.31593029999931,
+        1110.0,
+        82.0
+      ]
+    ],
+    "max_temperature_c": 82.0,
+    "mean_sm_clock_mhz": 1050.3,
+    "peak_vram_bytes": 3709025792,
+    "started_utc": "2026-09-06T18:14:43Z",
+    "warmup_reps": 3
+  },
+  "schema_version": 2,
+  "track": {
+    "conf": 0.25,
+    "detector": "yolo-world-s-640",
+    "max_objects": 6,
+    "objects_per_frame": 6.0,
+    "region": "lower_half",
+    "regions_rendered": 288,
+    "small_objects": {
+      "both_sides_under": 0,
+      "max_side_px": 293,
+      "min_side_px": 45,
+      "min_side_under": 48,
+      "regions": 288,
+      "statement": "288 rendered regions, smallest side 45 px and largest smallest-side 293 px. 48 have a side under 96 px; 0 are under 96 px in *both* dimensions. The Gate's small-object case is therefore met on the smallest-side reading and not on the small-in-area one - the gap issue #17 recorded when it committed these clips, and it is still open.",
+      "threshold_px": 96
+    },
+    "target": "person"
+  }
+}

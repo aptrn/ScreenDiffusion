@@ -274,3 +274,64 @@ def test_a_detector_run_gates_the_engine_it_would_have_to_build(tmp_path, monkey
     with pytest.raises(SystemExit) as failure:
         cli.main(["yolo-world-s-640", "--with-diffusion", "img2img-tensorrt-512x512-b8"])
     assert "--allow-engine-build" in str(failure.value)
+
+
+# --- rendering primitives (issue #5) -----------------------------------------
+
+def test_the_primitive_cases_share_the_positional_slot_too():
+    """Three registries, one slot. A name is a name; the CLI works out its kind."""
+    from bench.primitives import CASES, RESTYLE_CASE
+
+    kind, target = resolve_target(build_parser().parse_args([RESTYLE_CASE]))
+    assert kind == "primitive" and target is CASES[RESTYLE_CASE]
+
+
+def test_the_frame_count_can_be_shortened_for_a_development_run():
+    from bench.primitives import RESTYLE_CASE
+
+    _, case = resolve_target(build_parser().parse_args([RESTYLE_CASE, "--frames", "6"]))
+    assert case.frames == 6
+
+
+def test_list_names_the_primitive_cases_as_well():
+    result = subprocess.run(
+        [sys.executable, "-m", "bench", "--list"],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "restyle-people" in result.stdout
+    assert "priority case" in result.stdout
+
+
+def test_the_primitive_report_reads_the_committed_comparisons_and_exits_zero():
+    result = subprocess.run(
+        [sys.executable, "-m", "bench", "--primitive-report"],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "Decision:" in result.stdout
+
+
+def test_a_primitive_run_gates_the_engine_both_primitives_share(tmp_path, monkeypatch):
+    """One engine, and it meets the same gate a diffusion run does - refused before
+    `bench.primitive_runner` imports torch."""
+    import bench.cli as cli
+    from bench.primitives import RESTYLE_CASE
+
+    monkeypatch.setattr(cli, "resolve_engines_dir", lambda: tmp_path)
+    with pytest.raises(SystemExit) as failure:
+        cli.main([RESTYLE_CASE])
+    assert "--allow-engine-build" in str(failure.value)
+
+
+def test_writing_a_track_needs_no_engine_at_all():
+    """It is a detector pass over the clip, so the engine guard must not fire first."""
+    import bench.cli as cli
+    from bench.primitives import CASES, RESTYLE_CASE
+
+    parser = build_parser()
+    assert parser.parse_args([RESTYLE_CASE, "--write-track"]).write_track is True
+    source = ROOT / "bench" / "cli.py"
+    body = source.read_text(encoding="utf-8").split("def run_primitive_target", 1)[1]
+    assert body.index("args.write_track") < body.index("engine_build_guard")
+    assert RESTYLE_CASE in CASES

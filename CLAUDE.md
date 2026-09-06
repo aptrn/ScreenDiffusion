@@ -76,6 +76,21 @@ gitignored, and are only fetched behind `--allow-download`.
 `python -m bench --detector-report` regenerates the measured block in spec 8.1,
 which a test holds to a byte match.
 
+The same slot also takes a **rendering-primitive case** (`restyle-people`,
+`identity-dog`). One run renders *both* primitives - A crop-and-composite and B
+full-frame-masked - over the same committed clip, interleaved frame by frame, and
+writes to `bench/results/primitives/`: one JSON, one README row per primitive, a
+source|A|B triptych mp4, a full-resolution triptych still, and one mp4 per arm.
+Those clips are the Gate's manual-verification artefact and are **tracked**.
+`--primitive-report` regenerates the decision block in spec 8.2, held to a byte
+match by a test.
+
+The clips in `bench/clips/` are committed and so are their box tracks
+(`*.track.json`). A case reads its boxes rather than detecting them, so two runs
+render identical regions; `python -m bench <case> --write-track` regenerates a
+track and is the only thing that needs the detector. Regenerating one invalidates
+the committed comparisons.
+
 `tests/sourceloader.py` executes named top-level definitions straight out of
 `main_gpu_addon.py` / `wrapper.py`. Importing either module in the GPU-free tier is
 not an option - one primes the DLL search path and pulls in the GUI stack, the other
@@ -142,6 +157,18 @@ pipeline drops frames rather than falling behind — preserve that.
   applications_clocks_setting` event reason, the only lock signal driver 595.79
   exposes on consumer Ampere; when it cannot be read the regime is `unknown`, which
   is not a synonym for `unlocked` and does not satisfy `--require-locked-clocks`.
+- **A higher `t_index` is *less* denoise, not more.** `t_index_list` indexes the
+  50-step LCM schedule, which descends: index 20 is timestep 599 (noise amplitude
+  0.92) and index 45 is timestep 99 (0.32). The app's default 30 is timestep 399.
+  Changing the *values* is a runtime update (`set_t_index_list`, clamped to 1-49);
+  only changing the step *count* rebuilds the engine. So sweeping strength is cheap
+  and sweeping step counts is not.
+- **Both rendering primitives resize onto the 512x512 canvas and back, and that
+  round trip changes the pixels on its own.** For the full-frame primitive on a
+  1280x720 clip it changes them a lot. Any "did the render do anything" criterion
+  has to subtract a control pass with the diffusion call taken out
+  (`render_resample_only` in `bench/primitive_runner.py`), or a strength that does
+  nothing passes on its own blur.
 - **`models/` and `engines/` are gitignored** and hold multi-GB downloads and compiled
   engines. Leave them out of commits and out of test fixtures. Point `SD_MODELS_DIR` /
   `SD_ENGINES_DIR` at a shared copy rather than re-downloading or rebuilding per
