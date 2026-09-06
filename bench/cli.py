@@ -60,7 +60,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="scenario, detector or primitive-case name; --list "
                              "shows them all")
     parser.add_argument("--list", action="store_true",
-                        help="list the scenarios and detectors, and exit")
+                        help="list the scenarios, detectors and primitive cases, "
+                             "and exit")
     parser.add_argument("--marginal", action="store_true",
                         help="report the marginal cost per additional batch item from "
                              "the committed results, and exit")
@@ -144,11 +145,11 @@ def _rep_overrides(args: argparse.Namespace) -> dict:
 
 
 def resolve_target(args: argparse.Namespace) -> Tuple[str, Target]:
-    """The scenario or the detector `args.scenario` names, with the overrides applied.
+    """The scenario, detector or case `args.scenario` names, with overrides applied.
 
-    One positional slot for both registries. A run measures one thing, the two kinds
-    of name cannot collide, and someone holding a name should not have to know which
-    of two flags it belongs behind.
+    One positional slot for all three registries. A run measures one thing, the
+    kinds of name cannot collide, and someone holding a name should not have to know
+    which of three flags it belongs behind.
 
     An unmodified name resolves to the registry's own object, so a caller can tell a
     plain run from an overridden one by identity.
@@ -283,7 +284,7 @@ def report_primitives(results_dir: Path, out: TextIO = sys.stdout) -> None:
 
 
 def list_targets(out: TextIO = sys.stdout) -> None:
-    """Both registries, one name per line - whatever the positional slot accepts."""
+    """Every registry, one name per line - whatever the positional slot accepts."""
     for name, scenario in SCENARIOS.items():
         out.write(f"{name}\t{scenario.acceleration}\t{scenario.width}x{scenario.height}"
                   f"\tbatch {scenario.batch_size}\t{scenario.steps} step(s)\n")
@@ -338,17 +339,15 @@ def run_primitive_target(args: argparse.Namespace, case: CaseConfig) -> int:
     committed boxes, which is a detector run rather than a diffusion one, and it
     exits before the engine guard because it needs no engine.
     """
-    from bench.primitive_runner import ENGINE_SCENARIO  # no torch at import time
+    # Late, like `run_scenario`: torch and cv2 live inside this module's functions,
+    # but importing it pulls in the whole measuring half, which --help does not need.
+    from bench.primitive_runner import ENGINE_SCENARIO, build_track, run_case
 
     if args.write_track:
-        from bench.primitive_runner import build_track
-
         build_track(case)
         return 0
 
     engine_build_guard(SCENARIOS[ENGINE_SCENARIO], allow_build=args.allow_engine_build)
-
-    from bench.primitive_runner import run_case  # imports torch, like run_scenario
 
     run_case(
         case,
@@ -380,7 +379,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 0
     if not args.scenario:
         parser.print_usage()
-        print("bench: name a scenario or a detector, or pass --list", file=sys.stderr)
+        print("bench: name a scenario, a detector or a case, or pass --list",
+              file=sys.stderr)
         return 2
 
     kind, target = resolve_target(args)

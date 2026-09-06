@@ -119,17 +119,18 @@ def flicker_score(
     Pairs with no such pixel are counted and skipped rather than scored zero.
     """
     _validate(sources, outputs)
+    frame_pixels = 0
+    if sources:
+        height, width = np.asarray(sources[0]).shape[:2]
+        frame_pixels = int(height * width)
     if len(sources) < 2:
         return FlickerScore(
             mean_abs_diff=None, pairs=0, pairs_scored=0, static_pixels=0,
-            frame_pixels=int(np.asarray(sources[0]).shape[0]
-                             * np.asarray(sources[0]).shape[1]) if sources else 0,
-            static_fraction=0.0, threshold=threshold, per_pair_abs_diff=[],
+            frame_pixels=frame_pixels, static_fraction=0.0, threshold=threshold,
+            per_pair_abs_diff=[],
             note="a flicker metric needs at least two frames to compare",
         )
 
-    height, width = np.asarray(sources[0]).shape[:2]
-    frame_pixels = int(height * width)
     per_pair: List[float] = []
     static_total = 0
     for index in range(1, len(sources)):

@@ -19,10 +19,9 @@ issue #13 exists about.
 
 from __future__ import annotations
 
-import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Dict, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import Dict, List, Mapping, Optional, Sequence, Union
 
 from bench import RESULT_SCHEMA_VERSION
 from bench.clocks import LOCKED, ClockNormalization, regime_of
@@ -41,6 +40,9 @@ from bench.primitives import (
 )
 from bench.results import (
     append_row,
+    format_number,
+    latest_per,
+    load_records,
     require_recordable,
     timestamp_from,
     write_record,
@@ -265,10 +267,6 @@ PRIMITIVE_README_PREAMBLE = (
 )
 
 
-def _number(value: Optional[float], digits: int = 1) -> str:
-    return "-" if value is None else f"{value:.{digits}f}"
-
-
 def arm_normalised_cell(result: dict, arm: dict) -> str:
     """The clock-normalised ms/frame for one arm, or why there is none.
 
@@ -299,12 +297,12 @@ def primitive_readme_rows(result: dict, filename: str) -> List[str]:
             arm["spec_option"],
             result["hardware"]["gpu_name"],
             clip["name"],
-            _number(track["objects_per_frame"], 2),
-            _number(arm["calls_per_frame"], 2),
+            format_number(track["objects_per_frame"], 2),
+            format_number(arm["calls_per_frame"], 2),
             str(arm["denoise"]["t_index"]),
-            _number(arm["denoise"]["strength"], 2),
-            _number(arm["ms_per_frame"], 2),
-            _number(arm["flicker"]["mean_abs_diff"], 2),
+            format_number(arm["denoise"]["strength"], 2),
+            format_number(arm["ms_per_frame"], 2),
+            format_number(arm["flicker"]["mean_abs_diff"], 2),
             "yes" if arm["expresses"] else "no",
             result["cooldown"]["outcome"],
             regime_of(result),
@@ -328,23 +326,12 @@ def append_primitive_readme_rows(result: ResultLike, readme_path: Path,
 
 def load_primitive_results(results_dir: Path) -> Dict[str, dict]:
     """Every primitive result under `results_dir`, keyed by filename."""
-    return {path.name: json.loads(path.read_text(encoding="utf-8"))
-            for path in sorted(Path(results_dir).glob("*.json"))}
+    return load_records(results_dir)
 
 
 def latest_per_case(results: Mapping[str, dict]) -> Dict[str, dict]:
-    """One result per case: the most recently finished run of each.
-
-    A case measured twice is two honest records and both stay on disk; a table built
-    from a mixture would compare a cold run against a hot one.
-    """
-    newest: Dict[str, Tuple[str, str]] = {}
-    for filename, result in results.items():
-        name = result["case"]["name"]
-        finished = str(result["run"]["finished_utc"])
-        if name not in newest or finished > newest[name][1]:
-            newest[name] = (filename, finished)
-    return {filename: results[filename] for filename, _ in newest.values()}
+    """One result per case: the most recently finished run of each."""
+    return latest_per(results, lambda result: result["case"]["name"])
 
 
 REPORT_HEADER = ("| case | primitive | option | denoise t_index | strength |"
@@ -375,12 +362,12 @@ def _report_rows(results: Sequence[dict]) -> List[str]:
                 arm["primitive"],
                 arm["spec_option"],
                 str(arm["denoise"]["t_index"]),
-                _number(arm["denoise"]["strength"], 2),
-                _number(result["track"]["objects_per_frame"], 2),
-                _number(arm["calls_per_frame"], 2),
-                _number(arm["ms_per_frame"], 2),
+                format_number(arm["denoise"]["strength"], 2),
+                format_number(result["track"]["objects_per_frame"], 2),
+                format_number(arm["calls_per_frame"], 2),
+                format_number(arm["ms_per_frame"], 2),
                 arm_normalised_cell(result, arm),
-                f"{_number(arm['flicker']['mean_abs_diff'], 2)} "
+                f"{format_number(arm['flicker']['mean_abs_diff'], 2)} "
                 f"({arm['flicker']['static_pixels']})",
                 "yes" if arm["expresses"] else "no",
             ]) + " |")

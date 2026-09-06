@@ -21,7 +21,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import Callable, Dict, List, Mapping, Optional, Tuple, Union
 
 from bench import RESULT_SCHEMA_VERSION
 from bench.clocks import LOCKED, REGIMES, ClockNormalization, regime_of
@@ -209,10 +209,55 @@ def write_result(result: ResultLike, results_dir: Path, timestamp: Optional[str]
     return write_record(data, results_dir, result_filename(data["scenario"]["name"], timestamp))
 
 
+def filename_timestamp(utc: str) -> str:
+    """`20260906-140031Z` from a UTC timestamp - filename-safe, sortable.
+
+    Public because a run that writes files *beside* its record - the primitive
+    comparison writes clips (issue #5) - has to name them before the record exists,
+    and a second spelling of this would let the clips and the JSON drift apart.
+    """
+    return utc.replace("-", "").replace(":", "").replace("T", "-")
+
+
 def timestamp_from(data: dict) -> str:
-    """`20260906-140031Z` from the run's finish time - filename-safe, sortable."""
-    finished = str(data["run"]["finished_utc"])
-    return finished.replace("-", "").replace(":", "").replace("T", "-")
+    """`20260906-140031Z` from the run's finish time."""
+    return filename_timestamp(str(data["run"]["finished_utc"]))
+
+
+def load_records(results_dir: Path) -> Dict[str, dict]:
+    """Every result JSON under `results_dir`, keyed by filename.
+
+    One directory of records at a time: `bench/results/` holds diffusion cells and
+    each other kind has its own subdirectory, so a glob here never mixes shapes.
+    """
+    return {path.name: json.loads(path.read_text(encoding="utf-8"))
+            for path in sorted(Path(results_dir).glob("*.json"))}
+
+
+def latest_per(results: Mapping[str, dict],
+               name_of: Callable[[dict], str]) -> Dict[str, dict]:
+    """One result per thing measured: the most recently finished run of each.
+
+    A thing measured twice is two honest records and both stay on disk; a table
+    built from a mixture would compare a cold run against a hot one. `name_of` says
+    what "the same thing" means - a detector name, a case name - because that is the
+    only part the two report tables disagree on.
+    """
+    newest: Dict[str, Tuple[str, str]] = {}
+    for filename, result in results.items():
+        name = name_of(result)
+        finished = str(result["run"]["finished_utc"])
+        if name not in newest or finished > newest[name][1]:
+            newest[name] = (filename, finished)
+    return {filename: results[filename] for filename, _ in newest.values()}
+
+
+def format_number(value: Optional[float], digits: int = 1) -> str:
+    """One table cell: a number at `digits` places, or `-` when there is none.
+
+    A missing figure reads as `-` rather than `0.00`, which would be a measurement.
+    """
+    return "-" if value is None else f"{value:.{digits}f}"
 
 
 README_TITLE = "# Benchmark results"
@@ -265,10 +310,6 @@ def normalised_cell(result: dict) -> str:
 def readme_row(result: dict, filename: str) -> str:
     scenario, run = result["scenario"], result["run"]
     cooldown, hardware = result["cooldown"], result["hardware"]
-
-    def number(value, digits=1):
-        return "-" if value is None else f"{value:.{digits}f}"
-
     return "| " + " | ".join([
         run["finished_utc"],
         scenario["name"],
@@ -277,11 +318,11 @@ def readme_row(result: dict, filename: str) -> str:
         f"{scenario['width']}x{scenario['height']}",
         str(scenario["batch_size"]),
         str(len(scenario["t_index_list"])),
-        number(run["mean_ms_per_frame"], 2),
-        number(run["fps"], 1),
-        number(run["peak_vram_bytes"] / BYTES_PER_MIB, 0),
-        number(run["mean_sm_clock_mhz"], 0),
-        number(run["max_temperature_c"], 0),
+        format_number(run["mean_ms_per_frame"], 2),
+        format_number(run["fps"], 1),
+        format_number(run["peak_vram_bytes"] / BYTES_PER_MIB, 0),
+        format_number(run["mean_sm_clock_mhz"], 0),
+        format_number(run["max_temperature_c"], 0),
         cooldown["outcome"],
         f"[{filename}]({filename})",
         regime_of(result),

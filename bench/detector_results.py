@@ -15,12 +15,11 @@ clock regime attached either.
 
 from __future__ import annotations
 
-import json
 import math
 import statistics
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Dict, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import Dict, List, Mapping, Optional, Sequence, Union
 
 from bench import RESULT_SCHEMA_VERSION
 from bench.clocks import ClockNormalization, regime_of
@@ -37,6 +36,9 @@ from bench.fingerprint import Fingerprint
 from bench.results import (
     BYTES_PER_MIB,
     append_row,
+    format_number,
+    latest_per,
+    load_records,
     normalised_cell,
     require_recordable,
     timestamp_from,
@@ -329,10 +331,6 @@ DETECTOR_README_PREAMBLE = (
 )
 
 
-def _number(value: Optional[float], digits: int = 1) -> str:
-    return "-" if value is None else f"{value:.{digits}f}"
-
-
 def _resolved_cell(result: dict) -> str:
     """`2/3` - how many of the probed concepts this detector actually found."""
     evidence = result.get("evidence") or []
@@ -349,14 +347,14 @@ def detector_readme_row(result: dict, filename: str) -> str:
         detector["role"],
         "open" if detector["open_vocabulary"] else "80 COCO classes",
         f"{run['imgsz']}x{run['imgsz']}",
-        _number(run["latency"]["mean_ms"], 2),
-        _number(run["latency"]["p95_ms"], 2),
+        format_number(run["latency"]["mean_ms"], 2),
+        format_number(run["latency"]["p95_ms"], 2),
         f"1 per {budget['cadence']}",
-        _number(budget["amortised_ms"], 2),
+        format_number(budget["amortised_ms"], 2),
         "yes" if budget["fits"] else "no",
-        _number(result["vram"]["torch_peak_mib"], 0),
-        _number(result["vram"]["combined_used_mib"], 0),
-        _number(change["median_change_ms"], 1) if change["supported"] else "n/a",
+        format_number(result["vram"]["torch_peak_mib"], 0),
+        format_number(result["vram"]["combined_used_mib"], 0),
+        format_number(change["median_change_ms"], 1) if change["supported"] else "n/a",
         _resolved_cell(result),
         result["cooldown"]["outcome"],
         regime_of(result),
@@ -376,23 +374,12 @@ def append_detector_readme_row(result: ResultLike, readme_path: Path, filename: 
 
 def load_detector_results(results_dir: Path) -> Dict[str, dict]:
     """Every detector result under `results_dir`, keyed by filename."""
-    return {path.name: json.loads(path.read_text(encoding="utf-8"))
-            for path in sorted(Path(results_dir).glob("*.json"))}
+    return load_records(results_dir)
 
 
 def latest_per_detector(results: Mapping[str, dict]) -> Dict[str, dict]:
-    """One result per detector: the most recently finished run of each.
-
-    A detector measured twice is two honest records and both stay on disk; a table
-    built from a mixture would compare a cold run against a hot one.
-    """
-    newest: Dict[str, Tuple[str, str]] = {}
-    for filename, result in results.items():
-        name = result["detector"]["name"]
-        finished = str(result["run"]["finished_utc"])
-        if name not in newest or finished > newest[name][1]:
-            newest[name] = (filename, finished)
-    return {filename: results[filename] for filename, _ in newest.values()}
+    """One result per detector: the most recently finished run of each."""
+    return latest_per(results, lambda result: result["detector"]["name"])
 
 
 REPORT_HEADER = ("| detector | role | vocabulary | ms/detect | p95 ms |"
@@ -428,14 +415,14 @@ def _report_row(result: dict) -> str:
         detector["name"],
         detector["role"],
         "open" if detector["open_vocabulary"] else "80 COCO classes",
-        _number(run["latency"]["mean_ms"], 2),
-        _number(run["latency"]["p95_ms"], 2),
+        format_number(run["latency"]["mean_ms"], 2),
+        format_number(run["latency"]["p95_ms"], 2),
         normalised_cell(result),
-        _number(budget["amortised_ms"], 2),
+        format_number(budget["amortised_ms"], 2),
         "yes" if budget["fits"] else "no",
-        _number(result["vram"]["torch_peak_mib"], 0),
-        _number(result["vram"]["combined_used_mib"], 0),
-        _number(change["median_change_ms"], 1) if change["supported"] else "n/a",
+        format_number(result["vram"]["torch_peak_mib"], 0),
+        format_number(result["vram"]["combined_used_mib"], 0),
+        format_number(change["median_change_ms"], 1) if change["supported"] else "n/a",
     ]) + " |"
 
 
@@ -459,7 +446,7 @@ def _evidence_rows(results: Sequence[dict]) -> List[str]:
                 result["detector"]["name"],
                 item["queried"] or "-",
                 "yes" if item["resolved"] else "no",
-                _number(item["top_confidence"], 3),
+                format_number(item["top_confidence"], 3),
                 _other_cell(item),
                 item["frame"],
             ]) + " |")

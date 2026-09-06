@@ -764,9 +764,9 @@ def smooth_track(per_frame: Sequence[Sequence[Box]],
             box = Box(*box)
             candidates = [(iou(tracks[key], box), key) for key in tracks
                           if key not in claimed]
-            best = max(candidates, default=(0.0, None))
-            if best[1] is not None and best[0] >= iou_threshold:
-                key = best[1]
+            overlap, matched = max(candidates, default=(0.0, None))
+            if matched is not None and overlap >= iou_threshold:
+                key = matched
                 box = _blend(tracks[key], box, smoothing)
             else:
                 key, next_id = next_id, next_id + 1

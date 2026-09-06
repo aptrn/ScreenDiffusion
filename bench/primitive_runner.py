@@ -57,6 +57,8 @@ from bench.primitive_results import (
     write_primitive_result,
 )
 from bench.primitives import (
+    IDENTITY_HIT_FRACTION,
+    MASKED,
     PRIMITIVES,
     TRACK_IOU_THRESHOLD,
     TRACK_SMOOTHING,
@@ -75,6 +77,7 @@ from bench.primitives import (
     smooth_track,
     track_path,
 )
+from bench.results import filename_timestamp
 from bench.runner import (
     DEFAULT_SAMPLE_INTERVAL_S,
     GpuSampler,
@@ -104,6 +107,11 @@ TRACK_CONF = 0.25
 # Renders before the timed pass, per arm. The engine is already warmed by
 # `build_stream`; these warm the resize/composite path and the allocator.
 WARMUP_FRAMES = 3
+
+# What the sweep asks about a rendered sequence: how many frames read as the new
+# identity, and how many were probed. `(None, None)` for a case that asks no
+# identity question, or when the detector weights are not cached.
+IdentityProbe = Callable[[Sequence], Tuple[Optional[int], Optional[int]]]
 
 
 def sha256_of(path: Path) -> str:
@@ -241,28 +249,34 @@ def _diffuse(stream, frame):
     return np.asarray(stream(image=stream.preprocess_image(Image.fromarray(frame))))
 
 
-def render_resample_only(stream, frame, regions: Sequence[Box], primitive: str):
-    """`render`'s resize path with the diffusion call taken out.
+def _composite(stream, frame, regions: Sequence[Box], primitive: str,
+               on_canvas: Callable):
+    """Both primitives' shared body: resize onto the canvas, `on_canvas`, paste back.
 
-    The control for "did the render change anything". A primitive that squeezes a
-    1280x720 frame onto a 512x512 canvas and stretches it back has changed the
-    region before it has styled anything, and a visibility criterion that counted
-    that blur would pass a strength that does nothing.
+    `on_canvas` is what happens to a frame once it is the engine's canvas size - the
+    diffusion call for a real render, the identity for the resize control. One body
+    rather than two, so the control provably runs the same resize path instead of a
+    copy of it that can drift - which is what makes the blur it measures subtractable.
+
+    Returns the frame and the number of times `on_canvas` was called, which is the
+    whole cost difference between the two primitives.
     """
     height, width = frame.shape[:2]
     canvas = (stream.width, stream.height)
     output = frame.copy()
-    if primitive == "masked":
-        rendered = resize(resize(frame, *canvas), width, height)
+    if not regions:
+        return output, 0
+    if primitive == MASKED:
+        rendered = resize(on_canvas(resize(frame, *canvas)), width, height)
         for region in regions:
-            output[region.y0:region.y1, region.x0:region.x1] = \
-                rendered[region.y0:region.y1, region.x0:region.x1]
-        return output
+            output[region.y0:region.y1, region.x0:region.x1] = (
+                rendered[region.y0:region.y1, region.x0:region.x1])
+        return output, 1
     for region in regions:
         patch = resize(frame[region.y0:region.y1, region.x0:region.x1], *canvas)
         output[region.y0:region.y1, region.x0:region.x1] = resize(
-            patch, region.width, region.height)
-    return output
+            on_canvas(patch), region.width, region.height)
+    return output, len(regions)
 
 
 def render(stream, frame, regions: Sequence[Box], primitive: str):
@@ -272,22 +286,21 @@ def render(stream, frame, regions: Sequence[Box], primitive: str):
     region on its own 512x512 canvas - which is what upscales a 45 px region 11x -
     and `masked` diffuses the whole frame once and takes the regions out of it.
     """
-    height, width = frame.shape[:2]
-    canvas = (stream.width, stream.height)
-    output = frame.copy()
-    if not regions:
-        return output, 0
-    if primitive == "masked":
-        rendered = resize(_diffuse(stream, resize(frame, *canvas)), width, height)
-        for region in regions:
-            output[region.y0:region.y1, region.x0:region.x1] = \
-                rendered[region.y0:region.y1, region.x0:region.x1]
-        return output, 1
-    for region in regions:
-        patch = resize(frame[region.y0:region.y1, region.x0:region.x1], *canvas)
-        output[region.y0:region.y1, region.x0:region.x1] = resize(
-            _diffuse(stream, patch), region.width, region.height)
-    return output, len(regions)
+    return _composite(stream, frame, regions, primitive,
+                      lambda canvas_frame: _diffuse(stream, canvas_frame))
+
+
+def render_resample_only(stream, frame, regions: Sequence[Box], primitive: str):
+    """`render`'s resize path with the diffusion call taken out.
+
+    The control for "did the render change anything". A primitive that squeezes a
+    1280x720 frame onto a 512x512 canvas and stretches it back has changed the
+    region before it has styled anything, and a visibility criterion that counted
+    that blur would pass a strength that does nothing.
+    """
+    output, _ = _composite(stream, frame, regions, primitive,
+                           lambda canvas_frame: canvas_frame)
+    return output
 
 
 def timed_render(stream, frame, regions: Sequence[Box], primitive: str):
@@ -329,10 +342,12 @@ def set_denoise(stream, t_index: int) -> Tuple[int, float]:
     return timestep, denoise_strength(float(inner.scheduler.alphas_cumprod[timestep]))
 
 
-def sweep_denoise(stream, case: CaseConfig, frames: Sequence, regions_per_frame:
-                  Sequence[Sequence[Box]], primitive: str, identity_probe:
-                  Optional[Callable[[Sequence], Tuple[int, int]]] = None,
-                  log: Callable[[str], None] = print) -> List[DenoisePoint]:
+def sweep_denoise(
+    stream, case: CaseConfig, frames: Sequence,
+    regions_per_frame: Sequence[Sequence[Box]], primitive: str,
+    identity_probe: Optional[IdentityProbe] = None,
+    log: Callable[[str], None] = print,
+) -> List[DenoisePoint]:
     """Render a few frames at every rung of the ladder and record what each did.
 
     Cheap on purpose: the sweep selects a strength, it does not measure a latency.
@@ -362,17 +377,18 @@ def sweep_denoise(stream, case: CaseConfig, frames: Sequence, regions_per_frame:
             outside.append(mean_abs_diff(frame, output, ~mask))
             rendered.append(output)
         hits, probed = identity_probe(rendered) if identity_probe else (None, None)
-        points.append(DenoisePoint(
+        point = DenoisePoint(
             t_index=rung, timestep=timestep, strength=strength,
             region_change=round(statistics.fmean(inside), 4),
             outside_change=round(statistics.fmean(outside), 4),
             frames=len(frames), resample_change=round(control, 4),
             identity_hits=hits, identity_frames=probed,
-        ))
+        )
+        points.append(point)
         log(f"denoise {primitive} t_index {rung} (timestep {timestep}, strength "
-            f"{strength:.2f}): region {points[-1].region_change:.1f} "
-            f"({points[-1].net_region_change:.1f} net), outside "
-            f"{points[-1].outside_change:.1f}"
+            f"{strength:.2f}): region {point.region_change:.1f} "
+            f"({point.net_region_change:.1f} net), outside "
+            f"{point.outside_change:.1f}"
             + (f", identity {hits}/{probed}" if probed else ""))
     return points
 
@@ -437,7 +453,7 @@ def identity_check(model, case: CaseConfig, frames: Sequence) -> IdentityCheck:
         labels = labels_in(model, Image.fromarray(frame))
         became += int(case.becomes in labels)
         remained += int(case.target in labels)
-    achieved = became >= 0.5 * len(frames)
+    achieved = became >= IDENTITY_HIT_FRACTION * len(frames)
     return IdentityCheck(
         detector=PRIMARY_DETECTOR, asked_for=[case.target, case.becomes],
         frames_probed=len(frames), became=became, remained=remained,
@@ -538,6 +554,37 @@ def _arm(case: CaseConfig, primitive: str, points: List[DenoisePoint],
         cannot_express=PRIMITIVES[primitive].cannot_express,
         identity=identity,
     )
+
+
+def _write_comparison_artefacts(
+    frames: Sequence, outputs: Dict[str, List], primitives: Sequence[str],
+    results_dir: Path, stem: str, fps: float, log: Callable[[str], None],
+) -> Tuple[Dict[str, str], str, str]:
+    """The files a human judges the comparison by; returns their names.
+
+    One mp4 per arm, the source | A | B triptych they are read against, and one
+    full-resolution still of it - the small-crop quality floor is only visible at
+    native resolution, which the downscaled clip throws away. The Gate's manual
+    verification step has to be pointed at a file, not at a number.
+    """
+    clip_files = {}
+    for primitive in primitives:
+        written = write_clip(
+            [_resized_panel(frame, COMPARISON_PANEL_WIDTH)
+             for frame in outputs[primitive]],
+            results_dir / f"{stem}-{primitive}.mp4", fps)
+        clip_files[primitive] = written.name
+    rendered = [outputs[primitive] for primitive in primitives]
+    comparison = write_clip(triptych(frames, rendered),
+                            results_dir / f"{stem}-triptych.mp4", fps).name
+    middle = len(frames) // 2
+    still = write_still(
+        triptych(frames[middle:middle + 1],
+                 [sequence[middle:middle + 1] for sequence in rendered],
+                 panel_width=None)[0],
+        results_dir / f"{stem}-triptych.jpg").name
+    log(f"clips: {comparison}, {still}, {', '.join(clip_files.values())}")
+    return clip_files, comparison, still
 
 
 def run_case(
@@ -643,33 +690,21 @@ def run_case(
         if detector is not None and case.becomes:
             identity = identity_check(detector, case, outputs[primitive])
             log(f"identity {primitive}: {identity.statement}")
-        arms.append(_arm(case, primitive, points[primitive], per_frame_ms[primitive],
-                         calls[primitive], frames, outputs[primitive], masks,
-                         identity))
-        log(f"{primitive}: {arms[-1].ms_per_frame:.2f} ms/frame, flicker "
-            f"{arms[-1].flicker.mean_abs_diff}, expresses {arms[-1].expresses}")
+        arm = _arm(case, primitive, points[primitive], per_frame_ms[primitive],
+                   calls[primitive], frames, outputs[primitive], masks, identity)
+        arms.append(arm)
+        log(f"{primitive}: {arm.ms_per_frame:.2f} ms/frame, flicker "
+            f"{arm.flicker.mean_abs_diff}, expresses {arm.expresses}")
 
     results_dir = Path(results_dir)
-    timestamp = utc_now().replace("-", "").replace(":", "").replace("T", "-")
+    # The same spelling the record's own filename uses, so the clips written beside
+    # it carry the same stem.
+    timestamp = filename_timestamp(utc_now())
     stem = f"{case.name}-{timestamp}"
     clip_files, comparison, still = {}, "", ""
     if write_clips:
-        for primitive in primitives:
-            written = write_clip(
-                [_resized_panel(frame, COMPARISON_PANEL_WIDTH)
-                 for frame in outputs[primitive]],
-                results_dir / f"{stem}-{primitive}.mp4", meta["fps"])
-            clip_files[primitive] = written.name
-        comparison = write_clip(
-            triptych(frames, [outputs[primitive] for primitive in primitives]),
-            results_dir / f"{stem}-triptych.mp4", meta["fps"]).name
-        middle = len(frames) // 2
-        still = write_still(
-            triptych(frames[middle:middle + 1],
-                     [outputs[primitive][middle:middle + 1]
-                      for primitive in primitives], panel_width=None)[0],
-            results_dir / f"{stem}-triptych.jpg").name
-        log(f"clips: {comparison}, {still}, {', '.join(clip_files.values())}")
+        clip_files, comparison, still = _write_comparison_artefacts(
+            frames, outputs, primitives, results_dir, stem, meta["fps"], log)
     arms = [dataclasses.replace(
         arm, clip_file=clip_files.get(arm.primitive, ""),
         # One clock trace, two timings: each arm is normalised against its own raw
