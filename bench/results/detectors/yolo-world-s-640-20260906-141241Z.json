@@ -1,0 +1,744 @@
+{
+  "budget": {
+    "amortised_ms": 4.7718,
+    "budget_max_ms": 8.0,
+    "budget_min_ms": 4.0,
+    "cadence": 3,
+    "cadence_required": 2,
+    "fits": true,
+    "ms_per_detect": 14.3154,
+    "statement": "14.32 ms per detect at one detect every 3rd frame is 4.77 ms/frame amortised, inside the 4-8 ms budget"
+  },
+  "clock_normalization": {
+    "basis_mhz": 2100.0,
+    "basis_source": "clocks.max.sm",
+    "method": "ms_per_frame * time-weighted mean SM clock / basis clock",
+    "ms_per_frame": 10.9997,
+    "note": "Clocks were not locked (unlocked), so the raw figure carries this run's clock. This is a first-order estimate of the same work at 2100 MHz, not a measurement, and not a substitute for `nvidia-smi --lock-gpu-clocks` from an elevated shell.",
+    "regime": "unlocked",
+    "sampled_mean_sm_clock_mhz": 1613.6
+  },
+  "cooldown": {
+    "cap_s": 120.0,
+    "enabled": true,
+    "final_temperature_c": 62.0,
+    "outcome": "reached",
+    "reached": true,
+    "samples": [
+      [
+        0.0470000000022992,
+        64.0
+      ],
+      [
+        2.0940000000009604,
+        67.0
+      ],
+      [
+        4.125,
+        67.0
+      ],
+      [
+        6.172000000002299,
+        65.0
+      ],
+      [
+        8.21900000000096,
+        64.0
+      ],
+      [
+        10.265999999999622,
+        65.0
+      ],
+      [
+        12.2970000000023,
+        67.0
+      ],
+      [
+        14.34400000000096,
+        64.0
+      ],
+      [
+        16.375,
+        63.0
+      ],
+      [
+        18.4220000000023,
+        64.0
+      ],
+      [
+        20.46900000000096,
+        66.0
+      ],
+      [
+        22.51599999999962,
+        64.0
+      ],
+      [
+        24.5470000000023,
+        63.0
+      ],
+      [
+        26.59400000000096,
+        63.0
+      ],
+      [
+        28.64099999999962,
+        67.0
+      ],
+      [
+        30.68800000000192,
+        67.0
+      ],
+      [
+        32.73500000000058,
+        68.0
+      ],
+      [
+        34.76599999999962,
+        65.0
+      ],
+      [
+        36.81300000000192,
+        64.0
+      ],
+      [
+        38.86000000000058,
+        64.0
+      ],
+      [
+        40.89099999999962,
+        64.0
+      ],
+      [
+        42.93800000000192,
+        64.0
+      ],
+      [
+        44.98500000000058,
+        64.0
+      ],
+      [
+        47.03099999999904,
+        64.0
+      ],
+      [
+        49.07800000000134,
+        64.0
+      ],
+      [
+        51.125,
+        64.0
+      ],
+      [
+        53.1720000000023,
+        63.0
+      ],
+      [
+        55.21900000000096,
+        63.0
+      ],
+      [
+        57.26599999999962,
+        63.0
+      ],
+      [
+        59.31300000000192,
+        64.0
+      ],
+      [
+        61.34400000000096,
+        63.0
+      ],
+      [
+        63.39099999999962,
+        64.0
+      ],
+      [
+        65.43800000000192,
+        64.0
+      ],
+      [
+        67.46900000000096,
+        63.0
+      ],
+      [
+        69.51599999999962,
+        63.0
+      ],
+      [
+        71.56300000000192,
+        63.0
+      ],
+      [
+        73.61000000000058,
+        63.0
+      ],
+      [
+        75.64099999999962,
+        63.0
+      ],
+      [
+        77.70300000000134,
+        63.0
+      ],
+      [
+        79.73500000000058,
+        63.0
+      ],
+      [
+        81.78099999999904,
+        63.0
+      ],
+      [
+        83.82800000000134,
+        63.0
+      ],
+      [
+        85.86000000000058,
+        63.0
+      ],
+      [
+        87.90599999999904,
+        64.0
+      ],
+      [
+        89.95300000000134,
+        64.0
+      ],
+      [
+        92.0,
+        63.0
+      ],
+      [
+        94.03099999999904,
+        63.0
+      ],
+      [
+        96.07800000000134,
+        63.0
+      ],
+      [
+        98.11000000000058,
+        63.0
+      ],
+      [
+        100.15599999999904,
+        63.0
+      ],
+      [
+        102.20300000000134,
+        63.0
+      ],
+      [
+        104.23500000000058,
+        62.0
+      ]
+    ],
+    "threshold_c": 62.0,
+    "waited_s": 104.23500000000058
+  },
+  "desktop_control": {
+    "concept": "desktop",
+    "detections": [],
+    "frame": "desktop capture (mss), nothing composited in",
+    "image_name": "desktop",
+    "image_sha256": "",
+    "image_source": "live screen via mss",
+    "kind": "control",
+    "note": "The screen as it actually was, with nothing composited in. Not a concept probe: it is the control that separates a detector which found the composited photo from one that returns boxes regardless.",
+    "queried": "person, red mug, dog",
+    "resolved": false,
+    "strongest_other": [],
+    "top_confidence": null
+  },
+  "detector": {
+    "conf": 0.05,
+    "imgsz": 640,
+    "loader": "YOLOWorld",
+    "name": "yolo-world-s-640",
+    "note": "The candidate. Text embeddings are precomputed for a fixed vocabulary and detection then runs at YOLOv8 speed, which is this architecture's cold-path / hot-path split exactly.",
+    "open_vocabulary": true,
+    "reps": 200,
+    "role": "candidate",
+    "swap_vocabulary": [
+      "cat",
+      "blue chair",
+      "laptop"
+    ],
+    "vocabulary": [
+      "person",
+      "red mug",
+      "dog"
+    ],
+    "warmup_reps": 50,
+    "weights": "yolov8s-worldv2.pt",
+    "weights_url": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8s-worldv2.pt"
+  },
+  "evidence": [
+    {
+      "concept": "person",
+      "detections": [
+        {
+          "box_xyxy": [
+            746.9,
+            454.1,
+            861.2,
+            763.8
+          ],
+          "confidence": 0.8272,
+          "label": "person"
+        },
+        {
+          "box_xyxy": [
+            847.5,
+            456.1,
+            927.2,
+            738.0
+          ],
+          "confidence": 0.8057,
+          "label": "person"
+        },
+        {
+          "box_xyxy": [
+            1120.1,
+            431.1,
+            1207.6,
+            740.0
+          ],
+          "confidence": 0.6274,
+          "label": "person"
+        },
+        {
+          "box_xyxy": [
+            710.2,
+            570.2,
+            756.0,
+            740.3
+          ],
+          "confidence": 0.4643,
+          "label": "person"
+        },
+        {
+          "box_xyxy": [
+            704.7,
+            537.5,
+            762.2,
+            748.4
+          ],
+          "confidence": 0.3842,
+          "label": "person"
+        },
+        {
+          "box_xyxy": [
+            853.5,
+            473.7,
+            906.2,
+            733.3
+          ],
+          "confidence": 0.071,
+          "label": "person"
+        },
+        {
+          "box_xyxy": [
+            709.1,
+            535.3,
+            746.8,
+            742.8
+          ],
+          "confidence": 0.0536,
+          "label": "person"
+        }
+      ],
+      "frame": "desktop capture (mss) with the photo composited in",
+      "image_name": "bus.jpg",
+      "image_sha256": "c02019c4979c191eb739ddd944445ef408dad5679acab6fd520ef9d434bfbc63",
+      "image_source": "https://ultralytics.com/images/bus.jpg",
+      "kind": "COCO class",
+      "note": "Issue #4 step 4(a). The baseline: if this fails nothing else matters.",
+      "queried": "person",
+      "resolved": true,
+      "strongest_other": [],
+      "top_confidence": 0.8272
+    },
+    {
+      "concept": "red mug",
+      "detections": [
+        {
+          "box_xyxy": [
+            518.2,
+            238.1,
+            1098.6,
+            873.0
+          ],
+          "confidence": 0.9761,
+          "label": "red mug"
+        }
+      ],
+      "frame": "desktop capture (mss) with the photo composited in",
+      "image_name": "red-mug.jpg",
+      "image_sha256": "62575e42234b4fed9d599397739bed2aa8eb1e7044dce23a5ba49d374cb69256",
+      "image_source": "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a2/Red_mug%2C_red_table_-_Flickr_-_sampsyo.jpg/1280px-Red_mug%2C_red_table_-_Flickr_-_sampsyo.jpg",
+      "kind": "open vocabulary",
+      "note": "Issue #4 step 4(b). A red mug on a red table, so the noun alone is not enough and the attribute has to do some work. No COCO class expresses it: the nearest, `cup`, is the whole point of the 80-noun cap.",
+      "queried": "red mug",
+      "resolved": true,
+      "strongest_other": [],
+      "top_confidence": 0.9761
+    },
+    {
+      "concept": "dog",
+      "detections": [
+        {
+          "box_xyxy": [
+            627.2,
+            236.6,
+            1322.2,
+            830.2
+          ],
+          "confidence": 0.9165,
+          "label": "dog"
+        }
+      ],
+      "frame": "desktop capture (mss) with the photo composited in",
+      "image_name": "dog.jpg",
+      "image_sha256": "f3f87bb8ab3c26c7ecfd3ac60421d7f32b0503d1d6c5baf8bac42ed93d86351a",
+      "image_source": "https://raw.githubusercontent.com/pytorch/hub/master/images/dog.jpg",
+      "kind": "non-COCO animal",
+      "note": "Issue #4 step 4(c).",
+      "queried": "dog",
+      "resolved": true,
+      "strongest_other": [],
+      "top_confidence": 0.9165
+    }
+  ],
+  "frame_path": {
+    "after_ms": 13.4362,
+    "before_ms": 14.5833,
+    "change_ms": 16.1693,
+    "delta_fraction": -0.078658,
+    "delta_ms": -1.1471,
+    "first_detect_ms": 122.8478,
+    "first_detect_overhead_ms": 108.2645,
+    "free_on_frame_path": false,
+    "passes": [
+      14.6979,
+      13.1747,
+      14.8153,
+      13.8245,
+      13.9945,
+      13.3754
+    ],
+    "statement": "Steady-state detect latency is 14.58 ms on the original vocabulary and 13.44 ms on the new one (-7.9%, within 10%), so detecting against a changed vocabulary is no dearer. The 16.2 ms the change itself cost is paid once, on the cold path. The change is not free on the frame path either: the *first* detect after it costs 122.85 ms, 108.26 ms more than a steady one, because ultralytics' `set_classes` drops the predictor and the next call rebuilds it. Re-warm the detector with one throwaway detect on the cold path and the frame path never sees it. The two vocabularies ran in alternating blocks and each arm is pooled over all of its detects, so a drifting clock lands on both; the block medians in order were 14.70, 13.17, 14.82, 13.82, 13.99, 13.38 ms.",
+    "tolerance": 0.1,
+    "unaffected": true
+  },
+  "hardware": {
+    "clock_lock": {
+      "applied_clock_mhz": null,
+      "current_sm_clock_mhz": 240.0,
+      "evidence": "clocks_event_reasons.applications_clocks_setting=Not Active",
+      "max_sm_clock_mhz": 2100.0,
+      "state": "unlocked"
+    },
+    "cuda_version": "12.8",
+    "driver_version": "595.79",
+    "enforced_power_limit_w": 115.0,
+    "gpu_name": "NVIDIA GeForce RTX 3080 Laptop GPU",
+    "hostname": "Ale-Zephyrus",
+    "nvidia_smi_captured_utc": "2026-09-06T14:10:40Z",
+    "nvidia_smi_raw": "Sun Sep  6 16:10:39 2026       \n+-----------------------------------------------------------------------------------------+\n| NVIDIA-SMI 595.79                 Driver Version: 595.79         CUDA Version: 13.2     |\n+-----------------------------------------+------------------------+----------------------+\n| GPU  Name                  Driver-Model | Bus-Id          Disp.A | Volatile Uncorr. ECC |\n| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |\n|                                         |                        |               MIG M. |\n|=========================================+========================+======================|\n|   0  NVIDIA GeForce RTX 3080 ...  WDDM  |   00000000:01:00.0 Off |                  N/A |\n| N/A   63C    P8             23W /  115W |      72MiB /  16384MiB |      1%      Default |\n|                                         |                        |                  N/A |\n+-----------------------------------------+------------------------+----------------------+\n\n+-----------------------------------------------------------------------------------------+\n| Processes:                                                                              |\n|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |\n|        ID   ID                                                               Usage      |\n|=========================================================================================|\n|    0   N/A  N/A           19696    C+G   ...esigner\\bin\\TouchDesigner.exe      N/A      |\n+-----------------------------------------------------------------------------------------+\n",
+    "power_limit_w": null,
+    "torch_version": "2.7.0+cu128",
+    "total_vram_mib": 16384.0
+  },
+  "kind": "detector",
+  "run": {
+    "detects_per_second": 69.855,
+    "finished_utc": "2026-09-06T14:12:41Z",
+    "gpu_samples": [
+      [
+        0.0450459999992745,
+        1785.0,
+        73.0
+      ],
+      [
+        0.6050207999978738,
+        1785.0,
+        75.0
+      ],
+      [
+        1.1515770000005432,
+        1665.0,
+        76.0
+      ],
+      [
+        1.6959649999989779,
+        1485.0,
+        74.0
+      ],
+      [
+        2.2393326999990677,
+        1485.0,
+        74.0
+      ],
+      [
+        2.7841092999988177,
+        1500.0,
+        75.0
+      ]
+    ],
+    "imgsz": 640,
+    "latency": {
+      "max_ms": 27.1681,
+      "mean_ms": 14.3154,
+      "median_ms": 13.8568,
+      "min_ms": 12.6687,
+      "p95_ms": 16.9798,
+      "stdev_ms": 1.6188
+    },
+    "max_temperature_c": 76.0,
+    "mean_sm_clock_mhz": 1617.5,
+    "per_rep_ms": [
+      16.8706,
+      15.5369,
+      15.1769,
+      14.2417,
+      14.6134,
+      14.8405,
+      15.7444,
+      15.8189,
+      14.6473,
+      13.547,
+      13.75,
+      13.1802,
+      14.0833,
+      14.0781,
+      13.7956,
+      12.9679,
+      13.609,
+      13.0601,
+      13.9122,
+      14.5251,
+      15.1084,
+      14.5283,
+      13.589,
+      13.624,
+      13.1962,
+      14.0008,
+      12.9273,
+      13.3999,
+      12.8636,
+      14.7161,
+      12.9815,
+      13.9846,
+      13.0618,
+      13.299,
+      13.2345,
+      13.0964,
+      14.2291,
+      14.8788,
+      15.2987,
+      15.0257,
+      13.8099,
+      14.8535,
+      15.9864,
+      15.2634,
+      14.613,
+      15.6792,
+      13.7481,
+      13.4196,
+      14.6418,
+      13.8433,
+      13.3852,
+      14.8416,
+      13.5209,
+      13.0831,
+      13.5693,
+      13.6749,
+      13.4272,
+      15.4791,
+      12.9131,
+      13.5459,
+      12.8342,
+      15.0771,
+      13.6226,
+      18.2817,
+      13.9348,
+      13.4211,
+      13.6244,
+      12.9037,
+      13.2353,
+      13.6657,
+      13.7244,
+      13.3423,
+      12.929,
+      13.1482,
+      13.9337,
+      15.3778,
+      13.1774,
+      13.7651,
+      18.1538,
+      15.1981,
+      15.4701,
+      16.9219,
+      14.2655,
+      14.8399,
+      14.7544,
+      14.4693,
+      13.8655,
+      13.4959,
+      14.245,
+      13.2453,
+      13.3086,
+      14.5861,
+      14.708,
+      15.0269,
+      14.4658,
+      13.5007,
+      27.1681,
+      14.514,
+      13.8419,
+      13.6095,
+      13.1626,
+      13.493,
+      13.8697,
+      15.0987,
+      15.2161,
+      13.7025,
+      14.6794,
+      14.1783,
+      13.7888,
+      13.6422,
+      15.0455,
+      13.5879,
+      14.9877,
+      14.3655,
+      14.9273,
+      18.4989,
+      14.3613,
+      14.859,
+      13.6327,
+      15.0779,
+      13.6668,
+      13.354,
+      12.9793,
+      12.979,
+      14.1569,
+      14.8104,
+      13.0857,
+      13.3311,
+      13.4065,
+      13.2938,
+      14.52,
+      14.2249,
+      13.53,
+      13.4358,
+      13.2547,
+      14.3967,
+      14.3054,
+      13.7868,
+      13.3169,
+      13.174,
+      13.7723,
+      13.6476,
+      14.4754,
+      12.7271,
+      13.1926,
+      12.9711,
+      13.3567,
+      15.3473,
+      14.094,
+      13.7592,
+      13.4724,
+      12.6687,
+      13.7825,
+      14.5498,
+      16.9798,
+      13.6998,
+      14.2785,
+      13.8033,
+      20.4397,
+      13.0924,
+      12.8473,
+      13.8506,
+      14.1887,
+      12.8626,
+      13.4528,
+      15.1307,
+      13.772,
+      13.4138,
+      14.6153,
+      13.433,
+      13.8631,
+      12.9361,
+      13.1303,
+      15.3956,
+      14.8682,
+      12.7261,
+      12.8898,
+      12.6926,
+      14.5135,
+      14.4709,
+      15.2181,
+      18.6181,
+      20.5929,
+      19.0821,
+      18.2796,
+      16.5862,
+      15.3912,
+      14.4493,
+      13.8849,
+      13.4749,
+      14.1141,
+      17.8069,
+      15.273,
+      14.6651,
+      13.4955,
+      13.9348,
+      14.0165,
+      13.0485,
+      13.7241,
+      13.0916
+    ],
+    "reps": 200,
+    "started_utc": "2026-09-06T14:12:38Z",
+    "timing_frame": "desktop capture (mss) with an evidence photo composited in, resized to 640x640",
+    "ultralytics_speed_ms": {
+      "inference": 9.2801,
+      "postprocess": 1.4519,
+      "preprocess": 1.1005
+    },
+    "warmup_reps": 50
+  },
+  "schema_version": 2,
+  "vocabulary_change": {
+    "change_ms": [
+      16.9384,
+      16.052,
+      15.3562,
+      16.2866,
+      16.9821,
+      16.0124
+    ],
+    "first_change_ms": 2756.7213,
+    "median_change_ms": 16.1693,
+    "note": "A vocabulary change re-encodes the terms with clip:ViT-B/32 and writes the embeddings into the detection head. It happens when the user edits the target field - the cold path - and never inside a frame. The first change also loads the text encoder.",
+    "supported": true,
+    "terms": [
+      "cat",
+      "blue chair",
+      "laptop"
+    ],
+    "text_encoder": "clip:ViT-B/32"
+  },
+  "vram": {
+    "baseline_used_mib": 72.0,
+    "combined_used_mib": 7182.0,
+    "detector_delta_mib": 1562.0,
+    "diffusion_scenario": "img2img-tensorrt-512x512-b1",
+    "diffusion_used_mib": 5620.0,
+    "note": "Measured on the development laptop. VRAM ceilings do not transfer (spec 7.4) - re-measure the combined figure on the deploy GPU.",
+    "torch_peak_bytes": 3750975488,
+    "torch_peak_mib": 3577.2
+  }
+}

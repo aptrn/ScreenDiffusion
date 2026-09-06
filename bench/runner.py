@@ -175,8 +175,14 @@ def _time_modules(stream, scenario: ScenarioConfig, batch, reps: int) -> Dict[st
             for label in TIMED_SUBMODULES.values()}
 
 
-def _cooldown(enabled: bool, threshold_c: float, cap_s: float,
-              poll_interval_s: float, log: Callable[[str], None]) -> CooldownRecord:
+def cooldown_gate(enabled: bool, threshold_c: float, cap_s: float,
+                  poll_interval_s: float, log: Callable[[str], None]) -> CooldownRecord:
+    """Wait for a cool GPU, or record that the wait was skipped or capped.
+
+    Public because `bench.detector_runner` opens the same gate before its own timed
+    region (issue #4): a detector measured on a throttled die is as misleading as a
+    diffusion cell measured on one.
+    """
     if not enabled:
         log("cooldown: skipped (--no-cooldown)")
         return skipped_cooldown(threshold_c=threshold_c, cap_s=cap_s)
@@ -190,7 +196,7 @@ def _cooldown(enabled: bool, threshold_c: float, cap_s: float,
     return record
 
 
-class _GpuSampler:
+class GpuSampler:
     """Polls clocks and temperature on a background thread while the reps run.
 
     Sampling from inside the timed loop was the first version and it was wrong:
@@ -215,7 +221,7 @@ class _GpuSampler:
                                  sample.sm_clock_mhz, sample.temperature_c])
             self._stop.wait(self.interval_s)
 
-    def __enter__(self) -> "_GpuSampler":
+    def __enter__(self) -> "GpuSampler":
         self._started = time.perf_counter()
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
@@ -276,7 +282,7 @@ def run_scenario(
     stream = build_stream(scenario, engines_root=engines_root)
     batch = _input_batch(stream, scenario)
 
-    cooldown_record = _cooldown(cooldown, threshold_c, cap_s, poll_interval_s, log)
+    cooldown_record = cooldown_gate(cooldown, threshold_c, cap_s, poll_interval_s, log)
 
     for _ in range(scenario.warmup_reps):
         stream(image=batch)
@@ -285,7 +291,7 @@ def run_scenario(
     torch.cuda.reset_peak_memory_stats()
     started_utc = utc_now()
     per_rep_ms: List[float] = []
-    with _GpuSampler(sample_interval_s) as sampler:
+    with GpuSampler(sample_interval_s) as sampler:
         for _ in range(scenario.reps):
             torch.cuda.synchronize()
             start = time.perf_counter()

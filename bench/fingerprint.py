@@ -39,6 +39,11 @@ FINGERPRINT_FIELDS: Tuple[str, ...] = ("name", "memory.total", "driver_version",
                                        "power.limit", "enforced.power.limit")
 # Varying during the run, sampled per rep so a throttled run stays visible.
 SAMPLE_FIELDS: Tuple[str, ...] = ("clocks.sm", "temperature.gpu")
+# Device memory in use across the whole GPU. `torch.cuda.max_memory_allocated` sees
+# only what the torch allocator handed out, and a TensorRT engine allocates outside
+# it - so answering "do the detector and the diffusion engine fit together?" (issue
+# #4) needs the driver's figure, not torch's.
+MEMORY_USED_FIELD = "memory.used"
 
 Runner = Callable[[Sequence[str]], str]
 
@@ -120,6 +125,17 @@ def read_gpu_sample(run: Runner = _run) -> GpuSample:
         sm_clock_mhz=parse_number(row.get("clocks.sm")),
         temperature_c=parse_number(row.get("temperature.gpu")),
     )
+
+
+def read_memory_used_mib(run: Runner = _run) -> Optional[float]:
+    """Device memory in use right now, across every process on the GPU.
+
+    Across *every* process: that is what makes it the right reading for "does the
+    detector fit beside the diffusion engine?" and the wrong one for "how much does
+    the detector use". The run takes it three times - empty, one model resident,
+    both - so the difference answers the second question too.
+    """
+    return parse_number(query((MEMORY_USED_FIELD,), run=run).get(MEMORY_USED_FIELD))
 
 
 def read_clock_lock(run: Runner = _run) -> ClockLock:

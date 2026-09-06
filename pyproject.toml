@@ -36,6 +36,15 @@ dependencies = [
     "dxcam",
     "mss",
     "opencv-python==4.10.0.84",
+
+    # --- Open-vocabulary detection (issue #4, spec 8.1) ---
+    # NOTE: ultralytics is AGPL-3.0 and this project is MIT. Fine for benchmarking;
+    # shipping it is a licensing decision that has not been taken.
+    # `clip` is ultralytics' fork, and is what YOLO-World encodes a vocabulary with.
+    # ultralytics pip-installs it from git on first use if it is absent; pinning it
+    # here puts it in the lockfile instead of in a surprise subprocess.
+    "ultralytics>=8.4.142",
+    "clip",
 ]
 
 # xformers is intentionally omitted: on cu128 it fails to build, and RTX 30/40/50
@@ -50,6 +59,7 @@ torch = { index = "pytorch-cu128" }
 torchvision = { index = "pytorch-cu128" }
 tensorrt-cu12-bindings = { index = "nvidia" }
 tensorrt-cu12-libs = { index = "nvidia" }
+clip = { git = "https://github.com/ultralytics/CLIP.git" }
 
 [[tool.uv.index]]
 name = "pytorch-cu128"

@@ -7,6 +7,10 @@ __pycache__/
 # Downloaded models & TensorRT engines
 models/
 engines/
+# ultralytics resolves WEIGHTS_DIR to <cwd>/weights and drops a 338 MB CLIP
+# checkpoint there. bench/detector_runner.py repoints it at the shared models root;
+# this catches anything that does not go through the harness.
+weights/
 *.safetensors
 *.engine
 
