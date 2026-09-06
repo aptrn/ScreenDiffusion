@@ -35,8 +35,8 @@ from bench.paths import (
 from bench.primitive_results import format_primitive_report, load_primitive_results
 from bench.primitives import CASES, CaseConfig
 from bench.scenarios import SCENARIOS, ScenarioConfig
-from bench.selective import CASES as SELECTIVE_CASES
 from bench.selective import (
+    CASES as SELECTIVE_CASES,
     SelectiveCase,
     format_selective_report,
     load_selective_results,
@@ -386,8 +386,8 @@ def run_primitive_target(args: argparse.Namespace, case: CaseConfig) -> int:
 def run_selective_target(args: argparse.Namespace, case: SelectiveCase) -> int:
     """Drive the shipped selective path over one clip (issue #8). Imported late.
 
-    Through the same cached engine both primitives were compared on, so it goes
-    through the same engine-build guard a diffusion run does.
+    Rendered through the same cached engine both primitives were compared on, so it
+    passes the same engine-build guard a diffusion run does.
     """
     from bench.selective import ENGINE_SCENARIO
     from bench.selective_runner import run_selective

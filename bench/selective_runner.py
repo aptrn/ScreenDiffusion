@@ -42,10 +42,10 @@ from bench.primitive_results import ClipRecord
 from bench.primitives import clip_path
 from bench.primitive_runner import (
     COMPARISON_PANEL_WIDTH,
-    _resized_panel,
     mean_abs_diff,
     read_clip,
     resize,
+    resized_panel,
     set_denoise,
     sha256_of,
     triptych,
@@ -254,7 +254,6 @@ def run_selective(
         # paying them inside the timed loop would measure issue #4's cold path.
         detection.offer(tensors[0], 0)
         detection.wait_for_tick(1, timeout=120.0)
-    scheduler = RegionScheduler()
 
     cooldown_record = cooldown_gate(cooldown, threshold_c, cap_s, poll_interval_s, log)
 
@@ -390,9 +389,8 @@ def _write_artefacts(sources: Sequence, outputs: Sequence, results_dir: Path,
     """
     comparison = write_clip(triptych(sources, [outputs]),
                             results_dir / f"{stem}-comparison.mp4", fps).name
-    render = write_clip([_resized_panel(frame, COMPARISON_PANEL_WIDTH)
-                         for frame in outputs],
-                        results_dir / f"{stem}-render.mp4", fps).name
+    panels = [resized_panel(frame, COMPARISON_PANEL_WIDTH) for frame in outputs]
+    render = write_clip(panels, results_dir / f"{stem}-render.mp4", fps).name
     middle = len(sources) // 2
     still = write_still(
         triptych(sources[middle:middle + 1], [outputs[middle:middle + 1]],

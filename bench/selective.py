@@ -94,8 +94,8 @@ class SelectiveCase:
     frames: int = 48
     start_frame: int = 0
     warmup_frames: int = 3
-    # Frames sampled for the round-robin probe's report; the probe itself replays
-    # every frame's tracks.
+    # K forced down for the round-robin probe, which replays every frame's tracks
+    # through the shipped scheduler; the clip holds fewer people than the plan's K.
     coverage_slots: int = COVERAGE_PROBE_SLOTS
 
     def plan(self):
@@ -169,13 +169,13 @@ def background_check(pixels_changed: Sequence[int],
     identical = sum(1 for count in pixels_changed if count == 0)
     worst = max(pixels_changed) if pixels_changed else 0
     passed = frames > 0 and identical == frames
+    detail = (f" ({background_pixels} background pixels on the frame with the "
+              f"most painted)" if passed else
+              f"; the worst frame changed {worst} of {background_pixels} of them")
     statement = (
         f"{identical}/{frames} frames left every pixel outside the rendered regions "
-        f"exactly as captured"
+        f"exactly as captured{detail}"
     )
-    statement += (f" ({background_pixels} background pixels on the frame with the "
-                  f"most painted)" if passed else
-                  f"; the worst frame changed {worst} of {background_pixels} of them")
     return BackgroundCheck(frames=frames, identical_frames=identical,
                            worst_pixels_changed=worst,
                            background_pixels=background_pixels,
@@ -600,13 +600,15 @@ def format_selective_report(results: Mapping[str, dict]) -> str:
     if not ordered:
         return "no selective render run committed yet"
 
-    newest = ordered[0]
-    hardware = newest["hardware"]
+    # The case the prose details: the table lists every case, the preamble
+    # and the Gate lines belong to the first of them.
+    primary = ordered[0]
+    hardware = primary["hardware"]
     preamble = (
-        f"Measured on {hardware['gpu_name']}, {newest['run']['engine_scenario']}, "
-        f"{newest['clip']['frames_used']} consecutive frames of "
-        f"`{newest['clip']['name']}` resized to the app's "
-        f"{newest['case']['canvas']}x{newest['case']['canvas']} capture canvas. "
+        f"Measured on {hardware['gpu_name']}, {primary['run']['engine_scenario']}, "
+        f"{primary['clip']['frames_used']} consecutive frames of "
+        f"`{primary['clip']['name']}` resized to the app's "
+        f"{primary['case']['canvas']}x{primary['case']['canvas']} capture canvas. "
         f"Clocks {hardware['clock_lock']['state']}; absolute figures belong to this "
         f"GPU (spec 7.4), and 30 FPS is M2's gate, not this one's."
     )
@@ -614,10 +616,10 @@ def format_selective_report(results: Mapping[str, dict]) -> str:
         preamble,
         "\n".join([REPORT_HEADER, REPORT_SEPARATOR] + _report_rows(ordered)),
         "The Gate, measured:",
-        "\n".join(_gate_lines(newest)),
+        "\n".join(_gate_lines(primary)),
     ]
-    if newest.get("comparison_clip"):
+    if primary.get("comparison_clip"):
         sections.append(
-            f"Manual verification artefact: `{newest['comparison_clip']}` "
-            f"(source | selective render) and `{newest['comparison_still']}`.")
+            f"Manual verification artefact: `{primary['comparison_clip']}` "
+            f"(source | selective render) and `{primary['comparison_still']}`.")
     return "\n\n".join(sections)

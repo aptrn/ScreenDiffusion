@@ -37,7 +37,7 @@ from detector_worker import BackgroundDetector, UltralyticsDetector, frame_to_ar
 
 # The selective render path (issue #8, spec 5.1 C5/C7): which regions this frame
 # renders, and how they are blended back onto the capture. Stdlib and numpy.
-from region_scheduler import RegionScheduler, selection_status
+from region_scheduler import RegionScheduler
 from compositor import MASKED, Compositor
 
 APP_ROOT = (Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent)
@@ -1009,9 +1009,12 @@ def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Qu
                         # Onto the capture the engine was given, never onto the
                         # previous output: outside the regions the frame has to be
                         # the captured pixels, byte for byte.
-                        images = [Image.fromarray(compositor.blend(
-                            frame_to_array(batch[index]), np.asarray(im), render.alpha))
-                            for index, im in enumerate(images)]
+                        images = [
+                            Image.fromarray(compositor.blend(
+                                frame_to_array(batch[index]), np.asarray(im),
+                                render.alpha))
+                            for index, im in enumerate(images)
+                        ]
                 else:
                     # A selective plan that found nothing to restyle. There is no
                     # pixel anyone asked to change, so the frame costs no diffusion
@@ -1030,7 +1033,7 @@ def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Qu
                     try: fps_queue.get_nowait()
                     except Exception: break
                 payload = fps_payload(int(round(fps)), tracks, detect_every_n)
-                payload.update(selection_status(selection, scheduler.skipped_small_total))
+                payload.update(scheduler.status(selection))
                 fps_queue.put(payload)
             except Exception:
                 time.sleep(0.01)

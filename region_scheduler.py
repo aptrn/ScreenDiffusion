@@ -117,7 +117,7 @@ class Selection:
     @property
     def deferred(self) -> int:
         """Eligible tracks this frame had no slot for. They go first next frame."""
-        return len(self.candidate_ids) - len(self.regions)
+        return self.candidates - self.count
 
     @property
     def boxes(self) -> Tuple[Box, ...]:
@@ -232,6 +232,8 @@ class RegionScheduler:
         if plan.mode == GLOBAL or not plan.targets:
             return Selection(mode=plan.mode, plan_version=plan.plan_version)
 
+        # One target per concept, the first in the plan winning, so a plan that
+        # names a concept twice renders it one way rather than alternating.
         targets: Dict[str, Target] = {}
         for target in plan.targets:
             targets.setdefault(target.concept, target)

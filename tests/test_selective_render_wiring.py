@@ -55,7 +55,7 @@ def test_the_selective_modules_are_imported_at_module_scope():
                 and node.module in ("region_scheduler", "compositor", "detector_worker",
                                     "render_plan")
                 for alias in node.names}
-    assert {"RegionScheduler", "selection_status"} <= imported
+    assert "RegionScheduler" in imported
     assert {"Compositor", "MASKED"} <= imported
     assert "frame_to_array" in imported, "the capture never becomes an array to blend"
     assert {"priority_case_plan", "t_index_for_denoise"} <= imported
@@ -113,7 +113,9 @@ def test_the_hardcoded_demo_plan_is_behind_the_switch():
 
 
 def test_the_selection_is_reported_on_the_existing_fps_channel():
-    assert len(_calls_named(WORKER, "selection_status")) == 1
+    """One payload per frame: the detector's fields and the scheduler's own
+    account of the selection, on the queue the GUI already reads."""
+    assert len(_calls_named(WORKER, "status")) == 1
     assert len(_calls_named(WORKER, "fps_payload")) == 1
 
 
