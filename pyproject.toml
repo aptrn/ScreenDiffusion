@@ -62,3 +62,17 @@ explicit = true
 name = "nvidia"
 url = "https://pypi.nvidia.com"
 explicit = true
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# --strict-markers: an unregistered marker is an error, so a typo'd @pytest.mark.gpu
+# cannot quietly land a GPU test in the tier the merge gate runs.
+addopts = "--strict-markers"
+markers = [
+    "gpu: requires a CUDA GPU + TensorRT",
+]

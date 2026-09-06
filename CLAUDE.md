@@ -23,6 +23,16 @@ Treat those five pins as fixed unless the task is specifically to move them.
 
 `package.json` exists only for the Sandcastle agent loop. The application is Python.
 
+Tests are two tiers. `uv run pytest -m "not gpu"` is the merge gate's tier: no CUDA
+device, no torch import at collection time. `uv run pytest -m gpu` is everything that
+needs the GPU. `python scripts/verify.py` runs the GPU-free tier through the venv's
+interpreter, so it works from a bare shell.
+
+`tests/sourceloader.py` executes named top-level definitions straight out of
+`main_gpu_addon.py` / `wrapper.py`. Importing either module in the GPU-free tier is
+not an option - one primes the DLL search path and pulls in the GUI stack, the other
+imports torch.
+
 ## Architecture
 
 Two processes, and the split is load-bearing:

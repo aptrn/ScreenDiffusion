@@ -392,6 +392,57 @@ def _frame_to_rgb(frame: np.ndarray, force_swap_rb: Optional[bool] = False) -> n
     if force_swap_rb: frame = frame[:, :, ::-1]
     return frame
 
+# The scheduler's usable t_index range. Anything outside it either does nothing
+# or corrupts the step schedule, so every control message is clamped into it.
+T_INDEX_MIN = 2
+T_INDEX_MAX = 49
+
+def _clamp_t_index(value) -> int:
+    return max(T_INDEX_MIN, min(T_INDEX_MAX, int(value)))
+
+def _control_transition(msg: Any, t_index_list: List[int]) -> Dict[str, Any]:
+    """Pure half of the worker's control_queue drain: a message in, a state delta out.
+
+    Returns {} for anything the worker should ignore, otherwise exactly one of
+    "region", "t_index_list" (always paired with "engine_swap"), "prompt" or
+    "negative_prompt". Every side effect stays with the caller - notably the
+    engine swap that "engine_swap" asks for, which costs minutes.
+    """
+    if not isinstance(msg, dict):
+        return {}
+    mtype = msg.get("type")
+
+    if mtype == "set_region":
+        r = msg.get("region")
+        keys = ("left", "top", "width", "height")
+        if isinstance(r, dict) and all(k in r for k in keys):
+            return {"region": {k: int(r[k]) for k in keys}}
+        return {}
+
+    if mtype == "set_t_at":
+        i = int(msg.get("index", -1))
+        if not 0 <= i < len(t_index_list):
+            return {}
+        new_t = list(t_index_list)
+        new_t[i] = _clamp_t_index(msg.get("value", 30))
+        return {"t_index_list": new_t, "engine_swap": False}
+
+    if mtype == "set_t_index_list":
+        new_t = msg.get("t_index_list")
+        if not isinstance(new_t, (list, tuple)) or len(new_t) == 0:
+            return {}
+        clean = [_clamp_t_index(x) for x in new_t]
+        # The step *count* keys a distinct TensorRT engine; the values do not.
+        return {"t_index_list": clean, "engine_swap": len(clean) != len(t_index_list)}
+
+    if mtype == "set_prompt" and "prompt" in msg:
+        return {"prompt": str(msg["prompt"])}
+
+    if mtype == "set_negative_prompt" and "negative_prompt" in msg:
+        return {"negative_prompt": str(msg["negative_prompt"])}
+
+    return {}
+
 SHOW = {
     "model_path": True, "prompt": True, "negative_prompt": True, "seed": True,
     "frame_buffer_size": False, "acceleration": True, "use_denoising_batch": False,
@@ -643,60 +694,46 @@ def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Qu
         while close_queue.empty():
             try:
                 while True:
-                    msg = control_queue.get_nowait()
-                    if not isinstance(msg, dict): continue
-                    mtype = msg.get("type")
-                    if mtype == "set_region":
-                        r = msg.get("region")
-                        if isinstance(r, dict) and all(k in r for k in ("left","top","width","height")):
-                            region_ref["rect"] = {k:int(r[k]) for k in ("left","top","width","height")}
-                    elif mtype == "set_t_at":
-                        i = int(msg.get("index", -1))
-                        val = int(msg.get("value", 30))
-                        if 0 <= i < len(current_t_index_list):
-                            current_t_index_list[i] = max(2, min(49, val))
+                    update = _control_transition(control_queue.get_nowait(), current_t_index_list)
+                    if "region" in update:
+                        region_ref["rect"] = update["region"]
+                    elif "t_index_list" in update:
+                        current_t_index_list = update["t_index_list"]
+                        if update["engine_swap"]:
+                            _status(f"Swapping engine for {len(current_t_index_list)} steps...")
+
+                            # Flush current engine from VRAM
+                            del stream
+                            import gc; gc.collect(); import_torch.cuda.empty_cache()
+
+                            # Re-instantiate the wrapper to load the correct TensorRT engine
+                            stream = StreamDiffusionWrapper(
+                                model_id_or_path=model_path_dir, 
+                                t_index_list=list(current_t_index_list), 
+                                frame_buffer_size=frame_buffer_size, width=width, height=height, 
+                                warmup=2, acceleration=acceleration, do_add_noise=do_add_noise, 
+                                enable_similar_image_filter=enable_similar_image_filter, 
+                                similar_image_filter_threshold=similar_image_filter_threshold, 
+                                similar_image_filter_max_skip_frame=similar_image_filter_max_skip_frame, 
+                                mode="img2img", use_denoising_batch=use_denoising_batch, 
+                                cfg_type=cfg_type, seed=seed, lora_dict=lora_dict,
+                                use_lcm_lora=use_lcm_lora, lcm_lora_id=lcm_lora_id
+                            )
+                            stream.prepare(prompt=prompt, negative_prompt=negative_prompt, num_inference_steps=50, guidance_scale=guidance_scale, delta=delta)
+                            _status("Engine swap complete!")
+                        else:
+                            # Same step count (slider was dragged). Update values instantly!
                             stream.set_t_index_list(current_t_index_list)
-                    elif mtype == "set_t_index_list":
-                        new_t = msg.get("t_index_list")
-                        if isinstance(new_t, (list, tuple)) and len(new_t) > 0:
-                            new_t_clean = [int(max(2, min(49, x))) for x in new_t]
-                            
-                            # Check if the NUMBER of steps changed (Requires Engine Swap)
-                            if len(new_t_clean) != len(current_t_index_list):
-                                _status(f"Swapping engine for {len(new_t_clean)} steps...")
-                                current_t_index_list = new_t_clean
-                                
-                                # Flush current engine from VRAM
-                                del stream
-                                import gc; gc.collect(); import_torch.cuda.empty_cache()
-                                
-                                # Re-instantiate the wrapper to load the correct TensorRT engine
-                                stream = StreamDiffusionWrapper(
-                                    model_id_or_path=model_path_dir, 
-                                    t_index_list=list(current_t_index_list), 
-                                    frame_buffer_size=frame_buffer_size, width=width, height=height, 
-                                    warmup=2, acceleration=acceleration, do_add_noise=do_add_noise, 
-                                    enable_similar_image_filter=enable_similar_image_filter, 
-                                    similar_image_filter_threshold=similar_image_filter_threshold, 
-                                    similar_image_filter_max_skip_frame=similar_image_filter_max_skip_frame, 
-                                    mode="img2img", use_denoising_batch=use_denoising_batch, 
-                                    cfg_type=cfg_type, seed=seed, lora_dict=lora_dict,
-                                    use_lcm_lora=use_lcm_lora, lcm_lora_id=lcm_lora_id
-                                )
-                                stream.prepare(prompt=prompt, negative_prompt=negative_prompt, num_inference_steps=50, guidance_scale=guidance_scale, delta=delta)
-                                _status("Engine swap complete!")
-                            else:
-                                # Length is the same (Slider was dragged). Update values instantly!
-                                current_t_index_list = new_t_clean
-                                stream.set_t_index_list(current_t_index_list)
-                    elif mtype == "set_prompt":
-                        prompt = str(msg.get("prompt", prompt))
+                    elif "prompt" in update:
+                        prompt = update["prompt"]
                         try:
                             stream.stream.update_prompt(prompt)
                         except Exception:
                             pass
-                    elif mtype == "set_negative_prompt":
-                        negative_prompt = str(msg.get("negative_prompt", negative_prompt))
+                    elif "negative_prompt" in update:
+                        negative_prompt = update["negative_prompt"]
+                        # Inherited: this refreshes the stream with the *positive*
+                        # prompt. The negative one only lands on the next prepare().
                         try:
                             stream.stream.update_prompt(prompt)
                         except Exception:
