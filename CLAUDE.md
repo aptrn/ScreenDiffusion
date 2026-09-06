@@ -127,6 +127,25 @@ lands on the next frame. Only the *first* target's `prompt` and `denoise` reach 
 engine, because issue #5 chose the full-frame masked primitive and that is one
 embedding per frame; the rest are carried and the validator says when they differ.
 
+`detection.py` is the **tracker** — spec §5.1 C4 and §8.5. Stdlib only, like
+`render_plan.py`. `Tracker.update` takes one detector tick and returns tracks with
+monotonic, never-reused IDs: matched by overlap *within a concept*, box smoothed by
+an EMA, and carried across two ticks the object was not seen in before it is
+dropped. `Tracks` is the frozen snapshot the frame loop reads — one reference, no
+per-frame allocation — and `EMPTY_TRACKS` is what it reads before the first detect,
+so "no tracks yet" is not a second state.
+
+`detector_worker.py` is the **detector in the worker** — spec §5.1 C3. The only
+shipped module that imports ultralytics, and it does so inside its methods.
+`BackgroundDetector` holds the state: it `follow`s the active plan (the concepts
+are the plan's targets), loads the weights on the first plan that names one, and
+runs `step()` on a daemon thread. The frame loop `offer`s the newest capture every
+`global.detect_every_n` frames and never waits — a detect in flight keeps the frame
+it has, and an offered frame replaces whatever was queued. A detector that cannot
+load or throws disables detection, once, with the reason on the status queue; the
+render loop carries on. Detection count and detector ms ride the existing fps queue
+as a dict (`fps_payload`), which `_format_fps` renders in the GUI.
+
 ## Gotchas
 
 - **TensorRT engines compile per configuration.** Resolution, batch size
@@ -201,6 +220,8 @@ embedding per frame; the rest are carried and the validator says when they diffe
   encode itself is ~16 ms and genuinely cold-path. Anything that changes the
   vocabulary must issue one throwaway detect before the new plan goes live, or the
   frame after a prompt edit drops three frames' worth of budget. Spec 8.1.
+  `UltralyticsDetector.set_concepts` is where that throwaway detect lives; anything
+  else that calls `set_classes` owes one.
 - **Call `.to("cuda")` before the first `set_classes`.** The CLIP text encoder caches
   the device it was built on; built on the CPU and moved afterwards, every later
   vocabulary change raises a device-mismatch from `torch.embedding`.

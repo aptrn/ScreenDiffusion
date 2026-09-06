@@ -162,11 +162,25 @@ increasing `plan_version`. The render loop trusts only validated plans.
 optionally masks). Two candidate families, see §8.1: fixed-vocabulary (YOLOv8,
 80 COCO classes, fastest) vs open-vocabulary (YOLO-World, OWLv2, Grounding DINO
 — accepts arbitrary text, slower). Runs at a *lower* rate than the render loop
-(e.g. every 3rd–5th frame).
+(e.g. every 3rd–5th frame). **Implemented**: `detector_worker.py`, YOLO-World on
+a daemon thread inside the worker process. The weights load on the first plan
+that names a concept — a `global` plan pays no VRAM for a detector it will not
+use — and the frame loop *offers* the newest capture every
+`global.detect_every_n` frames rather than detecting on it. An offer never waits:
+a detect in flight keeps the frame it has and the offered one replaces whatever
+was queued behind it, which is the capture thread's newest-frame-wins rule
+applied one stage later.
 
 **C4 — Tracker.** Bridges the gap between detector ticks, gives each object a
 stable ID, and smooths box jitter. Stable IDs are what let us pin a **seed and
 prompt embedding per object**, which is the main lever against flicker.
+**Implemented**: `detection.py`, stdlib-only and GPU-free. Greedy nearest-overlap
+matching within a concept, an EMA on the matched box (§8.5's box smoothing), and
+a track carried across two ticks it was not seen in before it is dropped — the
+capture deque sheds frames and detectors blink, and neither should cost an object
+its identity. IDs are monotonic and never reused. The frame loop reads one
+immutable `Tracks` snapshot, published by the detector thread with a single
+reference assignment, so a frame sees one tick or the next and never half of one.
 
 **C5 — Region Scheduler.** The rate limiter. Detections are unbounded; the
 diffusion engine has a *fixed* batch size. This component decides which ≤K
@@ -660,6 +674,29 @@ fails the merge gate until this block is regenerated.
   screen is captured as a control. DXcam — what the app uses — cannot open a
   Desktop Duplication context in this session, so the captures came from `mss`;
   that is a property of the capture session, not of the detector.
+
+#### In the worker (issue #7)
+
+The detector now runs where the product needs it rather than only in the harness,
+and the mitigation above is built rather than recommended: `BackgroundDetector`
+sets the vocabulary and issues the throwaway detect on its own thread, before the
+first frame is offered against the new plan, so a prompt edit never lands the
+~108 ms predictor rebuild on a frame.
+
+Re-measured through the shipped path, on the committed 1280×720 `people.mp4`
+clip with `person` as the target, RTX 3080 laptop, **unlocked clocks at a sampled
+1575 MHz**: **18.8 ms per detect**, six to seven people per frame, which amortises
+to **4.7 ms/frame at one detect every 3rd frame** and 2.4 ms/frame at every 6th —
+inside §7.1's 4–8 ms row on the same reading as the 640² figure above. Handing a
+frame to the detector costs the frame loop **0.03 ms**, and one track ID survived
+all 30 consecutive frames of the clip.
+
+Absolutes here are worth exactly what §7.4 and issue #13 say they are. The same
+detector through the same `bench.detector_runner` code measured **191 ms per
+detect** on this machine an hour earlier, with the card sitting at 435–900 MHz and
+19–24 W instead of boost. Nothing about the code changed; the clock did. The two
+claims that survive it are the ratio (half as many detects cost half as much) and
+the identity (an ID is the same ID), and those are what the tests assert.
 
 The instruction "give **them** a red hat" needs a *head region*, not a person
 box. Boxes may be too coarse; a segmentation stage or a body-part heuristic
