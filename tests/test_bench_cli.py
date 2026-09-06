@@ -97,3 +97,36 @@ def test_a_tensorrt_scenario_needs_an_explicit_opt_in_to_build_an_engine(tmp_pat
     engine_build_guard(trt, engines_root=tmp_path, allow_build=True)
     engine_build_guard(SCENARIOS["img2img-none-512x512-b1"], engines_root=tmp_path,
                        allow_build=False)
+
+
+def test_marginal_reads_the_committed_results_and_exits_zero():
+    """Issue #3: the marginal cost is recomputed from the JSON, not retyped from it."""
+    result = subprocess.run(
+        [sys.executable, "-m", "bench", "--marginal"],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "marginal ms/item" in result.stdout
+    assert "sublinear" in result.stdout
+    assert "Normalised to" in result.stdout, "the normalised table names the clock it assumes"
+
+
+def test_a_cached_tensorrt_run_still_records_its_free_disk(tmp_path):
+    """Issue #3's gate: *each* TensorRT confirmation run carries the free-disk check.
+
+    A cached engine compiles nothing, so there is nothing to refuse - but the gate
+    asks for the check to be recorded, not merely applied, and a reader months later
+    cannot tell "the volume had room" from "nobody looked" unless the reading is in
+    the file. Reading is unconditional for TensorRT; refusing stays tied to a build.
+    """
+    from bench.cli import engine_build_guard, engine_dir_name
+
+    trt = SCENARIOS["img2img-tensorrt-512x512-b1"]
+    cached = tmp_path / engine_dir_name(trt)
+    cached.mkdir()
+    (cached / "unet.engine").write_bytes(b"")
+
+    record = engine_build_guard(trt, engines_root=tmp_path, allow_build=False)
+    assert record is not None, "a cached TensorRT run records its headroom too"
+    assert record.free_bytes > 0
+    assert "free_gib" in record.to_dict()

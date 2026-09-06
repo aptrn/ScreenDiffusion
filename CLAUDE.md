@@ -81,8 +81,15 @@ pipeline drops frames rather than falling behind — preserve that.
   (`frame_buffer_size`), step count, and fused LoRA weights each key a distinct engine.
   Changing step *count* at runtime tears down the wrapper and rebuilds — minutes, not
   milliseconds. Any design that changes these per-frame is a stall. Each built engine
-  is ~5.1 GB on disk, so a sweep across configurations is a capacity decision before it
-  is a timing one.
+  is ~5.0 GB on disk and 15–25 minutes to build (measured, 512², RTX 3080 laptop), so
+  a sweep across configurations is a capacity decision before it is a timing one.
+- **The resolution in an engine directory name is a lie.** `create_prefix()` puts
+  `res-WxH` in the cache key, but `wrapper.py` never forwards a resolution to
+  `EngineBuilder.build`, whose `opt_image_height` / `opt_image_width` default to 512
+  with `build_dynamic_shape=False`. So every engine this app builds is 512×512, and a
+  directory labelled `--res-256x256--` holds a 512² one — it loads without complaint
+  and then collides at inference. Batch size *is* forwarded and is trustworthy.
+  `tests/test_trt_engine_resolution.py` pins this; spec §7.2 has the detail.
 - **Dev and deploy hardware differ.** Development is an RTX 3080 laptop; deployment
   targets RTX 3090 Ti / 4090. Curve shapes and relative rankings carry across; absolute
   ms/frame, VRAM ceilings and engine build times do not. Any 30 FPS claim is a

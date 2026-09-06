@@ -1,0 +1,127 @@
+{
+  "cooldown": {
+    "cap_s": 120.0,
+    "enabled": true,
+    "final_temperature_c": 62.0,
+    "outcome": "reached",
+    "reached": true,
+    "samples": [
+      [
+        0.046999999998661224,
+        63.0
+      ],
+      [
+        2.07799999999952,
+        62.0
+      ]
+    ],
+    "threshold_c": 62.0,
+    "waited_s": 2.07799999999952
+  },
+  "hardware": {
+    "cuda_version": "12.8",
+    "driver_version": "595.79",
+    "enforced_power_limit_w": 118.76,
+    "gpu_name": "NVIDIA GeForce RTX 3080 Laptop GPU",
+    "hostname": "Ale-Zephyrus",
+    "nvidia_smi_captured_utc": "2026-09-06T11:45:38Z",
+    "nvidia_smi_raw": "Sun Sep  6 13:45:38 2026       \n+-----------------------------------------------------------------------------------------+\n| NVIDIA-SMI 595.79                 Driver Version: 595.79         CUDA Version: 13.2     |\n+-----------------------------------------+------------------------+----------------------+\n| GPU  Name                  Driver-Model | Bus-Id          Disp.A | Volatile Uncorr. ECC |\n| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |\n|                                         |                        |               MIG M. |\n|=========================================+========================+======================|\n|   0  NVIDIA GeForce RTX 3080 ...  WDDM  |   00000000:01:00.0 Off |                  N/A |\n| N/A   64C    P3             25W /  118W |       0MiB /  16384MiB |      0%      Default |\n|                                         |                        |                  N/A |\n+-----------------------------------------+------------------------+----------------------+\n\n+-----------------------------------------------------------------------------------------+\n| Processes:                                                                              |\n|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |\n|        ID   ID                                                               Usage      |\n|=========================================================================================|\n|  No running processes found                                                             |\n+-----------------------------------------------------------------------------------------+\n",
+    "power_limit_w": null,
+    "torch_version": "2.7.0+cu128",
+    "total_vram_mib": 16384.0
+  },
+  "run": {
+    "finished_utc": "2026-09-06T11:45:48Z",
+    "fps": 55.72,
+    "gpu_samples": [
+      [
+        0.043406900000263704,
+        1785.0,
+        70.0
+      ],
+      [
+        0.5896468999999342,
+        1620.0,
+        76.0
+      ],
+      [
+        1.1342946999993728,
+        1470.0,
+        77.0
+      ],
+      [
+        1.6913115000006655,
+        1110.0,
+        75.0
+      ]
+    ],
+    "max_ms_per_frame": 39.6611,
+    "max_temperature_c": 77.0,
+    "mean_ms_per_frame": 17.9468,
+    "mean_sm_clock_mhz": 1496.2,
+    "median_ms_per_frame": 16.6917,
+    "min_ms_per_frame": 14.5085,
+    "p95_ms_per_frame": 20.9355,
+    "peak_vram_bytes": 2719745024,
+    "peak_vram_mib": 2593.8,
+    "per_module_ms": null,
+    "per_rep_ms": [
+      63.0578,
+      59.9604,
+      59.5353,
+      58.0341,
+      59.6113,
+      61.1317,
+      64.0756,
+      72.7947,
+      79.3993,
+      65.2947,
+      61.1041,
+      63.3686,
+      63.8189,
+      64.3692,
+      65.1926,
+      65.5361,
+      65.7568,
+      69.198,
+      68.7755,
+      67.7766,
+      72.8704,
+      79.2698,
+      78.8904,
+      75.6958,
+      77.5901,
+      77.7888,
+      83.3219,
+      158.6445,
+      83.742,
+      68.0144
+    ],
+    "reps": 30,
+    "started_utc": "2026-09-06T11:45:46Z",
+    "stdev_ms_per_frame": 4.5151,
+    "warmup_reps": 5
+  },
+  "scenario": {
+    "acceleration": "none",
+    "batch_size": 4,
+    "cfg_type": "none",
+    "do_add_noise": true,
+    "height": 256,
+    "mode": "img2img",
+    "model": "sd-turbo-fp16",
+    "name": "img2img-none-256x256-b4",
+    "prompt": "a photograph of a city street, cinematic lighting",
+    "reps": 30,
+    "seed": 2,
+    "t_index_list": [
+      35
+    ],
+    "use_denoising_batch": true,
+    "use_lcm_lora": false,
+    "use_tiny_vae": true,
+    "warmup_reps": 5,
+    "width": 256
+  },
+  "schema_version": 1
+}

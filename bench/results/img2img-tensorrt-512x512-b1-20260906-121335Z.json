@@ -1,0 +1,140 @@
+{
+  "cooldown": {
+    "cap_s": 120.0,
+    "enabled": true,
+    "final_temperature_c": 60.0,
+    "outcome": "reached",
+    "reached": true,
+    "samples": [
+      [
+        0.2029999999995198,
+        65.0
+      ],
+      [
+        2.2659999999996217,
+        64.0
+      ],
+      [
+        4.311999999999898,
+        60.0
+      ]
+    ],
+    "threshold_c": 62.0,
+    "waited_s": 4.311999999999898
+  },
+  "disk": {
+    "checked_utc": "2026-09-06T12:13:05Z",
+    "free_bytes": 75452428288,
+    "free_gib": 70.27,
+    "path": "C:\\Users\\Ale\\Documents\\code\\ScreenDiffusion\\engines",
+    "required_bytes": 16106127360,
+    "sufficient": true,
+    "total_bytes": 1023551016960
+  },
+  "hardware": {
+    "cuda_version": "12.8",
+    "driver_version": "595.79",
+    "enforced_power_limit_w": 115.02,
+    "gpu_name": "NVIDIA GeForce RTX 3080 Laptop GPU",
+    "hostname": "Ale-Zephyrus",
+    "nvidia_smi_captured_utc": "2026-09-06T12:13:11Z",
+    "nvidia_smi_raw": "Sun Sep  6 14:13:11 2026       \n+-----------------------------------------------------------------------------------------+\n| NVIDIA-SMI 595.79                 Driver Version: 595.79         CUDA Version: 13.2     |\n+-----------------------------------------+------------------------+----------------------+\n| GPU  Name                  Driver-Model | Bus-Id          Disp.A | Volatile Uncorr. ECC |\n| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |\n|                                         |                        |               MIG M. |\n|=========================================+========================+======================|\n|   0  NVIDIA GeForce RTX 3080 ...  WDDM  |   00000000:01:00.0 Off |                  N/A |\n| N/A   58C    P8             12W /  115W |       0MiB /  16384MiB |      0%      Default |\n|                                         |                        |                  N/A |\n+-----------------------------------------+------------------------+----------------------+\n\n+-----------------------------------------------------------------------------------------+\n| Processes:                                                                              |\n|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |\n|        ID   ID                                                               Usage      |\n|=========================================================================================|\n|  No running processes found                                                             |\n+-----------------------------------------------------------------------------------------+\n",
+    "power_limit_w": null,
+    "torch_version": "2.7.0+cu128",
+    "total_vram_mib": 16384.0
+  },
+  "run": {
+    "finished_utc": "2026-09-06T12:13:35Z",
+    "fps": 17.133,
+    "gpu_samples": [
+      [
+        0.05658389999916835,
+        210.0,
+        60.0
+      ],
+      [
+        0.6100867000004655,
+        1410.0,
+        74.0
+      ],
+      [
+        1.1609067000008508,
+        1110.0,
+        78.0
+      ],
+      [
+        1.708240100000694,
+        1110.0,
+        74.0
+      ]
+    ],
+    "max_ms_per_frame": 67.8169,
+    "max_temperature_c": 78.0,
+    "mean_ms_per_frame": 58.3657,
+    "mean_sm_clock_mhz": 960.0,
+    "median_ms_per_frame": 55.9171,
+    "min_ms_per_frame": 51.5917,
+    "p95_ms_per_frame": 67.083,
+    "peak_vram_bytes": 2621814272,
+    "peak_vram_mib": 2500.4,
+    "per_module_ms": null,
+    "per_rep_ms": [
+      56.0436,
+      54.2059,
+      52.1378,
+      52.3486,
+      53.0635,
+      52.98,
+      51.5917,
+      54.8094,
+      54.8876,
+      52.9574,
+      53.6193,
+      55.2767,
+      55.7906,
+      51.8667,
+      55.4115,
+      56.1761,
+      52.7127,
+      58.1081,
+      63.5012,
+      64.2884,
+      65.1586,
+      65.8302,
+      67.083,
+      63.2593,
+      62.3127,
+      62.741,
+      65.6253,
+      65.1185,
+      64.2491,
+      67.8169
+    ],
+    "reps": 30,
+    "started_utc": "2026-09-06T12:13:33Z",
+    "stdev_ms_per_frame": 5.5752,
+    "warmup_reps": 5
+  },
+  "scenario": {
+    "acceleration": "tensorrt",
+    "batch_size": 1,
+    "cfg_type": "none",
+    "do_add_noise": true,
+    "height": 512,
+    "mode": "img2img",
+    "model": "sd-turbo-fp16",
+    "name": "img2img-tensorrt-512x512-b1",
+    "prompt": "a photograph of a city street, cinematic lighting",
+    "reps": 30,
+    "seed": 2,
+    "t_index_list": [
+      35
+    ],
+    "use_denoising_batch": true,
+    "use_lcm_lora": false,
+    "use_tiny_vae": true,
+    "warmup_reps": 5,
+    "width": 512
+  },
+  "schema_version": 1
+}

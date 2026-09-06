@@ -232,18 +232,37 @@ Design rules:
 
 ### 7.1 Budget
 
-30 FPS = **33.3 ms/frame**. A first-cut allocation, to be replaced with
-measurements:
+30 FPS = **33.3 ms/frame**. The allocation is a target; the Measured column is
+what M0 has actually put on the clock so far:
 
-| Stage               | Rate            | Budget (ms/frame) | Notes                     |
-| ------------------- | --------------- | ----------------- | ------------------------- |
-| Capture (DXcam)     | every frame     | 1–2               | already threaded          |
-| Detection           | every 3rd frame | 4–8 amortised     | strongly model-dependent  |
-| Tracking            | every frame     | < 1               | CPU                       |
-| Preprocess crops    | every frame     | 1–2               | resize + normalise on GPU |
-| **Diffusion**       | every frame     | **15–20**         | the dominant term         |
-| Composite + present | every frame     | 2–3               |                           |
-| Headroom            |                 | ~5                |                           |
+| Stage               | Rate            | Budget (ms/frame) | Measured, RTX 3080 laptop | Notes                     |
+| ------------------- | --------------- | ----------------- | ------------------------- | ------------------------- |
+| Capture (DXcam)     | every frame     | 1–2               | not yet measured          | already threaded          |
+| Detection           | every 3rd frame | 4–8 amortised     | not yet measured (§7.2.4) | strongly model-dependent  |
+| Tracking            | every frame     | < 1               | not yet measured          | CPU                       |
+| Preprocess crops    | every frame     | 1–2               | not yet measured          | resize + normalise on GPU |
+| **Diffusion**       | every frame     | **15–20**         | **54.8–58.4** @ 512² TRT b1 | the dominant term         |
+| Composite + present | every frame     | 2–3               | not yet measured          |                           |
+| Headroom            |                 | ~5                | —                         |                           |
+
+The one measured stage is over budget by roughly 3×, and on its own is ~1.7× the
+entire 33.3 ms frame — for **one** 512² crop, before any of the other rows are
+paid. That is a **dev-hardware** number and §7.4 says so: the two committed 512²
+TensorRT batch-1 runs came back at 54.8 ms (mean 1342 MHz) and 58.4 ms (960 MHz),
+and the spread between them is the 120 W limit and the clock sampling described in
+§7.2, not variance in the model. **Whether 33.3 ms is reachable is a question only
+the deploy GPU can answer**, and it is not answered here.
+
+Batching does not rescue it at this crop size: the same engine at batch 2 costs
+55.0 ms/frame and at batch 4 costs 67.4 ms/frame, so the per-frame figure gets
+*worse*, not better, once the batch grows (§7.2). Small crops are what moves this
+row — a 256² `none` call at batch 8 amortises to 11.8 ms/frame normalised — which
+is why §7.3 recommends a small slot rather than a large one.
+
+What is settled, and is portable, is where the budget has to be spent: diffusion
+dominates so completely that every other row could be free and the frame would
+still miss on this machine. The batch curve in §7.2 is therefore the whole design
+question, not a tuning detail.
 
 The LLM appears nowhere in this table. That is the point.
 
@@ -252,26 +271,144 @@ The LLM appears nowhere in this table. That is the point.
 Not assumed — measured by the harness M0 builds, with the hardware recorded
 alongside every number (§7.4):
 
-1. SD-Turbo 1-step img2img at 512², TRT vs `none`, batch 1 — ms/frame.
+1. SD-Turbo 1-step img2img at 512², TRT vs `none`, batch 1 — ms/frame. **Done.**
 2. Same at batch 2 / 4 / 8 — **is the per-crop marginal cost sublinear?** This
-   determines whether N-object rendering is viable at all.
+   determines whether N-object rendering is viable at all. **Done** on `none` at
+   all three resolutions, and confirmed on TensorRT at 512² (batch 1 / 2 / 4).
+   The answer is *resolution-dependent*, which is the finding: strongly sublinear
+   at 256², weakly at 384², and **not** sublinear at 512².
 3. Same at 256² and 384² crops — small crops are the whole economic case.
-4. Detector latency for each candidate in §8.1 at 640² input, TRT.
+   **Done on `none`.** Not confirmable on TensorRT today — see "The resolution
+   axis" below.
+4. Detector latency for each candidate in §8.1 at 640² input, TRT. *Outstanding.*
 5. Peak VRAM with diffusion engine + detector + (optional) local LLM resident.
-6. Cost of swapping prompt embeddings per batch item.
+   *Outstanding* — the sweep records the diffusion half only (2.5–3.3 GiB).
+6. Cost of swapping prompt embeddings per batch item. *Outstanding.*
 
 Results land in `bench/results/` as JSON, one file per run, with a readable table
 in `bench/results/README.md`. A number that is not in there has to be measured
-again. The first entries are RTX 3080 laptop runs of items 1-3 - and they show the
-laptop's power limit doing exactly what §7.4 warns about: the mean SM clock across
-those runs ranges from ~1150 to ~1690 MHz and the timings track it inversely, which
-is why every row carries its clock.
+again.
 
 Measure the batch and resolution sweep on the **`none` accelerator first**. It
 answers the question that actually matters — the *shape* of the marginal-cost
-curve — at zero engine-build cost, and only then is it worth spending 5.1 GB and
-several minutes per TensorRT engine to confirm the two or three configurations
-the curve says are interesting.
+curve — at zero engine-build cost, and only then is it worth spending an engine
+on the two or three configurations the curve says are interesting. The two built
+for this milestone cost ~5.0 GB and 15–25 minutes each, measured.
+
+#### Measured: RTX 3080 Laptop GPU, SD-Turbo fp16, 1 step, img2img
+
+Twelve `none` cells (256/384/512 square × batch 1/2/4/8) and three TensorRT cells
+at 512² (batch 1 / 2 / 4 — the cap issue #3 sets on engine builds). Every TensorRT
+cell records the free-disk reading its build was gated on. Fourteen of the fifteen
+cells reached the 62 °C cooldown threshold before running; the TensorRT batch-4 cell
+started at 63 °C after its own engine build and is recorded `capped`, not `reached`.
+Reproduce the whole table from the committed JSON with
+`uv run python -m bench --marginal` — it is computed from those files, not
+transcribed into this document.
+
+`ms/call` is the number that answers the design question: one call diffuses the
+whole batch, so the slope between two batch sizes is what one more crop costs.
+`ms/frame` is that slope already averaged over the batch, which hides it.
+
+<!-- BEGIN MEASURED TABLE -->
+
+As measured
+
+| GPU | accel | res | batch | ms/call | ms/frame | marginal ms/item | x first item | peak VRAM (MiB) | SM clock (MHz) | cooldown |
+|---|---|---|---|---|---|---|---|---|---|---|
+| NVIDIA GeForce RTX 3080 Laptop GPU | none | 256x256 | 1 | 47.0 | 46.97 | - | - | 2516 | 1775 | reached |
+| NVIDIA GeForce RTX 3080 Laptop GPU | none | 256x256 | 2 | 51.0 | 25.51 | 4.1 | 0.09 | 2541 | 1785 | reached |
+| NVIDIA GeForce RTX 3080 Laptop GPU | none | 256x256 | 4 | 71.8 | 17.95 | 10.4 | 0.22 | 2594 | 1496 | reached |
+| NVIDIA GeForce RTX 3080 Laptop GPU | none | 256x256 | 8 | 139.5 | 17.44 | 16.9 | 0.36 | 2696 | 1211 | reached |
+| NVIDIA GeForce RTX 3080 Laptop GPU | none | 384x384 | 1 | 60.1 | 60.08 | - | - | 2548 | 1519 | reached |
+| NVIDIA GeForce RTX 3080 Laptop GPU | none | 384x384 | 2 | 85.8 | 42.89 | 25.7 | 0.43 | 2607 | 1317 | reached |
+| NVIDIA GeForce RTX 3080 Laptop GPU | none | 384x384 | 4 | 160.8 | 40.21 | 37.5 | 0.62 | 2720 | 1130 | reached |
+| NVIDIA GeForce RTX 3080 Laptop GPU | none | 384x384 | 8 | 304.6 | 38.07 | 35.9 | 0.60 | 2951 | 1137 | reached |
+| NVIDIA GeForce RTX 3080 Laptop GPU | none | 512x512 | 1 | 82.3 | 82.30 | - | - | 2593 | 1239 | reached |
+| NVIDIA GeForce RTX 3080 Laptop GPU | none | 512x512 | 2 | 145.8 | 72.89 | 63.5 | 0.77 | 2695 | 1182 | reached |
+| NVIDIA GeForce RTX 3080 Laptop GPU | none | 512x512 | 4 | 282.8 | 70.70 | 68.5 | 0.83 | 2900 | 1112 | reached |
+| NVIDIA GeForce RTX 3080 Laptop GPU | none | 512x512 | 8 | 767.0 | 95.88 | 121.1 | 1.47 | 3310 | 787 | reached |
+| NVIDIA GeForce RTX 3080 Laptop GPU | tensorrt | 512x512 | 1 | 58.4 | 58.37 | - | - | 2500 | 960 | reached |
+| NVIDIA GeForce RTX 3080 Laptop GPU | tensorrt | 512x512 | 2 | 109.9 | 54.96 | 51.6 | 0.88 | 2511 | 1172 | reached |
+| NVIDIA GeForce RTX 3080 Laptop GPU | tensorrt | 512x512 | 4 | 269.8 | 67.44 | 79.9 | 1.37 | 2536 | 1348 | capped |
+
+none 256x256: sublinear - first item 47.0 ms, extra items 9%-36% of it
+none 384x384: sublinear - first item 60.1 ms, extra items 43%-62% of it
+none 512x512: NOT sublinear - first item 82.3 ms, extra items 77%-147% of it
+tensorrt 512x512: NOT sublinear - first item 58.4 ms, extra items 88%-137% of it
+
+Normalised to 1785 MHz (estimate: ms x clock / reference)
+
+| GPU | accel | res | batch | ms/call | ms/frame | marginal ms/item | x first item | peak VRAM (MiB) | SM clock (MHz) | cooldown |
+|---|---|---|---|---|---|---|---|---|---|---|
+| NVIDIA GeForce RTX 3080 Laptop GPU | none | 256x256 | 1 | 46.7 | 46.70 | - | - | 2516 | 1785 | reached |
+| NVIDIA GeForce RTX 3080 Laptop GPU | none | 256x256 | 2 | 51.0 | 25.51 | 4.3 | 0.09 | 2541 | 1785 | reached |
+| NVIDIA GeForce RTX 3080 Laptop GPU | none | 256x256 | 4 | 60.2 | 15.04 | 4.6 | 0.10 | 2594 | 1785 | reached |
+| NVIDIA GeForce RTX 3080 Laptop GPU | none | 256x256 | 8 | 94.7 | 11.83 | 8.6 | 0.18 | 2696 | 1785 | reached |
+| NVIDIA GeForce RTX 3080 Laptop GPU | none | 384x384 | 1 | 51.1 | 51.12 | - | - | 2548 | 1785 | reached |
+| NVIDIA GeForce RTX 3080 Laptop GPU | none | 384x384 | 2 | 63.3 | 31.65 | 12.2 | 0.24 | 2607 | 1785 | reached |
+| NVIDIA GeForce RTX 3080 Laptop GPU | none | 384x384 | 4 | 101.8 | 25.45 | 19.3 | 0.38 | 2720 | 1785 | reached |
+| NVIDIA GeForce RTX 3080 Laptop GPU | none | 384x384 | 8 | 194.1 | 24.26 | 23.1 | 0.45 | 2951 | 1785 | reached |
+| NVIDIA GeForce RTX 3080 Laptop GPU | none | 512x512 | 1 | 57.1 | 57.13 | - | - | 2593 | 1785 | reached |
+| NVIDIA GeForce RTX 3080 Laptop GPU | none | 512x512 | 2 | 96.5 | 48.25 | 39.4 | 0.69 | 2695 | 1785 | reached |
+| NVIDIA GeForce RTX 3080 Laptop GPU | none | 512x512 | 4 | 176.1 | 44.04 | 39.8 | 0.70 | 2900 | 1785 | reached |
+| NVIDIA GeForce RTX 3080 Laptop GPU | none | 512x512 | 8 | 338.0 | 42.25 | 40.5 | 0.71 | 3310 | 1785 | reached |
+| NVIDIA GeForce RTX 3080 Laptop GPU | tensorrt | 512x512 | 1 | 31.4 | 31.39 | - | - | 2500 | 1785 | reached |
+| NVIDIA GeForce RTX 3080 Laptop GPU | tensorrt | 512x512 | 2 | 72.2 | 36.09 | 40.8 | 1.30 | 2511 | 1785 | reached |
+| NVIDIA GeForce RTX 3080 Laptop GPU | tensorrt | 512x512 | 4 | 203.7 | 50.93 | 65.8 | 2.10 | 2536 | 1785 | capped |
+
+none 256x256: sublinear - first item 46.7 ms, extra items 9%-18% of it
+none 384x384: sublinear - first item 51.1 ms, extra items 24%-45% of it
+none 512x512: sublinear - first item 57.1 ms, extra items 69%-71% of it
+tensorrt 512x512: NOT sublinear - first item 31.4 ms, extra items 130%-210% of it
+
+<!-- END MEASURED TABLE -->
+
+**On the `none` sweep, read the normalised table for curve shape.** The laptop
+holds a 120 W limit and a longer call sinks deeper into it: mean SM clock across the
+sweep runs from 1785 MHz down to 787 MHz, so a raw comparison across cells is partly
+a comparison of clocks. Raw, 512² `none` reads "NOT sublinear" — but only because
+the batch-8 cell ran at 787 MHz. Normalised, all three `none` resolutions are
+sublinear, and the *ordering* between them survives either reading.
+
+**On the three TensorRT cells, read the raw table.** Their verdict does not depend
+on the clock model — raw and normalised both say 512² is not sublinear — and the
+normalisation is least trustworthy exactly there. `mean_sm_clock_mhz` is the mean of
+0.5 s samples taken across the whole run, and a TensorRT batch-1 run is only ~1.8 s
+long, so it gets four samples; in the committed batch-1 cell one of them caught the
+GPU at **210 MHz** between reps and pulled the mean from ~1210 MHz to 960. That is
+what makes its normalised figure (31.4 ms) the fastest cell in the table, and why
+the earlier batch-1 run of the same configuration normalises to ~41 ms instead. The
+raw numbers are unaffected; only the correction is. Sampling that survives short
+runs is a harness fix, not a re-measurement, and it is not in this milestone.
+
+The normalisation (`ms × clock ÷ reference`) is first-order and labelled an estimate
+throughout. Treat it as evidence about *shape*, which is what §7.4 says is portable,
+and never as a prediction of an absolute figure.
+
+#### The resolution axis is not measurable on TensorRT today
+
+Item 3's TensorRT half could not be run, and the reason is a bug in this repo
+rather than a limit of the hardware. `EngineBuilder.build` takes
+`opt_image_height` / `opt_image_width`, both defaulting to 512, with
+`build_dynamic_shape=False`; `wrapper.py` forwards `opt_batch_size` to
+`compile_unet` / `compile_vae_encoder` / `compile_vae_decoder` and nothing else. So
+**every engine this app builds is 512×512**, while `create_prefix` writes
+`res-{width}x{height}` into the cache directory name. A directory labelled
+`--res-256x256--` holds a 512² engine.
+
+Building `img2img-tensorrt-256x256-b1` demonstrated it: TensorRT rejected the input
+shapes (`Set dimensions are [1,3,256,256]. Expected dimensions are [1,3,512,512].`)
+and the run returned 53.7 ms/frame — the 512² engine's number. It was not
+committed. This is also why the 384² engine raises a CUDA illegal memory access
+while the 512² one is fine: 512 is the only directory whose label happens to be
+true. It is the same failure ef85e1a fixed by putting the resolution *in* the cache
+key — the key varies, but nothing downstream of it does.
+
+The batch axis is unaffected: `opt_batch_size` *is* forwarded, which is why the
+TensorRT batch curve at 512² is trustworthy. `tests/test_trt_engine_resolution.py`
+pins the finding so it cannot rot; fixing it is a `wrapper.py` change plus ~10 GB
+of rebuilds, and wants its own issue.
 
 ### 7.3 The batch-size problem (the hard one)
 
@@ -281,18 +418,95 @@ A TensorRT engine is built for a **fixed batch size**. The scene contains a
 - **(a) Fixed slot count K.** Build for batch K (say 4). Fewer objects → pad
   with dummies (wasted compute). More objects → the Region Scheduler
   round-robins across frames, so each object updates at 30/⌈N/K⌉ FPS. Simple,
-  predictable, no rebuilds. **Current preference.**
+  predictable, no rebuilds.
 - **(b) Multiple engines** (K = 1, 2, 4, 8) resident, chosen per frame. Costs
   VRAM and build time; avoids padding waste.
 - **(c) Dynamic-shape TRT profiles.** An optimisation profile with a min/max
   batch range. Best answer if StreamDiffusion's engine builder supports it —
-  **needs investigation**.
+  it does; see the recommendation below.
 - **(d) Single canvas.** Pack all crops into one 512² atlas and diffuse it as a
   single image. Constant cost, one engine, no batching problem — but objects
   bleed across tile seams and share one prompt. Cheap to prototype; may be good
   enough for uniform edits.
 
-Option (d) is the fastest thing to test, and the answer might simply be (d) + (a).
+#### Recommendation
+
+Decided on the §7.2 sweep, not on taste. That sweep says one thing loudly: **a
+call is expensive and a *small* item inside it is cheap.** A batch of one costs
+47–57 ms whatever the crop size — 512² costs only 1.2x what 256² does at batch 1,
+despite four times the pixels, because a single small crop is overhead-bound rather
+than pixel-bound. Adding a second 256² crop to that same call costs 4.3 ms.
+
+The italics are the correction the TensorRT confirmation forced. Cheapness is not a
+property of batching, it is a property of *small* crops being batched: the marginal
+item costs 9–18% of the first at 256², 24–45% at 384², ~70% at 512² on `none`, and
+**88–137% at 512² on TensorRT** — past parity, so a second full-size crop is no
+cheaper than a second call. TensorRT's own advantage narrows the same way: 1.4x over
+`none` at batch 1 (58.4 vs 82.3 ms/call) and 1.05x by batch 4 (269.8 vs 282.8). Two
+independent accelerators agreeing that 512² does not batch is the durable part.
+
+So the design should aim for exactly **one diffusion call per frame**, packed with
+crops that are *small*, and each option is judged on how well it does that. "Render
+more objects" and "render them larger" are the same budget spent twice; the plan
+compiler has to trade them against each other rather than assume batching absorbs
+both.
+
+**Recommendation: (a) fixed slot count**, with (c) as the identified upgrade path
+whenever someone spends the `wrapper.py` change it needs.
+
+- **(a) Fixed slot count.** Take it. One call per frame, one engine, no rebuild —
+  and the padding waste it is usually criticised for is small for exactly the
+  reason above. A K=4 engine handed one real crop wastes three marginal items,
+  which at 256² is ~13 ms, not three times the cost of a crop.
+- **(b) Multiple engines.** Reject. It buys back that padding waste — the
+  cheapest thing in the system — and pays in the most expensive. The two engines
+  built for this milestone put numbers on it: ~5.0 GB per configuration on disk
+  (a 1.77–1.87 GB UNet plus 3.47 GB of ONNX scratch that is never cleaned up), and
+  15–25 minutes to build, of which 11–20 is the UNet alone. A K∈{1,2,4,8} set is
+  ~20 GB and over an hour before anything renders, and the chosen ones are resident
+  in VRAM together. Dominated by (c) on every axis.
+- **(c) Dynamic-shape profiles.** The right long-term answer, and reachable. This
+  milestone's step 4 settled the open question by reading the installed source:
+  pinned StreamDiffusion 0.1.1 *does* support it — `accelerate_with_tensorrt`
+  takes `min_batch_size` / `max_batch_size`, `build_static_batch` defaults to
+  `False`, and `get_minmax_dims` widens the profile to `min_batch..max_batch`
+  accordingly. **This app collapses it:** `wrapper.py` passes min == max at all
+  three call sites, which is precisely what `--max_batch-1--min_batch-1--` in
+  every engine directory name records. So (c) is a `wrapper.py` change plus a
+  rebuild, *not* a dependency change, and `use_cuda_graph` is already `False` so
+  nothing conflicts. `tests/test_trt_dynamic_shape.py` pins the finding. It is
+  not adopted here only because it was outside this milestone's scope.
+- **(d) Single canvas.** Keep it as a *quality* experiment. It is not a cost win.
+  A 512² atlas holding four 256² crops is one 512² call at 57.1 ms normalised,
+  against 60.2 ms for a batch-4 256² call — a wash, well inside the spread the
+  power limit puts on these numbers. The "constant cost" argument for (d) does
+  not survive measurement; it has to stand on seams, prompt sharing and
+  simplicity instead. §8.2 is where it belongs.
+
+**Consequence for K.** Because the marginal item is only cheap while the crop is
+small, K and the crop size are one decision, not two. On the `none` curve the four
+cheapest ways to spend ~60 ms of normalised call time are 1×512², 4×256², 2×384² and
+8×256² (94.7 ms) — and only the 256² ones scale further. A slot of 256² is what
+makes (a) worth having; a slot of 512² makes (a) indistinguishable from calling once
+per object.
+
+**Portable:** (§7.4 — conclusions about shape) that the per-call floor dominates
+a single small crop; that extra *small* items in a call are cheap; that their
+cheapness fades as the crop grows and is gone by 512², where the marginal item
+reaches and passes the cost of the first (9–18% of it at 256² on `none`, 88–137% at
+512² on TensorRT); that TensorRT's advantage over `none` shrinks with batch size at
+512²; and therefore that (a) beats (b), that (d) is not a cost win, and that K is
+only useful paired with a small slot. None of these depend on the absolute clock:
+they are ratios within one machine, and the two accelerators agree.
+
+**Not portable:** the value of **K**, and the crop size to pair it with. Both come
+from where the 33.3 ms line falls, which is a deploy-GPU question — nothing measured
+here is inside budget on the laptop. Likewise non-portable: the VRAM figures
+(2.5–3.3 GiB on a 16 GB card) and every engine build time. And specifically
+non-portable, because it is a laptop power-limit artefact rather than an
+architectural one: **where** on the batch axis 512² crosses from sublinear to
+superlinear. That a crossing exists is portable; a 3090 Ti or 4090 will put it
+somewhere else, and finding it is a first task on deploy hardware.
 
 ### 7.4 Dev and deploy hardware are different
 

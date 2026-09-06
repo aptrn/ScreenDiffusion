@@ -18,6 +18,7 @@ from typing import Dict, List, Optional, Union
 
 from bench import RESULT_SCHEMA_VERSION
 from bench.cooldown import CooldownRecord
+from bench.disk import DiskRecord
 from bench.fingerprint import Fingerprint
 from bench.scenarios import ScenarioConfig
 
@@ -84,6 +85,11 @@ class BenchResult:
     run: RunMetrics
     cooldown: CooldownRecord
     hardware: Fingerprint
+    # The headroom the volume had when this run was about to compile an engine, and
+    # `None` when it was not about to compile one. Issue #3 asks for the free-disk
+    # check to be *recorded*, not merely applied: a reviewer reading the JSON is the
+    # one who has to see that the ~5.1 GB gate was cleared before the build started.
+    disk: Optional[DiskRecord] = None
 
     def to_dict(self) -> dict:
         return {
@@ -92,6 +98,7 @@ class BenchResult:
             "run": self.run.to_dict(),
             "cooldown": self.cooldown.to_dict(),
             "hardware": self.hardware.to_dict(),
+            "disk": None if self.disk is None else self.disk.to_dict(),
         }
 
 
