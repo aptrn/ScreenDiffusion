@@ -38,6 +38,15 @@ device, no torch import at collection time. `uv run pytest -m gpu` is everything
 needs the GPU. `python scripts/verify.py` runs the GPU-free tier through the venv's
 interpreter, so it works from a bare shell.
 
+`bench/` is the benchmark harness. `uv run python -m bench <scenario>` (`--list` for
+the names) measures one configuration and writes `bench/results/<scenario>-<ts>.json`
+plus a row in `bench/results/README.md`. Both are **tracked** - a committed result is
+the deliverable - and both are written by a run, never by hand: if a run did not
+happen there is no record. No result reaches disk without a hardware fingerprint,
+the cooldown gate is on unless `--no-cooldown` and records `reached` / `capped`
+either way, and `--per-module` splits UNet / VAE-encode / VAE-decode. Only
+`bench/runner.py` imports torch, and only inside its functions.
+
 `tests/sourceloader.py` executes named top-level definitions straight out of
 `main_gpu_addon.py` / `wrapper.py`. Importing either module in the GPU-free tier is
 not an option - one primes the DLL search path and pulls in the GUI stack, the other
