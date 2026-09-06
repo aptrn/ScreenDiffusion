@@ -480,9 +480,9 @@ def _control_transition(msg: Any, t_index_list: List[int],
     effect stays with the caller - notably the engine swap that "engine_swap" asks
     for, which costs minutes, and the plan swap, which happens at a frame boundary.
 
-    `plan` is the plan currently in force. The validator counts the new version up
-    from it, which is what makes plan versions monotonic in the worker rather than
-    in whichever producer happened to send one.
+    `plan` is the newest plan the worker holds - the one this message replaces. The
+    validator counts the new version up from it, which is what makes plan versions
+    monotonic in the worker rather than in whichever producer happened to send one.
     """
     if not isinstance(msg, dict):
         return {}
@@ -793,6 +793,20 @@ def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Qu
             return wrapper
 
         stream = _build_stream(t_index_list)
+
+        def _apply_prompt(text: str) -> None:
+            """Re-encode `text` on the live engine, or carry on without it.
+
+            Every prompt change goes through here - the prompt box, the negative
+            box, and a plan swap. A prompt the encoder chokes on must not take the
+            frame loop down with it, so the failure is swallowed and the engine
+            keeps rendering the embedding it already has.
+            """
+            try:
+                stream.stream.update_prompt(text)
+            except Exception:
+                pass
+
         first_rect = monitor_receiver.recv()
         region_ref = {"rect": dict(first_rect)}
         inputs = deque(maxlen=frame_buffer_size * 2)
@@ -812,7 +826,7 @@ def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Qu
             try:
                 while True:
                     update = _control_transition(control_queue.get_nowait(),
-                                                 current_t_index_list, active_plan.plan)
+                                                 current_t_index_list, active_plan.latest)
                     if "region" in update:
                         region_ref["rect"] = update["region"]
                     elif "t_index_list" in update:
@@ -833,18 +847,12 @@ def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Qu
                             stream.set_t_index_list(current_t_index_list)
                     elif "prompt" in update:
                         prompt = update["prompt"]
-                        try:
-                            stream.stream.update_prompt(prompt)
-                        except Exception:
-                            pass
+                        _apply_prompt(prompt)
                     elif "negative_prompt" in update:
                         negative_prompt = update["negative_prompt"]
                         # Inherited: this refreshes the stream with the *positive*
                         # prompt. The negative one only lands on the next prepare().
-                        try:
-                            stream.stream.update_prompt(prompt)
-                        except Exception:
-                            pass
+                        _apply_prompt(prompt)
                     elif "plan" in update:
                         active_plan.submit(update["plan"])
                         for note in update["plan_notes"]:
@@ -865,10 +873,7 @@ def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Qu
                     # frame, which is what `set_prompt` does and by the same call.
                     prompt = frame_plan.plan.effective_prompt
                     negative_prompt = frame_plan.plan.effective_negative_prompt
-                    try:
-                        stream.stream.update_prompt(prompt)
-                    except Exception:
-                        pass
+                    _apply_prompt(prompt)
 
                 t0 = time.time()
                 if frame_buffer_size == 1:

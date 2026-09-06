@@ -304,14 +304,14 @@ def test_a_stylized_background_is_accepted():
 # --- what the detector can serve --------------------------------------------
 
 
-def test_an_open_vocabulary_detector_serves_any_concept():
-    assert OPEN_VOCAB.serves("a chipped enamel mug") is None
+def test_an_open_vocabulary_detector_refuses_no_concept():
+    assert OPEN_VOCAB.refusal("a chipped enamel mug") is None
 
 
 def test_a_closed_vocabulary_detector_states_why_it_cannot_serve_a_concept():
-    reason = CLOSED_VOCAB.serves("red mug")
+    reason = CLOSED_VOCAB.refusal("red mug")
     assert reason and "red mug" in reason and CLOSED_VOCAB.name in reason
-    assert CLOSED_VOCAB.serves("person") is None
+    assert CLOSED_VOCAB.refusal("person") is None
 
 
 def test_a_concept_the_detector_cannot_serve_drops_its_target_with_a_reason():
@@ -551,7 +551,7 @@ def test_only_the_newest_of_several_submissions_is_ever_rendered():
     assert frame.plan.plan_version == 4 and frame.changed
 
 
-def test_the_pending_version_is_what_the_next_plan_counts_from():
+def test_the_latest_submitted_version_is_what_the_next_plan_counts_from():
     active = ActivePlan(one_plan(1))
     active.submit(one_plan(2))
-    assert active.plan.plan_version == 2
+    assert active.latest.plan_version == 2

@@ -11,7 +11,13 @@ behind their back.
 
 import numpy as np
 import pytest
-from render_plan import GLOBAL, ActivePlan, global_plan
+from render_plan import (
+    GLOBAL,
+    INITIAL_PLAN_VERSION,
+    ActivePlan,
+    global_plan,
+    validate_plan,
+)
 
 from sourceloader import load_symbols
 
@@ -42,8 +48,6 @@ def cached_engine():
 @pytest.fixture
 def control_transition():
     """The worker's own control-queue decision, executed out of the source file."""
-    from render_plan import INITIAL_PLAN_VERSION, validate_plan
-
     return load_symbols(
         "main_gpu_addon.py",
         ["T_INDEX_MIN", "T_INDEX_MAX", "_clamp_t_index", "_control_transition"],
@@ -95,7 +99,7 @@ def test_a_global_plan_renders_what_set_prompt_renders(cached_engine, control_tr
     update = control_transition(
         {"type": "set_plan", "plan": {"mode": GLOBAL, "source_prompt": PROMPT}},
         steps,
-        active.plan,
+        active.latest,
     )
     active.submit(update["plan"])
     frame = active.begin_frame()
@@ -116,14 +120,14 @@ def test_a_plan_arriving_mid_frame_does_not_change_the_frame(cached_engine,
     batch = stream.preprocess_image(_test_frame(scenario.width, scenario.height))
 
     active = ActivePlan(global_plan(PROMPT))
-    stream.stream.update_prompt(active.plan.effective_prompt)
+    stream.stream.update_prompt(active.latest.effective_prompt)
     frame = active.begin_frame()
 
     # A control message lands while this frame is rendering.
     update = control_transition(
         {"type": "set_plan", "plan": {"mode": GLOBAL, "source_prompt": OTHER_PROMPT}},
         list(scenario.t_index_list),
-        active.plan,
+        active.latest,
     )
     active.submit(update["plan"])
 

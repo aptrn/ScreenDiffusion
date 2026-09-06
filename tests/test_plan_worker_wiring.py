@@ -11,7 +11,8 @@ import ast
 from pathlib import Path
 
 SOURCE = Path(__file__).resolve().parent.parent / "main_gpu_addon.py"
-TREE = ast.parse(SOURCE.read_text(encoding="utf-8-sig"), filename=str(SOURCE))
+TEXT = SOURCE.read_text(encoding="utf-8-sig")
+TREE = ast.parse(TEXT, filename=str(SOURCE))
 
 
 def _function(name: str) -> ast.FunctionDef:
@@ -21,7 +22,7 @@ def _function(name: str) -> ast.FunctionDef:
     raise AssertionError(f"main_gpu_addon.py defines no {name}")
 
 
-def _calls_named(node: ast.AST, name: str) -> list:
+def _calls_named(node: ast.AST, name: str) -> list[ast.Call]:
     return [call for call in ast.walk(node)
             if isinstance(call, ast.Call)
             and getattr(call.func, "attr", getattr(call.func, "id", None)) == name]
@@ -50,8 +51,7 @@ def test_the_frame_reads_the_active_plan_exactly_once():
 
 
 def test_the_drain_hands_a_submitted_plan_to_the_holder_and_nowhere_else():
-    submits = _calls_named(WORKER, "submit")
-    assert len(submits) == 1
+    assert len(_calls_named(WORKER, "submit")) == 1
 
 
 def test_a_rejected_plan_reaches_the_user_rather_than_a_swallowed_exception():
@@ -64,12 +64,12 @@ def test_a_rejected_plan_reaches_the_user_rather_than_a_swallowed_exception():
 
 def test_the_control_transition_is_given_the_active_plan():
     """Without it the validator cannot count versions up from the plan in force."""
-    call = next(c for c in _calls_named(WORKER, "_control_transition"))
+    call, = _calls_named(WORKER, "_control_transition")
     assert len(call.args) == 3
 
 
 def test_the_capture_thread_still_sheds_the_frames_it_cannot_keep():
     """Issue #6's third trap. Newest-frame-wins is the loop's overload behaviour."""
     capture = _function("_screen_capture_loop_dx")
-    source = ast.get_source_segment(SOURCE.read_text(encoding="utf-8-sig"), capture)
+    source = ast.get_source_segment(TEXT, capture)
     assert "popleft" in source or "maxlen" in source

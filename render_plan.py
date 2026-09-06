@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import dataclasses
 from dataclasses import dataclass
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 # --- vocabulary -------------------------------------------------------------
 
@@ -152,8 +152,8 @@ class DetectorVocabulary:
     open_vocabulary: bool
     classes: Tuple[str, ...] = ()
 
-    def serves(self, concept: str) -> Optional[str]:
-        """None if this detector can be asked for `concept`, else why it cannot.
+    def refusal(self, concept: str) -> Optional[str]:
+        """Why this detector cannot be asked for `concept`, or None if it can.
 
         `concept` is already known to be a well-formed phrase - shape is the
         validator's business, and membership is this one's.
@@ -303,9 +303,12 @@ class RenderPlan:
         }
 
 
-PLAN_FIELDS: Tuple[str, ...] = (
-    "plan_version", "source_prompt", "negative_prompt", "mode", "targets",
-    "background", GLOBAL_KEY, "confidence", "notes",
+# What `_drop_unknown` accepts at each level, taken from the dataclasses so a
+# renamed field cannot leave a stale name behind. The plan's list is the one that
+# needs help: its `settings` field travels under the spec's `global` key.
+PLAN_FIELDS: Tuple[str, ...] = tuple(
+    GLOBAL_KEY if f.name == GLOBAL_FIELD else f.name
+    for f in dataclasses.fields(RenderPlan)
 )
 TARGET_FIELDS: Tuple[str, ...] = tuple(f.name for f in dataclasses.fields(Target))
 BACKGROUND_FIELDS: Tuple[str, ...] = tuple(f.name for f in dataclasses.fields(Background))
@@ -368,7 +371,7 @@ def _choice(value: Any, field: str, allowed: Sequence[str], default: Optional[st
 
 
 def _number(value: Any, field: str, low: float, high: float, default: float,
-            notes: List[str], as_int: bool = False):
+            notes: List[str], as_int: bool = False) -> Union[int, float]:
     """A number inside its range. Out of range is clamped and said; junk is refused.
 
     A numeric string is accepted, the way `set_t_index_list` already accepts one.
@@ -451,17 +454,17 @@ def _targets(raw: Any, detector: DetectorVocabulary,
     """
     if raw is None:
         return ()
-    if isinstance(raw, Mapping) or not isinstance(raw, (list, tuple)):
+    if not isinstance(raw, (list, tuple)):
         raise _Rejected(f"`targets` must be a list, not {type(raw).__name__}")
 
     kept: List[Target] = []
     dropped: List[str] = []
     for position, item in enumerate(raw):
         target = _target(item, position, notes)
-        unservable = detector.serves(target.concept)
-        if unservable:
-            dropped.append(unservable)
-            notes.append(f"dropped target '{target.id}': {unservable}")
+        refusal = detector.refusal(target.concept)
+        if refusal:
+            dropped.append(refusal)
+            notes.append(f"dropped target '{target.id}': {refusal}")
             continue
         kept.append(target)
 
@@ -516,6 +519,8 @@ def _mode(raw: Any, targets: Tuple[Target, ...]) -> str:
 
 def _honoured_note(targets: Tuple[Target, ...]) -> Optional[str]:
     """Say it when a plan asks for more per-target variation than B can render."""
+    if not targets:
+        return None
     first = targets[0]
     others = [t for t in targets[1:]
               if t.prompt != first.prompt or t.denoise != first.denoise]
@@ -544,10 +549,9 @@ def validate_plan(raw: Any, previous_version: int = INITIAL_PLAN_VERSION,
             raise _Rejected(f"a render plan must be a mapping, not {type(raw).__name__}")
         _drop_unknown(raw, PLAN_FIELDS, "plan", notes)
         targets = _targets(raw.get("targets"), detector, notes)
-        if targets:
-            honoured = _honoured_note(targets)
-            if honoured:
-                notes.append(honoured)
+        honoured = _honoured_note(targets)
+        if honoured:
+            notes.append(honoured)
         plan = RenderPlan(
             plan_version=int(previous_version) + 1,
             source_prompt=_text(raw.get("source_prompt"), "source_prompt"),
@@ -637,16 +641,16 @@ class ActivePlan:
     """
 
     def __init__(self, plan: RenderPlan) -> None:
-        self._pending = plan
+        self._latest = plan
         self._frame = plan
         # The startup plan is what the wrapper was prepared with, so the first frame
         # has nothing to apply and should not pay for a prompt re-encode saying so.
         self._applied_version = plan.plan_version
 
     @property
-    def plan(self) -> RenderPlan:
+    def latest(self) -> RenderPlan:
         """The newest submitted plan - what the next plan counts its version from."""
-        return self._pending
+        return self._latest
 
     @property
     def frame_plan(self) -> RenderPlan:
@@ -654,11 +658,11 @@ class ActivePlan:
         return self._frame
 
     def submit(self, plan: RenderPlan) -> None:
-        self._pending = plan
+        self._latest = plan
 
     def begin_frame(self) -> FramePlan:
         """Bind this frame's plan. Called once, at the top of the frame."""
-        self._frame = self._pending
+        self._frame = self._latest
         changed = self._frame.plan_version != self._applied_version
         self._applied_version = self._frame.plan_version
         return FramePlan(plan=self._frame, changed=changed)
