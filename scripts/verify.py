@@ -12,6 +12,8 @@ Run directly with any Python 3.9+:  python scripts/verify.py
 from __future__ import annotations
 
 import compileall
+import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -45,19 +47,44 @@ def check_syntax() -> bool:
     return ok
 
 
+def pytest_interpreter() -> str:
+    """The uv-managed venv if it is there, else whatever is running this script.
+
+    This script is meant to run on a bare interpreter, and the ambient `python`
+    on PATH is usually not the project's - it has no pytest and no torch.
+    """
+    venv_python = ROOT / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    return str(venv_python) if venv_python.exists() else sys.executable
+
+
 def run_tests() -> bool:
     """Run the GPU-free tier if a suite exists. Absent suite is not a failure."""
     if not (ROOT / "tests").is_dir():
         print("verify: no tests/ directory - skipping (see the test-harness issue)")
         return True
+
+    python = pytest_interpreter()
+    if subprocess.run([python, "-c", "import pytest"], capture_output=True).returncode != 0:
+        print(f"verify: pytest not importable by {python} - skipping tests (run `uv sync`)")
+        return True
+
     result = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "-m", "not gpu"],
+        [python, "-m", "pytest", "-q", "-m", "not gpu"],
         cwd=ROOT,
+        capture_output=True,
+        text=True,
     )
+    sys.stdout.write(result.stdout)
+    sys.stderr.write(result.stderr)
     if result.returncode == 5:  # pytest's "no tests collected"
         print("verify: no non-GPU tests collected")
         return True
-    return result.returncode == 0
+
+    ok = result.returncode == 0
+    summary = re.search(r"(\d+) passed", result.stdout)
+    passed_count = summary.group(1) if summary else "0"
+    print(f"verify: tests {'OK' if ok else 'FAILED'} ({passed_count} passed, GPU tier deselected)")
+    return ok
 
 
 def main() -> int:
