@@ -1,0 +1,64 @@
+[project]
+name = "screendiffusion"
+version = "0.2.0"
+description = "Real-time image-to-image screen renderer built on StreamDiffusion"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = "==3.11.*"
+
+dependencies = [
+    # --- PyTorch (CUDA 12.8 build, from the dedicated PyTorch index below) ---
+    "torch==2.7.0+cu128",
+    "torchvision==0.22.0+cu128",
+
+    # --- Core AI framework (version-locked: StreamDiffusion needs these exact majors) ---
+    "transformers==4.36.2",
+    "diffusers==0.24.0",
+    "huggingface-hub==0.22.2",
+    "streamdiffusion[tensorrt]==0.1.1",
+
+    # --- TensorRT compilation tools & CUDA bindings ---
+    "tensorrt==10.8.0.43",
+    "tensorrt-cu12==10.8.0.43",
+    # The two packages above are thin metapackages; these carry the actual
+    # Python bindings and native .dll payload, and live only on NVIDIA's index.
+    "tensorrt-cu12-bindings==10.8.0.43",
+    "tensorrt-cu12-libs==10.8.0.43",
+    "polygraphy",
+    "onnx",
+    "onnx-graphsurgeon",
+    "cuda-python==12.8.0",
+
+    # --- UI, screen capture, and utilities ---
+    "customtkinter",
+    "pillow",
+    "numpy==1.26.4",
+    "dxcam",
+    "mss",
+    "opencv-python==4.10.0.84",
+]
+
+# xformers is intentionally omitted: on cu128 it fails to build, and RTX 30/40/50
+# series fall back to PyTorch's native SDPA (Flash Attention) anyway.
+
+[tool.uv]
+# Flat script layout (main_gpu_addon.py / wrapper.py) - nothing to build or install.
+package = false
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
+tensorrt-cu12-bindings = { index = "nvidia" }
+tensorrt-cu12-libs = { index = "nvidia" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+# NVIDIA's current package index. Note: the older `pypi.ngc.nvidia.com` host
+# no longer resolves - use this one.
+[[tool.uv.index]]
+name = "nvidia"
+url = "https://pypi.nvidia.com"
+explicit = true

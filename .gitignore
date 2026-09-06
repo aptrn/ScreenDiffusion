@@ -1,1 +1,11 @@
-﻿venv
+.venv/
+venv/
+local_cache/
+__pycache__/
+*.pyc
+
+# Downloaded models & TensorRT engines
+models/
+engines/
+*.safetensors
+*.engine

@@ -370,6 +370,10 @@ ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 GD_DETERMINISTIC = bool(int(os.getenv('GD_DETERMINISTIC', '0')))
 LOCAL_MODEL_PATH = r""
+# Offline mode blocks diffusers' repo-id lookup, so prefer a local copy of the
+# LCM-LoRA when one has been staged next to the app.
+LOCAL_LCM_LORA = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "models", "loras", "lcm-lora-sdv1-5.safetensors")
 PREVIEW_GAIN = 1.15
 
 def enforce_offline_mode():
@@ -392,7 +396,7 @@ SHOW = {
     "model_path": True, "prompt": True, "negative_prompt": True, "seed": True,
     "frame_buffer_size": False, "acceleration": True, "use_denoising_batch": False,
     "cfg_type": False, "guidance_scale": False, "delta": False, "similar_image_filter": False,
-    "offline": False,
+    "offline": False, "lora": True, "use_lcm_lora": True,
 }
 
 class RECT(ctypes.Structure):
@@ -591,7 +595,7 @@ def _load_stream_wrapper():
     spec.loader.exec_module(mod)
     return getattr(mod, "StreamDiffusionWrapper")
 
-def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Queue, status_queue: Queue, control_queue: Queue, debug_queue: Queue, t_index_list: List[int], model_path_dir: str, controlnet_paths: List[str], controlnet_scales: List[float], lora_dict: Optional[Dict[str, float]], prompt: str, negative_prompt: str, frame_buffer_size: int, width: int, height: int, acceleration: Literal["none", "xformers", "tensorrt"], use_denoising_batch: bool, seed: int, cfg_type: Literal["none", "full", "self", "initialize"], guidance_scale: float, delta: float, do_add_noise: bool, enable_similar_image_filter: bool, similar_image_filter_threshold: float, similar_image_filter_max_skip_frame: float, monitor_receiver: Connection, offline: bool = True) -> None:
+def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Queue, status_queue: Queue, control_queue: Queue, debug_queue: Queue, t_index_list: List[int], model_path_dir: str, controlnet_paths: List[str], controlnet_scales: List[float], lora_dict: Optional[Dict[str, float]], use_lcm_lora: bool, lcm_lora_id: Optional[str], prompt: str, negative_prompt: str, frame_buffer_size: int, width: int, height: int, acceleration: Literal["none", "xformers", "tensorrt"], use_denoising_batch: bool, seed: int, cfg_type: Literal["none", "full", "self", "initialize"], guidance_scale: float, delta: float, do_add_noise: bool, enable_similar_image_filter: bool, similar_image_filter_threshold: float, similar_image_filter_max_skip_frame: float, monitor_receiver: Connection, offline: bool = True) -> None:
     import sys, os
     from pathlib import Path
     
@@ -624,7 +628,7 @@ def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Qu
         verify_local_model_path_dir(model_path_dir)
 
         stream = StreamDiffusionWrapper(
-            model_id_or_path=model_path_dir, t_index_list=list(t_index_list), frame_buffer_size=frame_buffer_size, width=width, height=height, warmup=2, acceleration=acceleration, do_add_noise=do_add_noise, enable_similar_image_filter=enable_similar_image_filter, similar_image_filter_threshold=similar_image_filter_threshold, similar_image_filter_max_skip_frame=similar_image_filter_max_skip_frame, mode="img2img", use_denoising_batch=use_denoising_batch, cfg_type=cfg_type, seed=seed, lora_dict=lora_dict
+            model_id_or_path=model_path_dir, t_index_list=list(t_index_list), frame_buffer_size=frame_buffer_size, width=width, height=height, warmup=2, acceleration=acceleration, do_add_noise=do_add_noise, enable_similar_image_filter=enable_similar_image_filter, similar_image_filter_threshold=similar_image_filter_threshold, similar_image_filter_max_skip_frame=similar_image_filter_max_skip_frame, mode="img2img", use_denoising_batch=use_denoising_batch, cfg_type=cfg_type, seed=seed, lora_dict=lora_dict, use_lcm_lora=use_lcm_lora, lcm_lora_id=lcm_lora_id
         )
         stream.prepare(prompt=prompt, negative_prompt=negative_prompt, num_inference_steps=50, guidance_scale=guidance_scale, delta=delta)
         first_rect = monitor_receiver.recv()
@@ -676,7 +680,8 @@ def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Qu
                                     similar_image_filter_threshold=similar_image_filter_threshold, 
                                     similar_image_filter_max_skip_frame=similar_image_filter_max_skip_frame, 
                                     mode="img2img", use_denoising_batch=use_denoising_batch, 
-                                    cfg_type=cfg_type, seed=seed, lora_dict=lora_dict
+                                    cfg_type=cfg_type, seed=seed, lora_dict=lora_dict,
+                                    use_lcm_lora=use_lcm_lora, lcm_lora_id=lcm_lora_id
                                 )
                                 stream.prepare(prompt=prompt, negative_prompt=negative_prompt, num_inference_steps=50, guidance_scale=guidance_scale, delta=delta)
                                 _status("Engine swap complete!")
@@ -939,6 +944,10 @@ class StreamGUI(ctk.CTk):
         self.monitor_sender = self.monitor_receiver = None
         self.running = False
         self.model_var = ctk.StringVar(value=LOCAL_MODEL_PATH)
+        # Each entry: {"path": str, "scale": float}. Converted to StreamDiffusion's
+        # lora_dict ({path: scale}) at start time.
+        self.lora_items: List[Dict[str, Any]] = []
+        self._lora_widgets: List[Any] = []
         self.prompt_var = ctk.StringVar(value="flip book animation, black and white rough sketch, rough drawing")
         self.neg_prompt_var = ctk.StringVar(value="low quality, bad quality, blurry, low resolution")
         self.seed_var = ctk.StringVar(value="1")
@@ -946,6 +955,9 @@ class StreamGUI(ctk.CTk):
         self.height_var = ctk.IntVar(value=512)
         self.buffer_var = ctk.StringVar(value="1")
         self.accel_var = ctk.StringVar(value="xformers")
+        # Ignored for sd-turbo (already 1-step). For SD1.5 this pulls
+        # latent-consistency/lcm-lora-sdv1-5, which needs ~4 steps.
+        self.use_lcm_lora_var = ctk.BooleanVar(value=False)
         self.denoise_batch_var = ctk.BooleanVar(value=True)
         self.cfg_type_var = ctk.StringVar(value="none")
         self.guidance_var = ctk.StringVar(value="0.0")
@@ -1317,6 +1329,20 @@ class StreamGUI(ctk.CTk):
             self._w_model_download.grid(row=0, column=2, pady=6)
             self._register_lockables(self._w_model_entry, self._w_model_browse, self._w_model_download)
             row += 2
+        if SHOW.get("lora", True):
+            lf = ctk.CTkFrame(left); lf.grid(row=row, column=0, sticky="ew", pady=(4, 6))
+            lf.grid_columnconfigure(0, weight=1)
+            lh = ctk.CTkFrame(lf, fg_color="transparent")
+            lh.grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 0))
+            ctk.CTkLabel(lh, text="LoRAs", font=ctk.CTkFont(weight="bold")).pack(side="left")
+            self._w_lora_add = ctk.CTkButton(lh, text="+ Add LoRA", width=90, command=self._add_lora)
+            self._w_lora_add.pack(side="right")
+            self._register_lockables(self._w_lora_add)
+            self._loras_holder = ctk.CTkFrame(lf, fg_color="transparent")
+            self._loras_holder.grid(row=1, column=0, sticky="ew", padx=6, pady=(4, 6))
+            self._loras_holder.grid_columnconfigure(0, weight=1)
+            self._build_loras_ui()
+            row += 1
         g2 = ctk.CTkFrame(left); g2.grid(row=row, column=0, sticky="ew", pady=(4,6))
         for i in range(6): g2.grid_columnconfigure(i, weight=1)
         col = 0
@@ -1335,6 +1361,10 @@ class StreamGUI(ctk.CTk):
             self._w_accel_combo = ctk.CTkComboBox(g2, values=["none", "xformers", "tensorrt"], variable=self.accel_var, width=120)
             self._w_accel_combo.grid(row=1, column=col, sticky="ew"); col += 1
             self._register_lockables(self._w_accel_combo)
+        if SHOW.get("use_lcm_lora", True):
+            self._w_lcm_switch = ctk.CTkSwitch(g2, text="LCM-LoRA", variable=self.use_lcm_lora_var)
+            self._w_lcm_switch.grid(row=1, column=col, sticky="w", padx=(6,0)); col += 1
+            self._register_lockables(self._w_lcm_switch)
         if SHOW.get("use_denoising_batch", True):
             self._w_denoise_switch = ctk.CTkSwitch(g2, text="Denoising batch", variable=self.denoise_batch_var)
             self._w_denoise_switch.grid(row=1, column=col, sticky="w"); col += 1
@@ -1683,6 +1713,77 @@ class StreamGUI(ctk.CTk):
             self._append_gpu_log(f"Automatic restart failed: {e}")
             messagebox.showinfo("Restart Required", "PyTorch installed successfully!\n\nPlease manually restart the application to use GPU features.")
 
+    # ---------------- LoRA management ----------------
+
+    def _add_lora(self):
+        if self.running: return
+        paths = filedialog.askopenfilenames(
+            title="Select LoRA file(s)",
+            filetypes=[("LoRA weights", "*.safetensors *.bin *.pt"), ("All files", "*.*")],
+        )
+        if not paths: return
+        existing = {item["path"] for item in self.lora_items}
+        added = 0
+        for path in paths:
+            # lora_dict is keyed by path, so duplicates would silently collapse.
+            if path in existing:
+                continue
+            self.lora_items.append({"path": path, "scale": 1.0})
+            existing.add(path)
+            added += 1
+        if added:
+            self._build_loras_ui()
+
+    def _remove_lora(self, index: int):
+        if self.running: return
+        if 0 <= index < len(self.lora_items):
+            self.lora_items.pop(index)
+            self._build_loras_ui()
+
+    def _on_lora_scale_changed(self, index: int, value, disp_var):
+        try:
+            scale = round(float(value), 2)
+        except Exception:
+            return
+        if 0 <= index < len(self.lora_items):
+            self.lora_items[index]["scale"] = scale
+        disp_var.set(f"{scale:.2f}")
+
+    def _build_loras_ui(self):
+        # Rows are rebuilt wholesale, so keep their widgets out of self._lockables
+        # (which never prunes) and track them here instead, like _step_sliders.
+        for child in self._loras_holder.winfo_children(): child.destroy()
+        self._lora_widgets = []
+        if not self.lora_items:
+            ctk.CTkLabel(self._loras_holder, text="No LoRAs loaded (optional)",
+                         text_color="gray60", anchor="w").grid(row=0, column=0, sticky="ew", pady=2)
+            self._apply_running_state()
+            return
+        for idx, item in enumerate(self.lora_items):
+            r = ctk.CTkFrame(self._loras_holder)
+            r.grid(row=idx, column=0, sticky="ew", pady=2)
+            r.grid_columnconfigure(0, weight=1)
+            name = os.path.basename(item["path"])
+            if len(name) > 34: name = name[:31] + "..."
+            ctk.CTkLabel(r, text=name, anchor="w").grid(row=0, column=0, sticky="ew", padx=(6, 4), pady=(4, 0))
+            btn_rm = ctk.CTkButton(r, text="✕", width=28, fg_color="#B91C1C", hover_color="#991B1B",
+                                   command=lambda i=idx: self._remove_lora(i))
+            btn_rm.grid(row=0, column=1, rowspan=2, padx=(4, 6))
+            disp = ctk.StringVar(value=f"{item['scale']:.2f}")
+            ctk.CTkLabel(r, textvariable=disp, width=40).grid(row=1, column=0, sticky="e", padx=(0, 4))
+            sl = ctk.CTkSlider(r, from_=0.0, to=2.0, number_of_steps=200,
+                               command=lambda v, i=idx, d=disp: self._on_lora_scale_changed(i, v, d))
+            sl.set(item["scale"])
+            sl.grid(row=2, column=0, sticky="ew", padx=(6, 4), pady=(0, 4))
+            self._lora_widgets += [btn_rm, sl]
+        self._set_state(self._lora_widgets, "disabled" if self.running else "normal")
+        self._apply_running_state()
+
+    def _lora_dict(self) -> Optional[Dict[str, float]]:
+        """StreamDiffusion expects {path: scale}, or None when no LoRAs are used."""
+        if not self.lora_items: return None
+        return {item["path"]: float(item["scale"]) for item in self.lora_items}
+
     def _browse_model(self):
         d = filedialog.askdirectory(title="Select diffusers model folder")
         if d: self.model_var.set(d)
@@ -1697,13 +1798,31 @@ class StreamGUI(ctk.CTk):
         self.out_q = ctx.Queue(maxsize=2); self.fps_q = ctx.Queue(); self.status_q = ctx.Queue()
         self.control_q = ctx.Queue(); self.debug_q = ctx.Queue(); self.close_q = ctx.Queue()
         self.monitor_sender, self.monitor_receiver = ctx.Pipe()
+        lora_dict = self._lora_dict()
+        if lora_dict:
+            missing = [p for p in lora_dict if not os.path.isfile(p)]
+            if missing:
+                messagebox.showerror("LoRA error",
+                    "These LoRA files no longer exist:\n\n" + "\n".join(missing))
+                return
+            if self.accel_var.get() == "tensorrt":
+                # LoRA weights are fused into the UNet before the TensorRT engine is
+                # compiled, so each distinct LoRA set needs its own engine build.
+                if not messagebox.askokcancel("TensorRT engine build required",
+                    "TensorRT bakes LoRA weights into the compiled engine.\n\n"
+                    "This LoRA combination has no cached engine yet, so the first "
+                    "start will take several minutes to build one. Changing a LoRA "
+                    "or its scale later triggers another build.\n\n"
+                    "Continue?"):
+                    return
         controlnet_paths: List[str] = []; controlnet_scales: List[float] = []
         self.proc_worker = ctx.Process(
             target=image_generation_process,
             args=(
                 self.out_q, self.fps_q, self.close_q, self.status_q, self.control_q, self.debug_q, 
                 list(map(int, self.t_index_list)), self.model_var.get(), controlnet_paths, controlnet_scales, 
-                None, 
+                lora_dict, bool(self.use_lcm_lora_var.get()),
+                (LOCAL_LCM_LORA if os.path.isfile(LOCAL_LCM_LORA) else None),
                 self.prompt_txt.get("1.0", "end").strip(), self.neg_prompt_txt.get("1.0", "end").strip(), 
                 int(self.buffer_var.get()), int(self.width_var.get()), int(self.height_var.get()), 
                 self.accel_var.get(), True, int(self.seed_var.get()), 

@@ -1,81 +1,69 @@
 @echo off
-title ScreenDiffusion Final Setup
+setlocal
+title ScreenDiffusion Setup (uv)
+cd /d "%~dp0"
+
 echo ========================================================
-echo        ScreenDiffusion Ultimate Environment Setup
+echo         ScreenDiffusion Environment Setup
 echo ========================================================
 echo.
 
-echo [1/5] Checking for Python...
-python --version
-if %errorlevel% neq 0 goto :python_error
+echo [1/3] Checking for uv...
+where uv >nul 2>&1
+if %errorlevel% equ 0 goto :have_uv
+
+echo [INFO] uv not found. Installing it now (one-time, ~30 seconds)...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://astral.sh/uv/install.ps1 | iex"
+if %errorlevel% neq 0 goto :uv_error
+
+:: The installer adds uv to PATH for NEW shells; add it to THIS one too.
+set "PATH=%USERPROFILE%\.local\bin;%PATH%"
+where uv >nul 2>&1
+if %errorlevel% neq 0 goto :uv_error
+
+:have_uv
+for /f "delims=" %%v in ('uv --version') do echo [OK] %%v
 
 echo.
-echo [2/5] Checking Virtual Environment...
-if not exist venv\ goto :create_venv
-
-echo [WARNING] A virtual environment (venv) already exists!
-choice /C YN /M "Are you sure you want to delete it and reinstall everything?"
-if errorlevel 2 goto :cancel_setup
-
-echo Deleting existing venv for a clean install...
-rmdir /s /q venv
-
-:create_venv
-echo Creating a fresh Virtual Environment (venv)...
-python -m venv venv
+echo [2/3] Preparing Python 3.11...
+echo       (uv downloads its own Python - no manual install needed)
+uv python install 3.11
+if %errorlevel% neq 0 goto :setup_error
 
 echo.
-echo [3/5] Activating venv and upgrading pip...
-call venv\Scripts\activate
-python -m pip install --upgrade pip
-
+echo [3/3] Creating the isolated environment and installing dependencies...
+echo       This downloads several GB of CUDA/PyTorch wheels - please be patient.
 echo.
-echo [4/5] Installing PyTorch with universal CUDA support...
-mkdir "%~dp0local_cache" 2>nul
-
-:: Install PyTorch from local cache if available, otherwise download
-if exist "%~dp0local_cache\torch-2.7.0+cu128*.whl" (
-    echo [INFO] Massive local PyTorch file detected! Installing completely offline...
-    pip install torch==2.7.0+cu128 torchvision==0.22.0+cu128 --no-index --find-links="%~dp0local_cache"
-) else (
-    echo [INFO] Local cache empty. Downloading from PyTorch servers...
-    pip install torch==2.7.0+cu128 torchvision==0.22.0+cu128 --find-links="%~dp0local_cache" --index-url https://download.pytorch.org/whl/cu128
-)
-
-echo.
-echo [5/5] Installing strictly version-locked AI and UI dependencies...
-REM Core AI framework
-pip install transformers==4.36.2 diffusers==0.24.0 huggingface-hub==0.22.2
-pip install streamdiffusion[tensorrt]
-
-REM NVIDIA TensorRT compilation tools & CUDA bindings (Strictly pinned for RTX 50 Series)
-pip install tensorrt==10.8.0.43 tensorrt-cu12==10.8.0.43 polygraphy onnx onnx-graphsurgeon cuda-python==12.8.0 --extra-index-url https://pypi.ngc.nvidia.com
-
-REM xformers skipped - RTX 50 series will natively use PyTorch SDPA (Flash Attention)
-:: pip install xformers (Intentionally removed to prevent build failures on cu128)
-
-REM UI, capture, and locked utility versions
-pip install customtkinter pillow numpy==1.26.4 dxcam mss opencv-python==4.10.0.84
+uv sync
+if %errorlevel% neq 0 goto :setup_error
 
 echo.
 echo ========================================================
-echo    Setup Complete! The environment is locked and stable.
+echo    Setup complete! The environment is locked and stable.
+echo.
+echo    Everything lives in the .venv folder in this directory.
+echo    Nothing was installed into your system Python.
+echo.
+echo    Next: run run.bat to launch ScreenDiffusion.
 echo ========================================================
 pause
-exit /b
+exit /b 0
 
 :: ==========================================
 :: ERROR HANDLERS
 :: ==========================================
 
-:python_error
+:uv_error
 echo.
-echo [ERROR] Python is not installed or not in your system PATH.
+echo [ERROR] Could not install uv automatically.
+echo         Install it manually from https://docs.astral.sh/uv/ and re-run setup.bat.
 pause
-exit /b
+exit /b 1
 
-:cancel_setup
+:setup_error
 echo.
-echo Setup cancelled to protect your existing environment.
+echo [ERROR] Setup failed. See the messages above for details.
+echo         A common cause is an interrupted download - just re-run setup.bat,
+echo         uv will resume from where it left off.
 pause
-exit /b
+exit /b 1

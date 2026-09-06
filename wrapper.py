@@ -1,5 +1,6 @@
 ﻿import gc
 import os
+import hashlib
 from pathlib import Path
 import traceback
 from typing import List, Literal, Optional, Union, Dict
@@ -604,6 +605,10 @@ class StreamDiffusionWrapper:
             use_denoising_batch=self.use_denoising_batch,
             cfg_type=cfg_type,
         )
+        # LCM-LoRA is a scheduler trick that sd-turbo does not need, so it stays
+        # gated on sd_turbo. User-supplied LoRAs are a different thing entirely and
+        # must load for every model - keeping them inside this guard made the UI's
+        # LoRA list silently do nothing on sd-turbo.
         if not self.sd_turbo:
             if use_lcm_lora:
                 if lcm_lora_id is not None:
@@ -614,11 +619,22 @@ class StreamDiffusionWrapper:
                     stream.load_lcm_lora()
                 stream.fuse_lora()
 
-            if lora_dict is not None:
-                for lora_name, lora_scale in lora_dict.items():
+        if lora_dict is not None:
+            for lora_name, lora_scale in lora_dict.items():
+                try:
                     stream.load_lora(lora_name)
                     stream.fuse_lora(lora_scale=lora_scale)
-                    print(f"Use LoRA: {lora_name} in weights {lora_scale}")
+                except Exception as e:
+                    # Surface the reason instead of continuing with a model that
+                    # silently lacks the LoRA the user asked for.
+                    raise RuntimeError(
+                        f"Failed to load LoRA '{os.path.basename(str(lora_name))}': {e}\n\n"
+                        f"The LoRA must match the base model's architecture "
+                        f"(sd-turbo is SD 2.1-based), and LoRAs containing "
+                        f"convolution layers (LoCon/LyCORIS) are not supported by "
+                        f"diffusers {__import__('diffusers').__version__}."
+                    ) from e
+                print(f"Use LoRA: {lora_name} in weights {lora_scale}")
 
         if use_tiny_vae:
             if vae_id is not None:
@@ -631,6 +647,15 @@ class StreamDiffusionWrapper:
                 )
 
         try:
+            if acceleration != "tensorrt":
+                # NHWC lets cuDNN/tensor cores pick faster fp16 conv kernels for the
+                # conv-heavy UNet. Measured ~+11% here. TensorRT builds its own graph,
+                # so the torch-side memory format is irrelevant on that path.
+                try:
+                    stream.unet.to(memory_format=torch.channels_last)
+                    print("[INFO] UNet set to channels_last (NHWC) memory format.")
+                except Exception as e:
+                    print(f"[WARN] channels_last not applied: {e}")
             if acceleration == "xformers":
                 print("[INFO] Bypassing broken xformers... Using PyTorch Native Flash Attention (SDPA) instead!")
                 # Modern diffusers natively default to SDPA on PyTorch 2.0+, so no extra code is needed here.
@@ -738,16 +763,30 @@ class StreamDiffusionWrapper:
                     VAEEncoder,
                 )
 
+                # A built engine is only valid for the exact resolution and the
+                # exact fused-LoRA weights it was compiled against. Both must be
+                # part of the cache key, otherwise a stale engine gets loaded and
+                # fed mismatched tensors -> CUDA illegal memory access.
+                if lora_dict:
+                    lora_fingerprint = hashlib.sha1(
+                        repr(sorted(lora_dict.items())).encode("utf-8")
+                    ).hexdigest()[:8]
+                else:
+                    lora_fingerprint = "none"
+
                 def create_prefix(
                     model_id_or_path: str,
                     max_batch_size: int,
                     min_batch_size: int,
                 ):
                     maybe_path = Path(model_id_or_path)
-                    if maybe_path.exists():
-                        return f"{maybe_path.stem}--lcm_lora-{use_lcm_lora}--tiny_vae-{use_tiny_vae}--max_batch-{max_batch_size}--min_batch-{min_batch_size}--mode-{self.mode}"
-                    else:
-                        return f"{model_id_or_path}--lcm_lora-{use_lcm_lora}--tiny_vae-{use_tiny_vae}--max_batch-{max_batch_size}--min_batch-{min_batch_size}--mode-{self.mode}"
+                    base = maybe_path.stem if maybe_path.exists() else model_id_or_path
+                    return (
+                        f"{base}--lcm_lora-{use_lcm_lora}--tiny_vae-{use_tiny_vae}"
+                        f"--max_batch-{max_batch_size}--min_batch-{min_batch_size}"
+                        f"--res-{self.width}x{self.height}--lora-{lora_fingerprint}"
+                        f"--mode-{self.mode}"
+                    )
 
                 engine_dir = Path(engine_dir)
                 unet_path = os.path.join(
