@@ -186,45 +186,76 @@ suppress flicker. Everything outside the regions is raw captured pixels.
 
 ## 6. The Render Plan (control-plane ⇄ data-plane contract)
 
-The whole design hinges on this being small, validated, and stable. Straw-man:
+The whole design hinges on this being small, validated, and stable. It is
+**implemented**: `render_plan.py` is the schema and the validator, and
+`validate_plan` is the only way to obtain a `RenderPlan`. The block below is the
+contract as built — every value in it is the default the validator assigns, and a
+test regenerates it through `validate_plan` and demands a match, so it cannot drift
+away from the code.
 
 ```jsonc
 {
-  "plan_version": 7,
-  "source_prompt": "find all people on screen and give them a red hat",
+  "plan_version": 1,                // assigned by the validator, never by a producer
+  "source_prompt": "",              // the style text, when no target carries one
+  "negative_prompt": "",            // not in the straw-man: the app has this box today
   "mode": "selective",              // "selective" | "global" | "inverse"
   "targets": [
     {
-      "id": "t0",
-      "concept": "person",          // free text; resolved by C2 to detector vocab
-      "detector_class": 0,          // resolved COCO id, or null for open-vocab
-      "region": "upper_third",      // "full_box" | "upper_third" | "lower_half" ...
-      "box_scale": 1.15,            // dilation before cropping
-      "prompt": "wearing a vibrant red hat",
-      "negative_prompt": "blurry, deformed",
-      "denoise": 0.45,              // maps to t_index_list selection
+      "id": "t0",                   // assigned by position when omitted
+      "concept": "person",          // free text, straight to the open-vocabulary detector
+      "detector_class": null,       // resolved COCO id, or null for open-vocab
+      "region": "full_box",         // full_box | upper_third | upper_half | center | lower_half | lower_third
+      "box_scale": 1.15,            // dilation before cropping, 1.0-2.0
+      "prompt": "",                 // the style for this target
+      "negative_prompt": "",
+      "denoise": 0.45,              // 0.0-1.0; carried, and applied by the render path
       "seed_policy": "per_track",   // "per_track" | "fixed" | "random"
-      "max_instances": 6,
-      "priority": 1
+      "max_instances": 6,           // 1-16
+      "priority": 1                 // 0-99, an ordering key between targets
     }
   ],
-  "background": { "action": "passthrough" },   // or {"action":"stylize","prompt":"..."}
+  "background": { "action": "passthrough", "prompt": "" },   // or "stylize"
   "global": { "fps_target": 30, "detect_every_n": 3 },
-  "confidence": 0.82,
-  "notes": "assumed 'red hat' means head region only"
+  "confidence": 1.0,
+  "notes": ""
 }
 ```
 
 Design rules:
 
-- **Only C2 may write it.** The LLM proposes; the validator disposes.
+- **The GUI writes it; the validator disposes.** The straw-man said "only C2 may
+  write it" — C2 was the LLM prompt compiler, and it is cut from v1. The producer
+  is `plan_from_fields(target, style)`: a target field whose text goes to the
+  detector and a style field whose text goes to StreamDiffusion. Any other hand can
+  write one too — a test, a preset file — because the door is the validator, not the
+  producer.
 - **Every field has a safe default.** A plan carrying just `targets[0].concept`
-  and `.prompt` must render something sensible.
-- **`notes` is surfaced in the UI.** The user should see what interpretation was
-  chosen — "assumed head region only" — and be able to correct it in natural
-  language rather than by hunting for a slider.
-- **Versioned and atomic.** The render loop swaps plans between frames, never
-  mid-frame.
+  and `.prompt` must render something sensible. `mode` defaults by reading the
+  plan: `global` with no target, `selective` with one.
+- **Out of range is clamped and said; malformed is refused and said.** A number
+  outside its range is clamped into it and the clamp lands in `notes`; an unknown
+  field is dropped and named. A value outside a fixed vocabulary (`mode`, `region`,
+  `seed_policy`, `background.action`), a number that is not a number, a duplicate
+  target id or a concept the active detector cannot serve rejects the plan with a
+  reason in words. The plan in force keeps rendering — spec 8.7, never a black
+  screen.
+- **`notes` is surfaced in the UI.** Both kinds: the plan's own `notes` field and
+  the validator's, which say what it changed on the way through.
+- **Versioned and atomic.** `plan_version` is assigned by the validator as
+  `previous + 1`, so it is monotonic in the worker rather than in whichever producer
+  sent one. `ActivePlan.begin_frame()` is the frame loop's single read: a plan
+  submitted while a frame renders lands on the next frame and never on half of this
+  one.
+- **Only the first target's `prompt` and `denoise` are honoured.** Issue #5 chose
+  the full-frame masked primitive — one diffusion call, so one prompt embedding and
+  one strength per frame. The other targets keep their own values in the schema, and
+  the validator says out loud when they differ from the first.
+
+What the worker does with a plan **today** is the `global` case of it: the plan's
+effective prompt over the whole frame, which is what the app already did and what
+`set_prompt` still does. `mode`, `region`, `box_scale`, `max_instances`,
+`seed_policy` and `background` are the schema the selective render path consumes,
+and that path is issues #7 (detector and tracks) and #8 (regions and compositing).
 
 ---
 

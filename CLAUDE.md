@@ -112,6 +112,21 @@ runtime control means adding a message type there, not a shared object.
 The capture thread always yields the newest frame and sheds the rest. Under load the
 pipeline drops frames rather than falling behind — preserve that.
 
+`render_plan.py` is the **Render Plan** — spec §6, what to restyle and how. Stdlib
+only, so both processes import it and neither pays for it. `validate_plan` is the
+only way to get a `RenderPlan`: it defaults every field, clamps numbers into their
+range and says so in `notes`, drops unknown fields, and *rejects* — with a reason in
+words — a value outside a fixed vocabulary, a number that is not a number, a
+duplicate target id, or a concept the active detector cannot serve. It assigns
+`plan_version` as `previous + 1`, so versions are monotonic in the worker rather than
+in whatever sent one. `plan_from_fields(target, style)` is the GUI's producer; there
+is no LLM in this path and none is coming in v1. The plan crosses the queue as a
+plain dict (`set_plan`); the worker validates it and holds it in an `ActivePlan`,
+whose `begin_frame()` is the frame loop's single read — a plan arriving mid-frame
+lands on the next frame. Only the *first* target's `prompt` and `denoise` reach the
+engine, because issue #5 chose the full-frame masked primitive and that is one
+embedding per frame; the rest are carried and the validator says when they differ.
+
 ## Gotchas
 
 - **TensorRT engines compile per configuration.** Resolution, batch size
