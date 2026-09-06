@@ -8,19 +8,14 @@ on a machine with no CUDA device and the merge gate can exercise them.
 from __future__ import annotations
 
 import argparse
+import shutil
 import sys
 from pathlib import Path
 from typing import Optional, Sequence, TextIO
 
-from bench.cooldown import DEFAULT_CAP_S, DEFAULT_POLL_INTERVAL_S, DEFAULT_THRESHOLD_C
-from bench.disk import (
-    MIN_FREE_BYTES_FOR_ENGINE_BUILD,
-    DiskRecord,
-    Usage,
-    read_disk,
-    require_free_space,
-)
 from bench import marginal
+from bench.cooldown import DEFAULT_CAP_S, DEFAULT_POLL_INTERVAL_S, DEFAULT_THRESHOLD_C
+from bench.disk import DiskRecord, Usage, read_disk, require_free_space
 from bench.paths import RESULTS_DIR, resolve_engines_dir
 from bench.scenarios import SCENARIOS, ScenarioConfig
 
@@ -99,7 +94,7 @@ def engine_dir_name(scenario: ScenarioConfig) -> str:
 
 def engine_build_guard(scenario: ScenarioConfig, engines_root: Optional[Path] = None,
                        allow_build: bool = False,
-                       usage: Optional[Usage] = None) -> Optional[DiskRecord]:
+                       usage: Usage = shutil.disk_usage) -> Optional[DiskRecord]:
     """Two gates on compiling an engine, and the disk reading every TensorRT run carries.
 
     Spec 7.2: run the sweep on the `none` accelerator first and confirm only the two
@@ -119,8 +114,7 @@ def engine_build_guard(scenario: ScenarioConfig, engines_root: Optional[Path] = 
     if scenario.acceleration != "tensorrt":
         return None
     root = resolve_engines_dir() if engines_root is None else Path(engines_root)
-    record = read_disk(root, required_bytes=MIN_FREE_BYTES_FOR_ENGINE_BUILD,
-                       **({} if usage is None else {"usage": usage}))
+    record = read_disk(root, usage=usage)
     if (root / engine_dir_name(scenario) / "unet.engine").is_file():
         return record
     if not allow_build:

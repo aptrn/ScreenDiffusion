@@ -13,6 +13,7 @@ workflow, not an obstacle to it.
 GPU-free: `bench.marginal` reads JSON and divides. It never imports torch.
 """
 
+import io
 from pathlib import Path
 
 import pytest
@@ -36,8 +37,6 @@ def spec_table() -> str:
 
 def computed_table() -> str:
     """The same report `python -m bench --marginal` prints."""
-    import io
-
     buffer = io.StringIO()
     report_marginal(RESULTS, out=buffer)
     return buffer.getvalue().strip()

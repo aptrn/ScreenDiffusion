@@ -7,8 +7,13 @@ and left a partial engine behind. The check happens before the build and lands i
 the result, so a reviewer can see the headroom the number was measured with.
 """
 
+import json
+import sys
+import types
+
 import pytest
 
+from bench import cli
 from bench.disk import (
     MIN_FREE_BYTES_FOR_ENGINE_BUILD,
     DiskRecord,
@@ -16,6 +21,9 @@ from bench.disk import (
     read_disk,
     require_free_space,
 )
+from bench.results import write_result
+from bench.scenarios import SCENARIOS
+from test_bench_results import a_result
 
 GIB = 1024 ** 3
 
@@ -76,9 +84,6 @@ def test_a_real_volume_can_be_read(tmp_path):
 
 def test_the_engine_build_guard_refuses_a_build_on_a_full_volume(tmp_path):
     """Step 3 of the issue: check free disk before each build, stop cleanly under 15 GB."""
-    from bench import cli
-    from bench.scenarios import SCENARIOS
-
     trt = SCENARIOS["img2img-tensorrt-512x512-b4"]
 
     with pytest.raises(NotEnoughDiskSpace):
@@ -93,9 +98,6 @@ def test_the_engine_build_guard_refuses_a_build_on_a_full_volume(tmp_path):
 def test_a_cached_engine_records_its_headroom_but_is_never_refused(tmp_path):
     """Reading and refusing are separate: loading an engine already on the volume
     needs no room, but issue #3's gate wants the reading in the file regardless."""
-    from bench import cli
-    from bench.scenarios import SCENARIOS
-
     trt = SCENARIOS["img2img-tensorrt-512x512-b1"]
     cached = tmp_path / cli.engine_dir_name(trt)
     cached.mkdir(parents=True)
@@ -107,17 +109,12 @@ def test_a_cached_engine_records_its_headroom_but_is_never_refused(tmp_path):
 
 def test_a_none_run_has_no_engines_volume_to_report(tmp_path):
     """The `none` accelerator builds and loads no engine, so there is nothing to gate."""
-    from bench import cli
-    from bench.scenarios import SCENARIOS
-
     assert cli.engine_build_guard(SCENARIOS["img2img-none-512x512-b1"],
                                   engines_root=tmp_path, usage=usage(free_gib=0.5)) is None
 
 
-def test_a_result_carries_no_disk_reading_when_nothing_was_built(tmp_path):
+def test_a_result_carries_no_disk_reading_when_nothing_was_built():
     """The `none` sweep compiles nothing, so there is no gate to evidence."""
-    from tests.test_bench_results import a_result
-
     assert a_result().to_dict()["disk"] is None
 
 
@@ -127,12 +124,9 @@ def test_a_result_records_the_headroom_the_engine_was_built_with(tmp_path):
     Recorded *in the result*, not only printed - a reviewer reading the JSON months
     later is the one who has to see that the gate was applied.
     """
-    from tests.test_bench_results import a_result
-    from bench.results import write_result
-
     record = read_disk(tmp_path, usage=usage(free_gib=76.0))
-    data = write_result(a_result(disk=record), results_dir=tmp_path)
-    written = __import__("json").loads(data.read_text(encoding="utf-8"))["disk"]
+    path = write_result(a_result(disk=record), results_dir=tmp_path)
+    written = json.loads(path.read_text(encoding="utf-8"))["disk"]
     assert written["sufficient"] is True
     assert written["required_bytes"] == MIN_FREE_BYTES_FOR_ENGINE_BUILD
     assert written["free_gib"] == pytest.approx(76.0, abs=0.05)
@@ -140,11 +134,6 @@ def test_a_result_records_the_headroom_the_engine_was_built_with(tmp_path):
 
 def test_the_cli_hands_the_guards_reading_to_the_run(tmp_path, monkeypatch):
     """The guard's reading has to reach `run_scenario`, or it is never written down."""
-    import sys
-    import types
-
-    from bench import cli
-
     captured = {}
 
     stub = types.ModuleType("bench.runner")

@@ -130,4 +130,3 @@ def test_a_cached_tensorrt_run_still_records_its_free_disk(tmp_path):
     assert record is not None, "a cached TensorRT run records its headroom too"
     assert record.free_bytes > 0
     assert "free_gib" in record.to_dict()
-

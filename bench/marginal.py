@@ -120,6 +120,7 @@ class Curve:
 
 
 def point_from_result(result: dict, source: str) -> BatchPoint:
+    """One cell of a curve, read straight out of a committed result file."""
     scenario, run = result["scenario"], result["run"]
     batch_size = int(scenario["batch_size"])
     return BatchPoint(
@@ -177,6 +178,7 @@ def reference_clock_mhz(curves: List[Curve]) -> float:
 
 
 def load_results(results_dir: Path) -> Dict[str, dict]:
+    """Every result file under `results_dir`, keyed by filename."""
     return {path.name: json.loads(path.read_text(encoding="utf-8"))
             for path in sorted(Path(results_dir).glob("*.json"))}
 
@@ -188,7 +190,16 @@ TABLE_SEPARATOR = "|" + "---|" * (TABLE_HEADER.count("|") - 1)
 
 
 def format_table(curves: List[Curve]) -> str:
-    """The measured table spec 7.2 carries: one row per cell, marginal cost included."""
+    """The measured table spec 7.2 carries: one row per cell, marginal cost included.
+
+    A cell with nothing to report reads `-` rather than an invented zero: the first
+    batch size of a curve has no earlier point to take a slope from, and a run whose
+    clock could not be sampled has no clock.
+    """
+
+    def number(value: Optional[float], digits: int = 1) -> str:
+        return "-" if value is None else f"{value:.{digits}f}"
+
     rows = [TABLE_HEADER, TABLE_SEPARATOR]
     for curve in curves:
         steps = {step.to_batch: step for step in curve.steps}
@@ -199,13 +210,12 @@ def format_table(curves: List[Curve]) -> str:
                 curve.acceleration,
                 f"{curve.width}x{curve.height}",
                 str(point.batch_size),
-                f"{point.ms_per_call:.1f}",
-                f"{point.ms_per_frame:.2f}",
-                "-" if step is None else f"{step.marginal_ms_per_item:.1f}",
-                ("-" if step is None or step.fraction_of_first_item is None
-                 else f"{step.fraction_of_first_item:.2f}"),
-                f"{point.peak_vram_mib:.0f}",
-                "-" if point.mean_sm_clock_mhz is None else f"{point.mean_sm_clock_mhz:.0f}",
+                number(point.ms_per_call, 1),
+                number(point.ms_per_frame, 2),
+                number(None if step is None else step.marginal_ms_per_item, 1),
+                number(None if step is None else step.fraction_of_first_item, 2),
+                number(point.peak_vram_mib, 0),
+                number(point.mean_sm_clock_mhz, 0),
                 point.cooldown,
             ]) + " |")
     return "\n".join(rows)
