@@ -17,6 +17,16 @@ import venv
 import ctypes
 import ctypes.wintypes as wint
 
+# The Render Plan (issue #6, spec 6). Stdlib only, no torch and no GUI, so both this
+# process and the worker can import it and a plan can be validated on either side.
+from render_plan import (
+    INITIAL_PLAN_VERSION,
+    ActivePlan,
+    RenderPlan,
+    global_plan,
+    validate_plan,
+)
+
 APP_ROOT = (Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent)
 INTERNAL_DIR = APP_ROOT / "_internal"
 try:
@@ -460,13 +470,19 @@ T_INDEX_MAX = 49
 def _clamp_t_index(value: Any) -> int:
     return max(T_INDEX_MIN, min(T_INDEX_MAX, int(value)))
 
-def _control_transition(msg: Any, t_index_list: List[int]) -> Dict[str, Any]:
+def _control_transition(msg: Any, t_index_list: List[int],
+                        plan: Optional[RenderPlan] = None) -> Dict[str, Any]:
     """Pure half of the worker's control_queue drain: a message in, a state delta out.
 
     Returns {} for anything the worker should ignore, otherwise exactly one of
-    "region", "t_index_list" (always paired with "engine_swap"), "prompt" or
-    "negative_prompt". Every side effect stays with the caller - notably the
-    engine swap that "engine_swap" asks for, which costs minutes.
+    "region", "t_index_list" (always paired with "engine_swap"), "prompt",
+    "negative_prompt", "plan" (paired with "plan_notes") or "plan_error". Every side
+    effect stays with the caller - notably the engine swap that "engine_swap" asks
+    for, which costs minutes, and the plan swap, which happens at a frame boundary.
+
+    `plan` is the plan currently in force. The validator counts the new version up
+    from it, which is what makes plan versions monotonic in the worker rather than
+    in whichever producer happened to send one.
     """
     if not isinstance(msg, dict):
         return {}
@@ -500,6 +516,15 @@ def _control_transition(msg: Any, t_index_list: List[int]) -> Dict[str, Any]:
 
     if mtype == "set_negative_prompt" and "negative_prompt" in msg:
         return {"negative_prompt": str(msg["negative_prompt"])}
+
+    if mtype == "set_plan" and "plan" in msg:
+        previous = INITIAL_PLAN_VERSION if plan is None else plan.plan_version
+        result = validate_plan(msg["plan"], previous_version=previous)
+        if result.plan is None:
+            # Spec 8.7: never a black screen. The plan in force keeps rendering and
+            # the user is told why the new one did not take.
+            return {"plan_error": result.reason}
+        return {"plan": result.plan, "plan_notes": result.notes}
 
     return {}
 
@@ -776,11 +801,18 @@ def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Qu
         cap_thr.start()
         current_t_index_list = list(t_index_list)
         frame_count = 0
+        # The plan in force. It starts as today's behaviour expressed as a plan -
+        # one prompt over the whole frame - so "no plan yet" is never a state the
+        # frame loop has to handle. Only `set_plan` moves it, and only at a frame
+        # boundary (see `begin_frame` below).
+        active_plan = ActivePlan(global_plan(prompt, negative_prompt,
+                                             previous_version=INITIAL_PLAN_VERSION))
 
         while close_queue.empty():
             try:
                 while True:
-                    update = _control_transition(control_queue.get_nowait(), current_t_index_list)
+                    update = _control_transition(control_queue.get_nowait(),
+                                                 current_t_index_list, active_plan.plan)
                     if "region" in update:
                         region_ref["rect"] = update["region"]
                     elif "t_index_list" in update:
@@ -813,10 +845,31 @@ def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Qu
                             stream.stream.update_prompt(prompt)
                         except Exception:
                             pass
+                    elif "plan" in update:
+                        active_plan.submit(update["plan"])
+                        for note in update["plan_notes"]:
+                            _status(f"Plan note: {note}")
+                    elif "plan_error" in update:
+                        _status(f"Plan rejected: {update['plan_error']}")
             except Exception:
                 pass
 
             try:
+                # One read of the active plan per frame. Everything downstream uses
+                # `frame_plan`, so a plan submitted mid-frame lands on the next
+                # frame and never on half of this one.
+                frame_plan = active_plan.begin_frame()
+                if frame_plan.changed:
+                    # Until the selective render path lands (#8) every mode renders
+                    # like `global`: the plan's effective prompt over the whole
+                    # frame, which is what `set_prompt` does and by the same call.
+                    prompt = frame_plan.plan.effective_prompt
+                    negative_prompt = frame_plan.plan.effective_negative_prompt
+                    try:
+                        stream.stream.update_prompt(prompt)
+                    except Exception:
+                        pass
+
                 t0 = time.time()
                 if frame_buffer_size == 1:
                     batch = inputs[-1]

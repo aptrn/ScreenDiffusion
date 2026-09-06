@@ -11,6 +11,8 @@ from sourceloader import load_symbols
 
 # _clamp_t_index is not referenced directly below, but _control_transition resolves
 # it out of this namespace at call time - drop it from the list and the tests break.
+# `set_plan` resolves `validate_plan` the same way and is *not* supplied here;
+# test_plan_control_messages.py is where that message is exercised.
 _symbols = load_symbols(
     "main_gpu_addon.py",
     ["T_INDEX_MIN", "T_INDEX_MAX", "_clamp_t_index", "_control_transition"],
