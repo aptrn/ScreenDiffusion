@@ -7,12 +7,15 @@ laptop's `[N/A]` power limit is covered here rather than discovered mid-run.
 
 import pytest
 
+from bench.clocks import LOCK_FIELDS, LOCKED, UNKNOWN, UNLOCKED
 from bench.fingerprint import (
     FINGERPRINT_FIELDS,
     SAMPLE_FIELDS,
+    NvidiaSmiUnavailable,
     build_fingerprint,
     parse_csv_row,
     parse_number,
+    read_clock_lock,
 )
 
 
@@ -55,6 +58,7 @@ def test_a_fingerprint_carries_the_machine_and_its_evidence():
         torch_version="2.7.0+cu128",
         cuda_version="12.8",
         hostname="dev-laptop",
+        lock=read_clock_lock(run=a_smi("Not Active, [N/A], 2100, 210")),
     )
     assert fp.gpu_name == "NVIDIA GeForce RTX 3080 Laptop GPU"
     assert fp.total_vram_mib == pytest.approx(16384.0)
@@ -66,3 +70,59 @@ def test_a_fingerprint_carries_the_machine_and_its_evidence():
     assert "raw table" in fp.nvidia_smi_raw
     assert fp.nvidia_smi_captured_utc == "2026-09-06T14:00:00Z"
     assert {"power_limit_w", "enforced_power_limit_w"} <= set(fp.to_dict())
+
+
+# --- clock lock state (issue #13) ------------------------------------------
+
+def a_smi(lock_row: str):
+    """A fake `nvidia-smi` that answers the lock query with `lock_row`."""
+    def run(command):
+        assert any(field in " ".join(command) for field in LOCK_FIELDS), command
+        return lock_row
+    return run
+
+
+def test_a_locked_gpu_reports_the_clock_it_is_held_at():
+    lock = read_clock_lock(run=a_smi("Active, 1200, 2100, 1200\n"))
+    assert lock.state == LOCKED and lock.locked is True
+    assert lock.applied_clock_mhz == pytest.approx(1200.0)
+    assert lock.max_sm_clock_mhz == pytest.approx(2100.0)
+    assert lock.current_sm_clock_mhz == pytest.approx(1200.0)
+    assert "Active" in lock.evidence
+
+
+def test_an_unlocked_gpu_still_reports_its_basis_clock():
+    """This laptop's actual answer: the applications clock is deprecated on consumer
+    Ampere, but `clocks.max.sm` - the normalisation basis - is there."""
+    lock = read_clock_lock(run=a_smi(
+        "Not Active, [Requested functionality has been deprecated], 2100, 210\n"))
+    assert lock.state == UNLOCKED and lock.locked is False
+    assert lock.applied_clock_mhz is None
+    assert lock.max_sm_clock_mhz == pytest.approx(2100.0)
+
+
+def test_a_gpu_that_cannot_answer_is_unknown_rather_than_unlocked():
+    """The trap: a failed query must never read as a lock, nor as its absence."""
+    def broken(command):
+        raise NvidiaSmiUnavailable("nvidia-smi is not on PATH")
+
+    lock = read_clock_lock(run=broken)
+    assert lock.state == UNKNOWN and lock.locked is False
+    assert "not on PATH" in lock.evidence
+
+
+def test_the_fingerprint_carries_the_lock_state():
+    """Issue #13 step 1: every result records the regime it was measured under."""
+    fp = build_fingerprint(
+        query_row={"name": "NVIDIA GeForce RTX 3080 Laptop GPU", "memory.total": "16384",
+                   "driver_version": "595.79", "power.limit": "[N/A]",
+                   "enforced.power.limit": "120.00"},
+        nvidia_smi_raw="+---- raw table ----+",
+        captured_utc="2026-09-06T14:00:00Z",
+        torch_version=None,
+        cuda_version=None,
+        hostname="dev-laptop",
+        lock=read_clock_lock(run=a_smi("Not Active, [N/A], 2100, 210\n")),
+    )
+    assert fp.clock_lock.state == UNLOCKED
+    assert fp.to_dict()["clock_lock"]["max_sm_clock_mhz"] == pytest.approx(2100.0)

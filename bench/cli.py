@@ -11,11 +11,13 @@ import argparse
 import shutil
 import sys
 from pathlib import Path
-from typing import Optional, Sequence, TextIO
+from typing import Callable, Optional, Sequence, TextIO
 
 from bench import marginal
+from bench.clocks import ClockLock, regime_summary
 from bench.cooldown import DEFAULT_CAP_S, DEFAULT_POLL_INTERVAL_S, DEFAULT_THRESHOLD_C
 from bench.disk import DiskRecord, Usage, read_disk, require_free_space
+from bench.fingerprint import read_clock_lock
 from bench.paths import RESULTS_DIR, resolve_engines_dir
 from bench.scenarios import SCENARIOS, ScenarioConfig
 
@@ -56,6 +58,9 @@ def build_parser() -> argparse.ArgumentParser:
     cooldown.add_argument("--cooldown-poll", type=float, default=DEFAULT_POLL_INTERVAL_S,
                           metavar="S", help="seconds between temperature readings")
 
+    parser.add_argument("--require-locked-clocks", action="store_true",
+                        help="refuse to run unless someone has already locked the GPU "
+                             "clocks; for a run that decides something (issue #13)")
     parser.add_argument("--per-module", action="store_true",
                         help="also time UNet / VAE encode / VAE decode, in a separate "
                              "pass (the extra synchronises perturb the total)")
@@ -127,6 +132,36 @@ def engine_build_guard(scenario: ScenarioConfig, engines_root: Optional[Path] = 
     return record
 
 
+LOCK_INSTRUCTIONS = (
+    "       Lock them from an *elevated* shell, then re-run:\n"
+    "           nvidia-smi --lock-gpu-clocks=<min>,<max>\n"
+    "           ... run the sweep ...\n"
+    "           nvidia-smi --reset-gpu-clocks\n"
+    "       This harness never locks them itself: it is not elevated, and a failed\n"
+    "       attempt must not be mistaken for a lock."
+)
+
+
+def clock_lock_guard(require_locked: bool,
+                     read: Callable[[], ClockLock] = read_clock_lock) -> ClockLock:
+    """The clock regime this run will be measured under; refuse it if it must be locked.
+
+    Issue #13 step 4. `unknown` fails the same way `unlocked` does - the harness
+    cannot see a lock, so for a run that decides something it must assume there is
+    none. The regime that lands in the *result* is read again by the runner at run
+    time; this reading is the gate, and it happens before an engine build so a
+    refusal costs nothing.
+    """
+    lock = read()
+    if require_locked and not lock.locked:
+        raise SystemExit(
+            f"bench: --require-locked-clocks, but the GPU clocks are {lock.state}.\n"
+            f"       {regime_summary(lock)} | {lock.evidence}\n"
+            f"{LOCK_INSTRUCTIONS}"
+        )
+    return lock
+
+
 def report_marginal(results_dir: Path, out: TextIO = sys.stdout) -> None:
     """The batch curves in `results_dir`, raw and normalised to one SM clock.
 
@@ -176,6 +211,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 2
 
     scenario = resolve_scenario(args)
+    clock_lock_guard(args.require_locked_clocks)
     disk = engine_build_guard(scenario, allow_build=args.allow_engine_build)
 
     from bench.runner import run_scenario  # imports torch - kept off the --help path

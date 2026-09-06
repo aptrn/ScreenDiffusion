@@ -67,3 +67,47 @@ def test_the_cooldown_gate_reads_a_real_temperature():
     sample = read_gpu_sample()
     assert sample.temperature_c is not None and sample.temperature_c > 0
     assert sample.sm_clock_mhz is not None and sample.sm_clock_mhz > 0
+
+
+def test_the_lock_state_of_this_machine_is_readable():
+    """Issue #13 step 1, against the real driver rather than a fake one."""
+    from bench.clocks import REGIMES
+    from bench.fingerprint import read_clock_lock
+
+    lock = read_clock_lock()
+    assert lock.state in REGIMES
+    assert "applications_clocks_setting" in lock.evidence
+    assert lock.max_sm_clock_mhz and lock.max_sm_clock_mhz > 0, (
+        "clocks.max.sm is the normalisation basis; without it there is no estimate"
+    )
+
+
+def test_a_real_run_records_its_clock_regime(model_dir, tmp_path):
+    """Issue #13's gate, end to end: the regime is in the result and in the table.
+
+    Whichever regime this machine is in - it is unlocked unless someone ran
+    `nvidia-smi --lock-gpu-clocks` from an elevated shell first - the result has to
+    say which, and carry an estimate exactly when the raw figure needs one.
+    """
+    from bench.clocks import LOCKED
+    from bench.results import require_clock_lock_state
+    from bench.runner import run_scenario
+
+    scenario = SCENARIOS["img2img-none-256x256-b1"].replace(warmup_reps=1, reps=3)
+    data = run_scenario(scenario, cooldown=False, results_dir=tmp_path).to_dict()
+
+    require_clock_lock_state(data)
+    regime = data["hardware"]["clock_lock"]["state"]
+    normalisation = data["clock_normalization"]
+    assert normalisation["regime"] == regime
+
+    if regime == LOCKED:
+        assert normalisation["ms_per_frame"] is None, "a locked run needs no estimate"
+    else:
+        assert normalisation["ms_per_frame"] > 0
+        assert normalisation["basis_mhz"] > 0
+        assert normalisation["basis_source"] == "clocks.max.sm"
+        assert "estimate" in normalisation["note"].lower()
+
+    readme = (tmp_path / "README.md").read_text(encoding="utf-8")
+    assert "| clock regime |" in readme and f"| {regime} |" in readme

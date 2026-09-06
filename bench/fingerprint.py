@@ -19,6 +19,17 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Callable, Dict, Optional, Sequence, Tuple
 
+from bench.clocks import (
+    APPLIED_CLOCK_FIELD,
+    BASIS_SOURCE,
+    CURRENT_CLOCK_FIELD,
+    EVENT_REASON_FIELD,
+    LOCK_FIELDS,
+    UNKNOWN,
+    ClockLock,
+    interpret_event_reason,
+)
+
 NVIDIA_SMI = "nvidia-smi"
 
 # Constant for the machine, queried once per run.
@@ -111,6 +122,30 @@ def read_gpu_sample(run: Runner = _run) -> GpuSample:
     )
 
 
+def read_clock_lock(run: Runner = _run) -> ClockLock:
+    """Whether a clock lock is in force right now, and the clocks around it.
+
+    Issue #13 step 1. The harness never *sets* a lock - `nvidia-smi
+    --lock-gpu-clocks` needs an elevated shell it does not have - so this only ever
+    reports what someone else has already done. A query that cannot be answered
+    yields `UNKNOWN`, carrying the error as its evidence: a failed detection must
+    not read as a lock, and must not read as the absence of one either.
+    """
+    try:
+        row = query(LOCK_FIELDS, run=run)
+    except NvidiaSmiUnavailable as error:
+        return ClockLock(state=UNKNOWN, applied_clock_mhz=None, max_sm_clock_mhz=None,
+                         current_sm_clock_mhz=None, evidence=str(error))
+    reason = row.get(EVENT_REASON_FIELD)
+    return ClockLock(
+        state=interpret_event_reason(reason),
+        applied_clock_mhz=parse_number(row.get(APPLIED_CLOCK_FIELD)),
+        max_sm_clock_mhz=parse_number(row.get(BASIS_SOURCE)),
+        current_sm_clock_mhz=parse_number(row.get(CURRENT_CLOCK_FIELD)),
+        evidence=f"{EVENT_REASON_FIELD}={(reason or '').strip() or '<absent>'}",
+    )
+
+
 @dataclass(frozen=True)
 class Fingerprint:
     """Which machine produced a number, and the proof it was a real one."""
@@ -120,6 +155,10 @@ class Fingerprint:
     driver_version: str
     power_limit_w: Optional[float]
     enforced_power_limit_w: Optional[float]
+    # Issue #13: the clock regime this machine was in when the run started. A result
+    # measured at an unlocked clock is not comparable with another at face value, so
+    # the regime travels with the machine rather than with the reader's memory.
+    clock_lock: ClockLock
     torch_version: Optional[str]
     cuda_version: Optional[str]
     hostname: str
@@ -137,6 +176,7 @@ def build_fingerprint(
     torch_version: Optional[str],
     cuda_version: Optional[str],
     hostname: str,
+    lock: ClockLock,
 ) -> Fingerprint:
     """Assemble a fingerprint from already-collected pieces. Pure, hence tested."""
     return Fingerprint(
@@ -145,6 +185,7 @@ def build_fingerprint(
         driver_version=(query_row.get("driver_version") or "").strip(),
         power_limit_w=parse_number(query_row.get("power.limit")),
         enforced_power_limit_w=parse_number(query_row.get("enforced.power.limit")),
+        clock_lock=lock,
         torch_version=torch_version,
         cuda_version=cuda_version,
         hostname=hostname,
@@ -171,4 +212,5 @@ def capture_fingerprint(run: Runner = _run) -> Fingerprint:
         torch_version=torch_version,
         cuda_version=cuda_version,
         hostname=platform.node(),
+        lock=read_clock_lock(run=run),
     )

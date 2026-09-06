@@ -10,18 +10,30 @@ import pytest
 
 from sourceloader import ROOT
 
+from bench.clocks import LOCKED, UNLOCKED, ClockLock, clock_normalization
 from bench.cooldown import REACHED, CooldownRecord
 from bench.fingerprint import Fingerprint
 from bench.results import (
+    README_HEADER,
+    README_SEPARATOR,
     BenchResult,
     FingerprintError,
     RunMetrics,
     append_readme_row,
+    require_clock_lock_state,
     require_fingerprint,
     result_filename,
     write_result,
 )
 from bench.scenarios import ScenarioConfig
+
+
+def a_lock(**overrides) -> ClockLock:
+    fields = dict(state=UNLOCKED, applied_clock_mhz=None, max_sm_clock_mhz=2100.0,
+                  current_sm_clock_mhz=210.0,
+                  evidence="clocks_event_reasons.applications_clocks_setting=Not Active")
+    fields.update(overrides)
+    return ClockLock(**fields)
 
 
 def a_fingerprint(**overrides) -> Fingerprint:
@@ -31,6 +43,7 @@ def a_fingerprint(**overrides) -> Fingerprint:
         driver_version="595.79",
         power_limit_w=None,
         enforced_power_limit_w=120.0,
+        clock_lock=a_lock(),
         torch_version="2.7.0+cu128",
         cuda_version="12.8",
         hostname="dev-laptop",
@@ -56,6 +69,10 @@ def a_result(**overrides) -> BenchResult:
         cooldown=CooldownRecord(enabled=True, outcome=REACHED, threshold_c=62.0, cap_s=120.0,
                                 waited_s=18.0, final_temperature_c=60.0, samples=[[0.0, 70.0]]),
         hardware=a_fingerprint(),
+        clock_normalization=clock_normalization(
+            a_lock(), samples=[[0.0, 1050.0, 70.0], [0.5, 1050.0, 71.0]],
+            raw_ms_per_frame=12.0,
+        ),
     )
     fields.update(overrides)
     return BenchResult(**fields)
@@ -177,3 +194,99 @@ def test_every_committed_result_has_a_row_in_the_readme():
     readme = (results_dir / "README.md").read_text(encoding="utf-8")
     for path in sorted(results_dir.glob("*.json")):
         assert path.name in readme, f"{path.name} was written but never listed"
+
+
+# --- clock regime (issue #13) ----------------------------------------------
+
+def test_a_result_records_which_clock_regime_produced_it():
+    """Issue #13's gate: every result says whether its clocks were locked."""
+    data = a_result().to_dict()
+    require_clock_lock_state(data)
+    assert data["hardware"]["clock_lock"]["state"] == UNLOCKED
+    assert data["clock_normalization"]["regime"] == UNLOCKED
+    assert data["clock_normalization"]["ms_per_frame"] == pytest.approx(6.0)
+    assert data["clock_normalization"]["basis_mhz"] == 2100.0
+
+
+def test_a_result_with_no_lock_state_cannot_be_written(tmp_path):
+    """The gate again, at the door to disk: absence is refused, not defaulted."""
+    data = a_result().to_dict()
+    del data["hardware"]["clock_lock"]
+    with pytest.raises(FingerprintError):
+        require_clock_lock_state(data)
+    with pytest.raises(FingerprintError):
+        write_result(data, results_dir=tmp_path)
+    assert list(tmp_path.glob("*.json")) == []
+
+    readme = tmp_path / "README.md"
+    with pytest.raises(FingerprintError):
+        append_readme_row(data, readme, filename="x.json")
+    assert not readme.exists()
+
+
+def test_a_regime_outside_the_three_is_refused():
+    data = a_result().to_dict()
+    data["hardware"]["clock_lock"]["state"] = "probably fine"
+    with pytest.raises(FingerprintError):
+        require_clock_lock_state(data)
+
+
+def test_an_unknown_regime_is_writable_because_it_is_the_truth():
+    """`unknown` is a state the machine can genuinely be in - a driver with no such
+    field - and refusing it would throw away a real measurement. It still fails
+    `--require-locked-clocks`, which is where that decision belongs."""
+    data = a_result(hardware=a_fingerprint(clock_lock=a_lock(state="unknown"))).to_dict()
+    require_clock_lock_state(data)
+
+
+def test_the_readme_row_surfaces_the_regime_and_the_normalised_figure(tmp_path):
+    """Issue #13 step 3: the regime is visible in the table, not only in the JSON."""
+    readme = tmp_path / "README.md"
+    append_readme_row(a_result(), readme, filename="x.json")
+    text = readme.read_text(encoding="utf-8")
+    assert "| clock regime |" in text
+    assert f"| {UNLOCKED} |" in text
+    assert "6.00 @ 2100 MHz" in text, "the normalised figure names the basis it assumes"
+
+
+def test_a_locked_row_shows_the_raw_figure_rather_than_an_estimate(tmp_path):
+    readme = tmp_path / "README.md"
+    locked = a_lock(state=LOCKED, applied_clock_mhz=1200.0)
+    append_readme_row(
+        a_result(hardware=a_fingerprint(clock_lock=locked),
+                 clock_normalization=clock_normalization(
+                     locked, [[0.0, 1200.0, 70.0]], raw_ms_per_frame=12.0)),
+        readme, filename="y.json",
+    )
+    text = readme.read_text(encoding="utf-8")
+    assert f"| {LOCKED} |" in text
+    assert "| raw (clocks locked) |" in text, (
+        "a locked run has nothing to normalise, and the row must not imply it does"
+    )
+    assert "@ 2100 MHz" not in text
+
+
+def test_every_result_written_since_issue_13_records_its_regime():
+    """The tree, not just the writer - and the older results stay as they were.
+
+    Issue #13's trap is explicit that the pre-existing results are not retro-edited:
+    they were all measured unlocked on this laptop and are marked so by absence.
+    Anything written since carries the field, and the schema version is what tells
+    the two apart.
+    """
+    for path in sorted((ROOT / "bench" / "results").glob("*.json")):
+        result = json.loads(path.read_text(encoding="utf-8"))
+        if result.get("schema_version", 1) >= 2:
+            require_clock_lock_state(result)
+
+
+def test_the_committed_table_has_the_columns_the_writer_writes():
+    """A row is appended under whatever header the file already has.
+
+    So a new column (issue #13 added two) has to reach the committed table's header
+    as well, or every future row carries cells that render into nothing. The data
+    rows are never touched - the older ones simply stop before the new columns.
+    """
+    readme = (ROOT / "bench" / "results" / "README.md").read_text(encoding="utf-8")
+    assert README_HEADER in readme
+    assert README_SEPARATOR in readme
