@@ -64,6 +64,18 @@ readable, it does not make it a locked one. `--require-locked-clocks` exits non-
 unless a lock is detected, for the runs that decide something; `unknown` fails it
 too, since an undetectable lock is not a lock.
 
+The same positional slot takes a **detector** name (`yolo-world-s-640`,
+`yolov8n-640`; `--list` shows both registries). A detector run writes to
+`bench/results/detectors/` - its own directory, because `--marginal` reads every
+JSON beside it as a diffusion cell - and goes through the same fingerprint and
+clock-regime doors. It is measured with the diffusion engine resident by default
+(`--with-diffusion`, `--no-diffusion` to opt out), since a detector benchmarked
+alone says nothing about whether it fits. Weights and evidence photographs live
+under `$SD_MODELS_DIR/detectors` and `$SD_MODELS_DIR/bench-images`, both
+gitignored, and are only fetched behind `--allow-download`.
+`python -m bench --detector-report` regenerates the measured block in spec 8.1,
+which a test holds to a byte match.
+
 `tests/sourceloader.py` executes named top-level definitions straight out of
 `main_gpu_addon.py` / `wrapper.py`. Importing either module in the GPU-free tier is
 not an option - one primes the DLL search path and pulls in the GUI stack, the other
@@ -141,6 +153,25 @@ pipeline drops frames rather than falling behind — preserve that.
   wiring it up is real work, not a one-liner.
 - **SD-Turbo is SD 2.1-based.** SD 1.5 and SDXL LoRAs will not load, and LoCon/LyCORIS
   convolution layers are unsupported by this diffusers version.
+- **`YOLOWorld.set_classes` drops the predictor.** Changing the vocabulary sets
+  `self.predictor = None`, so the *next* `predict` rebuilds it and costs ~108 ms more
+  than a steady detect (measured; a bare `predictor = None` costs the same). The text
+  encode itself is ~16 ms and genuinely cold-path. Anything that changes the
+  vocabulary must issue one throwaway detect before the new plan goes live, or the
+  frame after a prompt edit drops three frames' worth of budget. Spec 8.1.
+- **Call `.to("cuda")` before the first `set_classes`.** The CLIP text encoder caches
+  the device it was built on; built on the CPU and moved afterwards, every later
+  vocabulary change raises a device-mismatch from `torch.embedding`.
+- **ultralytics writes to the cwd.** `WEIGHTS_DIR` defaults to `<cwd>/weights`, and
+  the first `set_classes` drops a 338 MB CLIP checkpoint there - in this repo, into
+  the repo. `bench/detector_runner.py` repoints it at the shared models root before
+  loading anything; `ultralytics.nn.text_model` binds the value at import time, so it
+  has to happen first.
+- **DXcam has no Desktop Duplication context in every session.** It raises
+  `The specified device interface or feature level is not supported` on this machine
+  under the agent loop, so the detector bench falls back to `mss` and records which
+  backend produced a frame. The app's own capture path is unaffected; this is a
+  property of the session, not of the code.
 
 ## Working agreement
 

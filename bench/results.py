@@ -185,20 +185,31 @@ def result_filename(scenario_name: str, timestamp: str) -> str:
     return f"{scenario_name}-{timestamp}.json"
 
 
-def write_result(result: ResultLike, results_dir: Path, timestamp: Optional[str] = None) -> Path:
-    """Write `<scenario>-<timestamp>.json` under `results_dir`; return its path."""
-    data = _as_dict(result)
+def write_record(data: dict, results_dir: Path, filename: str) -> Path:
+    """One record to disk under `results_dir`, past both door rules; return its path.
+
+    Shared with `bench.detector_results` (issue #4), which measures something else
+    entirely but is subject to the same two rules. Sharing the *door* rather than
+    the record shape is what keeps a second kind of result from acquiring a second,
+    laxer way to reach `bench/results/`.
+    """
     require_recordable(data)
-    if timestamp is None:
-        timestamp = _timestamp_from(data)
     results_dir = Path(results_dir)
     results_dir.mkdir(parents=True, exist_ok=True)
-    path = results_dir / result_filename(data["scenario"]["name"], timestamp)
+    path = results_dir / filename
     path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return path
 
 
-def _timestamp_from(data: dict) -> str:
+def write_result(result: ResultLike, results_dir: Path, timestamp: Optional[str] = None) -> Path:
+    """Write `<scenario>-<timestamp>.json` under `results_dir`; return its path."""
+    data = _as_dict(result)
+    if timestamp is None:
+        timestamp = timestamp_from(data)
+    return write_record(data, results_dir, result_filename(data["scenario"]["name"], timestamp))
+
+
+def timestamp_from(data: dict) -> str:
     """`20260906-140031Z` from the run's finish time - filename-safe, sortable."""
     finished = str(data["run"]["finished_utc"])
     return finished.replace("-", "").replace(":", "").replace("T", "-")
@@ -231,12 +242,16 @@ README_SEPARATOR = "|" + "---|" * (README_HEADER.count("|") - 1)
 README_NAME = "README.md"
 
 
-def _normalised_cell(result: dict) -> str:
+def normalised_cell(result: dict) -> str:
     """The clock-normalised ms/frame, or why there is none.
 
     `raw` for a locked run: there is nothing to correct, and the raw column already
     holds the comparable figure. Spelt out with its basis otherwise, because a
     millisecond figure with no clock attached is what issue #13 is about.
+
+    Public because the detector table (issue #4) carries the same column: two
+    detectors measured minutes apart on an unlocked laptop are ranked by this figure,
+    not by the raw one.
     """
     if regime_of(result) == LOCKED:
         return "raw (clocks locked)"
@@ -270,20 +285,29 @@ def readme_row(result: dict, filename: str) -> str:
         cooldown["outcome"],
         f"[{filename}]({filename})",
         regime_of(result),
-        _normalised_cell(result),
+        normalised_cell(result),
     ]) + " |"
+
+
+def append_row(row: str, readme_path: Path, preamble: str) -> None:
+    """Append one row to a results table, writing `preamble` if the file is new.
+
+    Shared with `bench.detector_results`, which keeps a second table of a different
+    shape. A row is appended under whatever header the file already has, so the
+    preamble a writer would create and the header its rows assume have to be one
+    thing - which is why this takes the whole preamble rather than a path alone.
+    """
+    readme_path = Path(readme_path)
+    if not readme_path.exists():
+        readme_path.parent.mkdir(parents=True, exist_ok=True)
+        readme_path.write_text(preamble, encoding="utf-8")
+    with readme_path.open("a", encoding="utf-8") as handle:
+        handle.write(row + "\n")
 
 
 def append_readme_row(result: ResultLike, readme_path: Path, filename: str) -> None:
     """Append one readable row, creating the table if this is the first result."""
     data = _as_dict(result)
     require_recordable(data)
-    readme_path = Path(readme_path)
-    if not readme_path.exists():
-        readme_path.parent.mkdir(parents=True, exist_ok=True)
-        readme_path.write_text(
-            f"{README_TITLE}\n\n{README_INTRO}\n{README_HEADER}\n{README_SEPARATOR}\n",
-            encoding="utf-8",
-        )
-    with readme_path.open("a", encoding="utf-8") as handle:
-        handle.write(readme_row(data, filename) + "\n")
+    preamble = f"{README_TITLE}\n\n{README_INTRO}\n{README_HEADER}\n{README_SEPARATOR}\n"
+    append_row(readme_row(data, filename), readme_path, preamble)

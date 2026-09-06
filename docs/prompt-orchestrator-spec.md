@@ -238,16 +238,18 @@ what M0 has actually put on the clock so far:
 | Stage               | Rate            | Budget (ms/frame) | Measured, RTX 3080 laptop | Notes                     |
 | ------------------- | --------------- | ----------------- | ------------------------- | ------------------------- |
 | Capture (DXcam)     | every frame     | 1–2               | not yet measured          | already threaded          |
-| Detection           | every 3rd frame | 4–8 amortised     | not yet measured (§7.2.4) | strongly model-dependent  |
+| Detection           | every 3rd frame | 4–8 amortised     | **4.8** @ 640² YOLO-World | fits — §8.1               |
 | Tracking            | every frame     | < 1               | not yet measured          | CPU                       |
 | Preprocess crops    | every frame     | 1–2               | not yet measured          | resize + normalise on GPU |
 | **Diffusion**       | every frame     | **15–20**         | **54.8–58.4** @ 512² TRT b1 | the dominant term         |
 | Composite + present | every frame     | 2–3               | not yet measured          |                           |
 | Headroom            |                 | ~5                | —                         |                           |
 
-The one measured stage is over budget by roughly 3×, and on its own is ~1.7× the
-entire 33.3 ms frame — for **one** 512² crop, before any of the other rows are
-paid. That is a **dev-hardware** number and §7.4 says so: the two committed 512²
+Diffusion is over budget by roughly 3×, and on its own is ~1.7× the entire
+33.3 ms frame — for **one** 512² crop, before any of the other rows are paid.
+Detection, by contrast, lands inside its allocation: 14.3 ms per detect at 640²
+amortises to 4.8 ms/frame at one detect every 3rd frame (§8.1), with the
+diffusion engine resident while it was measured. That is a **dev-hardware** number and §7.4 says so: the two committed 512²
 TensorRT batch-1 runs came back at 54.8 ms (mean 1342 MHz) and 58.4 ms (960 MHz),
 and the spread between them is the 120 W limit and the clock sampling described in
 §7.2, not variance in the model. **Whether 33.3 ms is reachable is a question only
@@ -261,8 +263,10 @@ is why §7.3 recommends a small slot rather than a large one.
 
 What is settled, and is portable, is where the budget has to be spent: diffusion
 dominates so completely that every other row could be free and the frame would
-still miss on this machine. The batch curve in §7.2 is therefore the whole design
-question, not a tuning detail.
+still miss on this machine. Detection being comfortably in budget is the second
+half of that finding — the detector is not the problem and does not need to be
+made cheaper. The batch curve in §7.2 is therefore the whole design question, not
+a tuning detail.
 
 The LLM appears nowhere in this table. That is the point.
 
@@ -280,9 +284,15 @@ alongside every number (§7.4):
 3. Same at 256² and 384² crops — small crops are the whole economic case.
    **Done on `none`.** Not confirmable on TensorRT today — see "The resolution
    axis" below.
-4. Detector latency for each candidate in §8.1 at 640² input, TRT. *Outstanding.*
+4. Detector latency for each candidate in §8.1 at 640² input. **Done**, in
+   PyTorch rather than TensorRT: YOLO-World's text head is the reason to use it
+   and does not survive an export, so exporting it would have measured a
+   different model. YOLO-World 14.3 ms, YOLOv8n 12.8 ms — §8.1.
 5. Peak VRAM with diffusion engine + detector + (optional) local LLM resident.
-   *Outstanding* — the sweep records the diffusion half only (2.5–3.3 GiB).
+   **Done for the two that remain**: 7,182 MiB in use across the device with the
+   512² TensorRT engine and YOLO-World both loaded, against 5,620 MiB for the
+   engine alone — the detector adds ~1.5 GiB. The LLM is cut from v1, so there is
+   no third tenant.
 6. Cost of swapping prompt embeddings per batch item. *Outstanding.*
 
 Results land in `bench/results/` as JSON, one file per run, with a readable table
@@ -544,17 +554,86 @@ blocking forever or silently reporting a throttled number.
 
 ### 8.1 Which detector?
 
-| Candidate      | Vocabulary            | Est. speed | Note                                                                       |
-| -------------- | --------------------- | ---------- | -------------------------------------------------------------------------- |
-| YOLOv8n/s      | 80 COCO classes       | fastest    | "person", "car", "dog" only                                                |
-| YOLO-World     | open, text-prompted   | fast-ish   | class embeddings precomputed per plan — fits the compile-once model exactly |
-| OWLv2          | open                  | slower     | better on unusual concepts                                                 |
-| Grounding DINO | open, phrase grounding | slowest    | handles "the red mug on the left"                                          |
-| SAM2 / FastSAM | promptable segmentation | varies    | masks not boxes; may be what we actually want                              |
+**Settled: YOLO-World.** M0 measured it against YOLOv8n as a speed floor; the
+numbers below are generated from `bench/results/detectors/`, not transcribed.
+
+| Candidate      | Vocabulary            | Est. speed | Measured (RTX 3080 laptop, 640²) | Note                                                                       |
+| -------------- | --------------------- | ---------- | -------------------------------- | -------------------------------------------------------------------------- |
+| YOLOv8n/s      | 80 COCO classes       | fastest    | **12.8 ms/detect**, 1/3 concepts | speed floor only — "person", "car", "dog"                                  |
+| YOLO-World (s, v2) | open, text-prompted | fast-ish  | **14.3 ms/detect**, 3/3 concepts | class embeddings precomputed per plan — fits the compile-once model exactly |
+| OWLv2          | open                  | slower     | not measured — contingency        | better on unusual concepts                                                 |
+| Grounding DINO | open, phrase grounding | slowest    | not measured — contingency        | handles "the red mug on the left"                                          |
+| SAM2 / FastSAM | promptable segmentation | varies    | not measured                      | masks not boxes; may be what we actually want                              |
+
+The open vocabulary costs **12% of one detect** against the closed-vocabulary
+floor — 14.3 ms against 12.8 ms — and buys the two concepts the floor could not
+reach. That is the whole decision. It is a *ranking*, and rankings transfer
+between GPUs (§7.4); the milliseconds do not.
+
+#### Measured
+
+<!-- BEGIN DETECTOR TABLE -->
+
+Measured: NVIDIA GeForce RTX 3080 Laptop GPU, 640x640 input, PyTorch. Diffusion resident during the timing: img2img-tensorrt-512x512-b1.
+
+| detector | role | vocabulary | ms/detect | p95 ms | ms/detect at basis clock | amortised ms/frame | fits 4-8 ms | torch peak (MiB) | with diffusion resident (MiB) | vocabulary change (ms) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| yolo-world-s-640 | candidate | open | 14.32 | 16.98 | 11.00 @ 2100 MHz | 4.77 | yes | 3577 | 7182 | 16.2 |
+| yolov8n-640 | speed floor | 80 COCO classes | 12.76 | 16.50 | 9.56 @ 2100 MHz | 4.25 | yes | 2541 | 6157 | n/a |
+
+Vocabulary evidence - what each detector returned when asked for the concept, and what a closed vocabulary had to be asked for instead:
+
+| concept | kind | detector | asked for | resolved | top confidence | strongest other label | frame |
+|---|---|---|---|---|---|---|---|
+| person | COCO class | yolo-world-s-640 | person | yes | 0.827 | - | desktop capture (mss) with the photo composited in |
+| red mug | open vocabulary | yolo-world-s-640 | red mug | yes | 0.976 | - | desktop capture (mss) with the photo composited in |
+| dog | non-COCO animal | yolo-world-s-640 | dog | yes | 0.916 | - | desktop capture (mss) with the photo composited in |
+| person | COCO class | yolov8n-640 | person | yes | 0.801 | bus 0.73 | desktop capture (mss) with the photo composited in |
+| red mug | open vocabulary | yolov8n-640 | - | no | - | - | desktop capture (mss) with the photo composited in |
+| dog | non-COCO animal | yolov8n-640 | dog | no | - | cat 0.81 | desktop capture (mss) with the photo composited in |
+
+**Recommendation: yolo-world-s-640.** yolo-world-s-640 resolved all 3 probed concepts and 11.00 ms per detect at one detect every 3rd frame is 3.67 ms/frame amortised, inside the 4-8 ms budget. It is not the fastest (yolov8n-640 is), and that is not the criterion: with the prompt compiler cut from v1, a closed vocabulary caps the product at the 80 COCO nouns whatever it costs. Ranked on the clock-normalised estimate - the `ms/detect at basis clock` column, not the raw one - because the clocks were not locked and these rows were measured minutes apart, so their raw figures carry two different clocks (issue #13). The estimate is an estimate; the ranking is what it is used for.
+
+<!-- END DETECTOR TABLE -->
+
+Regenerate with `uv run python -m bench --detector-report`. A new detector result
+fails the merge gate until this block is regenerated.
+
+#### What the numbers say
+
+- **It fits, at one detect every 3rd frame.** 14.3 ms amortises to 4.8 ms/frame,
+  inside §7.1's 4–8 ms detection budget, with the 512² TensorRT diffusion engine
+  resident throughout. At every frame it would be 14.3 ms and would not fit; the
+  cadence is part of the claim, not a footnote.
+- **A vocabulary change costs 16 ms and does not touch the frame path — almost.**
+  Re-encoding three terms with CLIP ViT-B/32 takes ~16 ms on the cold path, and
+  detecting against the changed vocabulary is no dearer than before it (−7.9%,
+  inside the noise of an unlocked laptop clock). But ultralytics'
+  `YOLOWorld.set_classes` sets `self.predictor = None`, so **the first detect
+  after a change costs ~108 ms more than a steady one** while the predictor is
+  rebuilt. Confirmed as the cause: a bare `predictor = None` costs the same.
+  Mitigation: issue one throwaway detect on the cold path, after the change and
+  before the new plan goes live. The frame path then never sees it.
+- **Combined VRAM: 7,182 MiB** with the diffusion engine and the detector both
+  resident (`nvidia-smi`, whole device), against 5,620 MiB for the engine on its
+  own — YOLO-World adds ~1.5 GiB. The floor adds far less (6,157 MiB total), which
+  is the other thing the open vocabulary is paid for in. On a 16 GB laptop that
+  leaves headroom; **this is the §7.4 non-portable kind of number and has to be
+  re-measured on the deploy GPU.**
+- **The floor is an accuracy floor too.** Asked for `dog` on a desktop showing
+  one, YOLOv8n returned no dog and a **cat at 0.81**. "Fastest" was never the
+  criterion, but it is worth recording that the cheap option was also the wrong
+  answer here.
+- Evidence frames are real desktop captures with the source photograph
+  composited in, since restyling the screen is what the product does. The raw
+  screen is captured as a control. DXcam — what the app uses — cannot open a
+  Desktop Duplication context in this session, so the captures came from `mss`;
+  that is a property of the capture session, not of the detector.
 
 The instruction "give **them** a red hat" needs a *head region*, not a person
 box. Boxes may be too coarse; a segmentation stage or a body-part heuristic
-(`region: "upper_third"`) may be required. **Open.**
+(`region: "upper_third"`) may be required. **Still open** — YOLO-World settles
+*which* detector, not whether a box is the right primitive (§8.2).
 
 ### 8.2 Is crop-and-diffuse the right primitive at all?
 
