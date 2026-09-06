@@ -117,6 +117,79 @@ MAX_CONCEPT_CHARS = 120
 INITIAL_PLAN_VERSION = 0
 
 
+# --- denoise, and the schedule the engine indexes ---------------------------
+#
+# A plan says how much of the frame to replace, as a 0-1 strength. The engine takes
+# a `t_index`: an index into the 50-step schedule the worker prepares, which
+# *descends*, so a higher index is less denoise. These four constants are SD-Turbo's
+# own scaled-linear beta schedule, and `noise_amplitude` reproduces the strengths
+# issue #5's comparison read off the live scheduler - a test holds it to that
+# committed measurement rather than to a curve that looks about right.
+
+SCHEDULE_TRAIN_TIMESTEPS = 1000
+SCHEDULE_STEPS = 50  # what the worker's `prepare(num_inference_steps=50)` asks for
+BETA_START = 0.00085
+BETA_END = 0.012
+# The indices a plan may be rendered at. Index 0 is the training schedule's own
+# first step, where img2img keeps nothing of the input; the worker clamps to its
+# own usable range on top of this one.
+SCHEDULE_T_INDEX_RANGE: Tuple[int, int] = (1, 49)
+
+
+def _alphas_cumprod() -> Tuple[float, ...]:
+    """The forward process's cumulative alphas, one per training timestep.
+
+    `beta_t` is linear in *sqrt* beta - the "scaled_linear" schedule SD 1.x/2.x are
+    trained with - and `alpha_bar_t` is the running product of `1 - beta`. Computed
+    here rather than read off the scheduler because this module is imported by the
+    GUI process, which has no torch and no engine to ask.
+    """
+    span = SCHEDULE_TRAIN_TIMESTEPS - 1
+    alphas: List[float] = []
+    running = 1.0
+    for step in range(SCHEDULE_TRAIN_TIMESTEPS):
+        root = BETA_START ** 0.5 + (BETA_END ** 0.5 - BETA_START ** 0.5) * step / span
+        running *= 1.0 - root * root
+        alphas.append(running)
+    return tuple(alphas)
+
+
+ALPHAS_CUMPROD: Tuple[float, ...] = _alphas_cumprod()
+
+
+def timestep_of(t_index: int) -> int:
+    """The training timestep a `t_index` names on the 50-step schedule.
+
+    Index 20 is timestep 599 and index 45 is timestep 99, which is what issue #5's
+    record shows and what the repo's own gotcha note says.
+    """
+    stride = SCHEDULE_TRAIN_TIMESTEPS // SCHEDULE_STEPS
+    return SCHEDULE_TRAIN_TIMESTEPS - 1 - stride * int(t_index)
+
+
+def noise_amplitude(t_index: int) -> float:
+    """How much of the latent this index replaces with noise, as a 0-1 strength.
+
+    `sqrt(1 - alpha_bar)` - the amplitude the forward process applies, which reads
+    like diffusers' img2img `strength` and, unlike an index, means the same thing
+    whatever the schedule.
+    """
+    return float((1.0 - ALPHAS_CUMPROD[timestep_of(t_index)]) ** 0.5)
+
+
+def t_index_for_denoise(denoise: float) -> int:
+    """The schedule index whose strength is nearest the plan's `denoise`.
+
+    Nearest on the schedule rather than a linear map across the index range: the
+    amplitude curve is far from straight, and a plan asking for 0.5 would otherwise
+    get a third more denoise than it asked for. A tie goes to the gentler index -
+    the plan asked for a change of that size, not for at least one.
+    """
+    low, high = SCHEDULE_T_INDEX_RANGE
+    return min(range(high, low - 1, -1),
+               key=lambda index: abs(noise_amplitude(index) - float(denoise)))
+
+
 # --- what a detector can be asked for ---------------------------------------
 
 # The 80 classes a COCO-trained detector has and cannot be asked past. Written out
@@ -601,6 +674,40 @@ def plan_from_fields(target: str, style: str, negative_prompt: str = "",
             "denoise": denoise,
         }]
     return validate_plan(raw, previous_version=previous_version, detector=detector)
+
+
+# --- the priority case, hardcoded -------------------------------------------
+#
+# Issue #8 step 4: the selective path has to be drivable end to end before anything
+# wires the GUI up, and the plan it is driven by is the *priority* case rather than
+# the spec's red-hat example - a subtle sub-region change on people, at the region
+# and the strength the product actually cares about. The prompt and the denoise are
+# the ones issue #5's committed comparison measured this case at, so the demo is a
+# re-run of a measurement rather than a fresh guess.
+
+PRIORITY_CONCEPT = "person"
+PRIORITY_REGION = "lower_half"
+PRIORITY_PROMPT = ("trousers soaked through with a dark wet stain, damp fabric, "
+                   "wet denim, photograph")
+# 0.49 is the strength of t_index 40, which the masked primitive needed to make a
+# visible change on this case and no more than that. See `t_index_for_denoise`.
+PRIORITY_DENOISE = 0.49
+
+
+def priority_case_plan(previous_version: int = INITIAL_PLAN_VERSION) -> RenderPlan:
+    """The hardcoded demo plan: restyle the lower half of every person, gently.
+
+    Goes through `validate_plan` like everything else - a hardcoded plan that
+    bypassed the door could carry a field the worker does not honour and nobody
+    would hear about it.
+    """
+    result = plan_from_fields(
+        target=PRIORITY_CONCEPT, style=PRIORITY_PROMPT, region=PRIORITY_REGION,
+        denoise=PRIORITY_DENOISE, previous_version=previous_version,
+    )
+    if result.plan is None:  # unreachable: `person` is servable and the region exists
+        raise AssertionError(f"the priority-case plan did not validate: {result.reason}")
+    return result.plan
 
 
 def global_plan(prompt: str, negative_prompt: str = "",

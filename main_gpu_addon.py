@@ -24,6 +24,8 @@ from render_plan import (
     ActivePlan,
     RenderPlan,
     global_plan,
+    priority_case_plan,
+    t_index_for_denoise,
     validate_plan,
 )
 
@@ -31,7 +33,12 @@ from render_plan import (
 # torch or ultralytics at module scope - the weights are loaded on the detector's
 # own thread, inside the worker process - so this import costs the GUI nothing.
 from detection import fps_payload, is_detect_frame
-from detector_worker import BackgroundDetector, UltralyticsDetector
+from detector_worker import BackgroundDetector, UltralyticsDetector, frame_to_array
+
+# The selective render path (issue #8, spec 5.1 C5/C7): which regions this frame
+# renders, and how they are blended back onto the capture. Stdlib and numpy.
+from region_scheduler import RegionScheduler
+from compositor import MASKED, Compositor
 
 APP_ROOT = (Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent)
 INTERNAL_DIR = APP_ROOT / "_internal"
@@ -476,6 +483,18 @@ T_INDEX_MAX = 49
 def _clamp_t_index(value: Any) -> int:
     return max(T_INDEX_MIN, min(T_INDEX_MAX, int(value)))
 
+# The hardcoded priority-case plan (issue #8, step 4) is behind an environment
+# variable, not a widget: the selective path has to be drivable end to end before
+# anything wires the GUI up, and the app as shipped still starts `global`. The
+# two text fields that will replace this are a later issue.
+DEMO_PLAN_ENV = "SD_DEMO_PLAN"
+DEMO_PLAN_VALUES = ("1", "true", "yes", "on")
+
+def demo_plan_requested(environ: Optional[Mapping[str, str]] = None) -> bool:
+    """Did someone ask the worker to start on the hardcoded priority-case plan?"""
+    environ = os.environ if environ is None else environ
+    return str(environ.get(DEMO_PLAN_ENV, "")).strip().lower() in DEMO_PLAN_VALUES
+
 def _control_transition(msg: Any, t_index_list: List[int],
                         plan: Optional[RenderPlan] = None) -> Dict[str, Any]:
     """Pure half of the worker's control_queue drain: a message in, a state delta out.
@@ -553,6 +572,12 @@ def _format_fps(payload: Any) -> str:
                  f"{float(fields.get('detector_ms', 0.0)):.1f} ms/detect "
                  f"({float(fields.get('amortised_ms', 0.0)):.1f} ms/frame "
                  f"every {fields.get('detect_every_n')})")
+    if "regions" in fields:
+        # Issue #8: how many of K slots this frame used, how many objects are
+        # waiting their turn, and how many were too small to render at all.
+        line += (f"  |  {fields['regions']}/{fields.get('slots')} regions  "
+                 f"{fields.get('deferred', 0)} waiting  "
+                 f"{fields.get('skipped_small', 0)} too small")
     return line
 
 SHOW = {
@@ -857,6 +882,19 @@ def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Qu
         detection = BackgroundDetector(UltralyticsDetector(models_root), log=_status)
         detection.start()
         tracks = detection.tracks
+        # The selective render path (issue #8). The scheduler holds the round-robin
+        # cursor across frames and the compositor holds the last alpha map, so a
+        # frame between two detector ticks builds neither.
+        scheduler = RegionScheduler()
+        compositor = Compositor()
+        if demo_plan_requested():
+            # Step 4: the priority case, hardcoded, so the whole path can be driven
+            # before a widget exists to drive it. Submitted rather than installed,
+            # so it lands at a frame boundary like any other plan.
+            demo = priority_case_plan(previous_version=active_plan.latest.plan_version)
+            active_plan.submit(demo)
+            _status(f"Demo plan ({DEMO_PLAN_ENV}): restyle the "
+                    f"{demo.targets[0].region} of every {demo.targets[0].concept}")
 
         while close_queue.empty():
             try:
@@ -904,9 +942,6 @@ def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Qu
                 # frame and never on half of this one.
                 frame_plan = active_plan.begin_frame()
                 if frame_plan.changed:
-                    # Until the selective render path lands (#8) every mode renders
-                    # like `global`: the plan's effective prompt over the whole
-                    # frame, which is what `set_prompt` does and by the same call.
                     prompt = frame_plan.plan.effective_prompt
                     negative_prompt = frame_plan.plan.effective_negative_prompt
                     _apply_prompt(prompt)
@@ -914,6 +949,19 @@ def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Qu
                     # on the detector's thread, so the frame after a prompt edit
                     # does not pay the ~108 ms `set_classes` costs (spec 8.1).
                     detection.follow(frame_plan.plan)
+                    # The plan's denoise, as a value on the live schedule. Only the
+                    # values move, never the step *count*, so this is a runtime
+                    # update and not an engine rebuild. A plan with no target
+                    # carries the schema's default rather than a strength anyone
+                    # typed, so it leaves the t_index slider where the user put it.
+                    honoured = frame_plan.plan.honoured_target
+                    if honoured is not None and len(current_t_index_list) == 1:
+                        wanted = _clamp_t_index(
+                            t_index_for_denoise(frame_plan.plan.effective_denoise))
+                        if wanted != current_t_index_list[0]:
+                            current_t_index_list = [wanted]
+                            try: stream.set_t_index_list(current_t_index_list)
+                            except Exception: pass
                 detect_every_n = frame_plan.plan.settings.detect_every_n
 
                 t0 = time.time()
@@ -945,10 +993,33 @@ def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Qu
                 # cadence counted on a stalled number is every frame or no frame.
                 frame_index += 1
 
-                res = stream.img2img(batch)
+                # C5 and C7 (issue #8). One selection per frame, off the plan this
+                # frame bound, and the compositor turns it into what the frame is:
+                # the capture as it stands, a full-frame render, or a full-frame
+                # render composited through a feathered mask.
+                selection = scheduler.select(tracks, frame_plan.plan, width, height)
+                render = compositor.frame(selection, width, height)
+
                 images = []
-                if isinstance(res, Image.Image): images = [res]
-                elif isinstance(res, list): images = res
+                if render.diffuses:
+                    res = stream.img2img(batch)
+                    if isinstance(res, Image.Image): images = [res]
+                    elif isinstance(res, list): images = res
+                    if render.action == MASKED:
+                        # Onto the capture the engine was given, never onto the
+                        # previous output: outside the regions the frame has to be
+                        # the captured pixels, byte for byte.
+                        images = [
+                            Image.fromarray(compositor.blend(
+                                frame_to_array(batch[index]), np.asarray(im),
+                                render.alpha))
+                            for index, im in enumerate(images)
+                        ]
+                else:
+                    # A selective plan that found nothing to restyle. There is no
+                    # pixel anyone asked to change, so the frame costs no diffusion
+                    # call - and the loop still produces a frame.
+                    images = [Image.fromarray(frame_to_array(batch))]
 
                 for im in images:
                     try: 
@@ -961,7 +1032,9 @@ def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Qu
                 while not fps_queue.empty():
                     try: fps_queue.get_nowait()
                     except Exception: break
-                fps_queue.put(fps_payload(int(round(fps)), tracks, detect_every_n))
+                payload = fps_payload(int(round(fps)), tracks, detect_every_n)
+                payload.update(scheduler.status(selection))
+                fps_queue.put(payload)
             except Exception:
                 time.sleep(0.01)
 

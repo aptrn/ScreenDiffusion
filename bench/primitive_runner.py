@@ -171,7 +171,7 @@ def write_clip(frames: Sequence, path: Path, fps: float) -> Path:
     return path
 
 
-def _resized_panel(frame, width: int):
+def resized_panel(frame, width: int):
     """`frame` scaled to `width`, with both sides even - an odd size breaks mp4v."""
     height = max(2, int(round(frame.shape[0] * width / frame.shape[1])))
     return resize(frame, width - width % 2, height - height % 2)
@@ -184,7 +184,7 @@ def triptych(source: Sequence, arms: Sequence[Sequence],
 
     columns = [source, *arms]
     return [np.hstack([column[index] if panel_width is None
-                       else _resized_panel(column[index], panel_width)
+                       else resized_panel(column[index], panel_width)
                        for column in columns])
             for index in range(len(source))]
 
@@ -570,7 +570,7 @@ def _write_comparison_artefacts(
     clip_files = {}
     for primitive in primitives:
         written = write_clip(
-            [_resized_panel(frame, COMPARISON_PANEL_WIDTH)
+            [resized_panel(frame, COMPARISON_PANEL_WIDTH)
              for frame in outputs[primitive]],
             results_dir / f"{stem}-{primitive}.mp4", fps)
         clip_files[primitive] = written.name
