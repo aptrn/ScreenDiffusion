@@ -12,6 +12,7 @@ reports `[N/A]` for its power limit, an absent driver - are covered by GPU-free 
 
 from __future__ import annotations
 
+import platform
 import shutil
 import subprocess
 from dataclasses import asdict, dataclass
@@ -78,7 +79,9 @@ def _run(command: Sequence[str]) -> str:
         raise NvidiaSmiUnavailable(f"{command[0]} is not on PATH")
     result = subprocess.run(list(command), capture_output=True, text=True)
     if result.returncode != 0:
-        raise NvidiaSmiUnavailable(f"{' '.join(command)} exited {result.returncode}: {result.stderr.strip()}")
+        raise NvidiaSmiUnavailable(
+            f"{' '.join(command)} exited {result.returncode}: {result.stderr.strip()}"
+        )
     return result.stdout
 
 
@@ -152,8 +155,6 @@ def build_fingerprint(
 
 def capture_fingerprint(run: Runner = _run) -> Fingerprint:
     """Query the machine now. Raises `NvidiaSmiUnavailable` rather than guessing."""
-    import platform
-
     torch_version = cuda_version = None
     try:  # torch is imported here and nowhere at module scope - see bench/__init__.py
         import torch

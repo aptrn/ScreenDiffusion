@@ -18,6 +18,7 @@ Two things about the numbers this produces:
 from __future__ import annotations
 
 import importlib.util
+import math
 import statistics
 import sys
 import threading
@@ -40,7 +41,14 @@ from bench.paths import (
     resolve_engines_dir,
     resolve_model_path,
 )
-from bench.results import BenchResult, RunMetrics, append_readme_row, write_result
+from bench.results import (
+    BYTES_PER_MIB,
+    README_NAME,
+    BenchResult,
+    RunMetrics,
+    append_readme_row,
+    write_result,
+)
 from bench.scenarios import ScenarioConfig
 
 # Half a second: often enough to catch a clock drop inside a 30-rep run, rare enough
@@ -105,6 +113,16 @@ def _input_batch(stream, scenario: ScenarioConfig):
     return torch.cat([tensor] * scenario.batch_size)
 
 
+# Attribute on the inner `StreamDiffusion` -> the label it is timed under. One
+# mapping, so the three submodules are named once instead of at every step of
+# patch / run / restore / report.
+TIMED_SUBMODULES: Dict[str, str] = {
+    "unet": "unet",
+    "encode_image": "vae_encode",
+    "decode_image": "vae_decode",
+}
+
+
 class _TimedCall:
     """A callable that times what it wraps and forwards everything else to it.
 
@@ -113,7 +131,9 @@ class _TimedCall:
     """
 
     def __init__(self, name: str, inner: Callable, totals: Dict[str, float]):
-        self._name, self._inner, self._totals = name, inner, totals
+        self._name = name
+        self._inner = inner
+        self._totals = totals
 
     def __call__(self, *args, **kwargs):
         import torch
@@ -139,23 +159,18 @@ def _time_modules(stream, scenario: ScenarioConfig, batch, reps: int) -> Dict[st
     """
     inner = stream.stream
     totals: Dict[str, float] = {}
-    originals = {
-        "unet": inner.unet,
-        "vae_encode": inner.encode_image,
-        "vae_decode": inner.decode_image,
-    }
-    inner.unet = _TimedCall("unet", originals["unet"], totals)
-    inner.encode_image = _TimedCall("vae_encode", originals["vae_encode"], totals)
-    inner.decode_image = _TimedCall("vae_decode", originals["vae_decode"], totals)
+    originals = {attribute: getattr(inner, attribute) for attribute in TIMED_SUBMODULES}
+    for attribute, label in TIMED_SUBMODULES.items():
+        setattr(inner, attribute, _TimedCall(label, originals[attribute], totals))
     try:
         for _ in range(reps):
             stream(image=batch)
     finally:
-        inner.unet = originals["unet"]
-        inner.encode_image = originals["vae_encode"]
-        inner.decode_image = originals["vae_decode"]
+        for attribute, original in originals.items():
+            setattr(inner, attribute, original)
     frames = reps * scenario.batch_size
-    return {name: round(totals.get(name, 0.0) / frames, 4) for name in originals}
+    return {label: round(totals.get(label, 0.0) / frames, 4)
+            for label in TIMED_SUBMODULES.values()}
 
 
 def _cooldown(enabled: bool, threshold_c: float, cap_s: float,
@@ -221,10 +236,15 @@ class _GpuSampler:
 
 
 def _percentile(values: List[float], fraction: float) -> float:
-    """Nearest-rank percentile. `statistics.quantiles` needs n >= 2; a 1-rep run is legal."""
+    """Nearest-rank percentile. `statistics.quantiles` needs n >= 2; a 1-rep run is legal.
+
+    Nearest rank is `ceil(fraction * n)`, 1-based. Spelling that as `round(x + 0.5)`
+    silently disagrees with it whenever `fraction * n` is an odd integer, because
+    `round` breaks a .5 tie towards even - a 20-rep run reported its max as its p95.
+    """
     ordered = sorted(values)
-    index = min(len(ordered) - 1, max(0, int(round(fraction * len(ordered) + 0.5)) - 1))
-    return ordered[index]
+    rank = min(len(ordered), max(1, math.ceil(fraction * len(ordered))))
+    return ordered[rank - 1]
 
 
 def run_scenario(
@@ -302,7 +322,7 @@ def run_scenario(
 
     results_dir = Path(results_dir)
     path = write_result(result, results_dir=results_dir)
-    append_readme_row(result, results_dir / "README.md", filename=path.name)
+    append_readme_row(result, results_dir / README_NAME, filename=path.name)
     log(f"{scenario.name}: {run.mean_ms_per_frame:.2f} ms/frame ({run.fps:.1f} FPS), "
-        f"peak {peak_vram_bytes / (1024 ** 2):.0f} MiB -> {path.name}")
+        f"peak {peak_vram_bytes / BYTES_PER_MIB:.0f} MiB -> {path.name}")
     return result

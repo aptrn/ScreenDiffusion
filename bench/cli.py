@@ -10,16 +10,17 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Optional, Sequence, TextIO
 
 from bench.cooldown import DEFAULT_CAP_S, DEFAULT_POLL_INTERVAL_S, DEFAULT_THRESHOLD_C
 from bench.paths import RESULTS_DIR, resolve_engines_dir
 from bench.scenarios import SCENARIOS, ScenarioConfig
 
-# The prefix wrapper.py builds an engine directory name from. Mirrored here so the
-# guard can answer "is this configuration already built?" without loading torch.
-ENGINE_PREFIX = ("{model}--lcm_lora-{lcm}--tiny_vae-{tiny}--max_batch-{batch}"
-                 "--min_batch-{batch}--res-{width}x{height}--lora-none--mode-{mode}")
+# The directory name `create_prefix()` in wrapper.py builds for a UNet engine, with
+# `--lora-none` because no scenario fuses a LoRA. Mirrored here so the guard can
+# answer "is this configuration already built?" without loading torch.
+ENGINE_DIR_TEMPLATE = ("{model}--lcm_lora-{lcm}--tiny_vae-{tiny}--max_batch-{batch}"
+                       "--min_batch-{batch}--res-{width}x{height}--lora-none--mode-{mode}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -62,24 +63,23 @@ def build_parser() -> argparse.ArgumentParser:
 
 def resolve_scenario(args: argparse.Namespace) -> ScenarioConfig:
     """The named scenario with the command line's overrides applied."""
-    try:
-        scenario = SCENARIOS[args.scenario]
-    except KeyError:
+    if args.scenario not in SCENARIOS:
         raise SystemExit(
             f"bench: unknown scenario {args.scenario!r}. Run `python -m bench --list`."
         )
+    scenario = SCENARIOS[args.scenario]
     changes = {}
     if args.reps is not None:
         changes["reps"] = args.reps
     if args.warmup_reps is not None:
         changes["warmup_reps"] = args.warmup_reps
-    if getattr(args, "prompt", None):
+    if args.prompt:
         changes["prompt"] = args.prompt
     return scenario.replace(**changes) if changes else scenario
 
 
 def engine_dir_name(scenario: ScenarioConfig) -> str:
-    return ENGINE_PREFIX.format(
+    return ENGINE_DIR_TEMPLATE.format(
         model=scenario.model, lcm=scenario.use_lcm_lora, tiny=scenario.use_tiny_vae,
         batch=scenario.unet_batch_size, width=scenario.width, height=scenario.height,
         mode=scenario.mode,
@@ -106,7 +106,7 @@ def engine_build_guard(scenario: ScenarioConfig, engines_root: Optional[Path] = 
     )
 
 
-def list_scenarios(out=sys.stdout) -> None:
+def list_scenarios(out: TextIO = sys.stdout) -> None:
     for name, scenario in SCENARIOS.items():
         out.write(f"{name}\t{scenario.acceleration}\t{scenario.width}x{scenario.height}"
                   f"\tbatch {scenario.batch_size}\t{scenario.steps} step(s)\n")

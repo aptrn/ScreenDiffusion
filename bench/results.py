@@ -21,8 +21,8 @@ from bench.cooldown import CooldownRecord
 from bench.fingerprint import Fingerprint
 from bench.scenarios import ScenarioConfig
 
-# Must be present *and* non-empty.
-REQUIRED_FINGERPRINT_VALUES = (
+# Must be present *and* carry a value.
+NON_EMPTY_FINGERPRINT_FIELDS = (
     "gpu_name", "total_vram_mib", "driver_version",
     "nvidia_smi_raw", "nvidia_smi_captured_utc",
 )
@@ -31,7 +31,10 @@ REQUIRED_FINGERPRINT_VALUES = (
 # and 120 W for `enforced.power.limit`, and a desktop reports both. Neither is a
 # field that may simply be absent.
 POWER_LIMIT_FIELDS = ("power_limit_w", "enforced_power_limit_w")
-_REQUIRED_FINGERPRINT_KEYS = REQUIRED_FINGERPRINT_VALUES + POWER_LIMIT_FIELDS
+# Present, whether or not they carry a value.
+REQUIRED_FINGERPRINT_FIELDS = NON_EMPTY_FINGERPRINT_FIELDS + POWER_LIMIT_FIELDS
+
+BYTES_PER_MIB = 1024 * 1024
 
 
 class FingerprintError(ValueError):
@@ -71,7 +74,7 @@ class RunMetrics:
 
     def to_dict(self) -> dict:
         data = asdict(self)
-        data["peak_vram_mib"] = round(self.peak_vram_bytes / (1024 * 1024), 1)
+        data["peak_vram_mib"] = round(self.peak_vram_bytes / BYTES_PER_MIB, 1)
         return data
 
 
@@ -96,7 +99,7 @@ ResultLike = Union[BenchResult, dict]
 
 
 def _as_dict(result: ResultLike) -> dict:
-    return result.to_dict() if hasattr(result, "to_dict") else result
+    return result.to_dict() if isinstance(result, BenchResult) else result
 
 
 def require_fingerprint(result: dict) -> None:
@@ -108,10 +111,10 @@ def require_fingerprint(result: dict) -> None:
     hardware = result.get("hardware")
     if not isinstance(hardware, dict):
         raise FingerprintError("result has no hardware fingerprint")
-    missing_keys = [key for key in _REQUIRED_FINGERPRINT_KEYS if key not in hardware]
-    if missing_keys:
-        raise FingerprintError(f"fingerprint is missing {missing_keys}")
-    blank = [key for key in REQUIRED_FINGERPRINT_VALUES
+    missing = [key for key in REQUIRED_FINGERPRINT_FIELDS if key not in hardware]
+    if missing:
+        raise FingerprintError(f"fingerprint is missing {missing}")
+    blank = [key for key in NON_EMPTY_FINGERPRINT_FIELDS
              if hardware[key] is None or str(hardware[key]).strip() == ""]
     if blank:
         raise FingerprintError(f"fingerprint fields are empty: {blank}")
@@ -153,7 +156,10 @@ README_HEADER = (
     "| finished (UTC) | scenario | GPU | accel | res | batch | steps | ms/frame | FPS |"
     " peak VRAM (MiB) | SM clock (MHz) | max temp (C) | cooldown | file |"
 )
-README_SEPARATOR = "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"
+# Derived, so adding a column to the header cannot leave a separator of the wrong
+# width behind - which renders the whole table as plain text.
+README_SEPARATOR = "|" + "---|" * (README_HEADER.count("|") - 1)
+README_NAME = "README.md"
 
 
 def readme_row(result: dict, filename: str) -> str:
@@ -173,7 +179,7 @@ def readme_row(result: dict, filename: str) -> str:
         str(len(scenario["t_index_list"])),
         number(run["mean_ms_per_frame"], 2),
         number(run["fps"], 1),
-        number(run["peak_vram_bytes"] / (1024 * 1024), 0),
+        number(run["peak_vram_bytes"] / BYTES_PER_MIB, 0),
         number(run["mean_sm_clock_mhz"], 0),
         number(run["max_temperature_c"], 0),
         cooldown["outcome"],

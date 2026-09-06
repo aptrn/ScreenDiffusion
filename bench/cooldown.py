@@ -100,7 +100,6 @@ def wait_for_cooldown(
     poll_interval_s: float = DEFAULT_POLL_INTERVAL_S,
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
-    on_sample: Optional[Callable[[float, Optional[float]], None]] = None,
 ) -> CooldownRecord:
     """Poll until the GPU is below `threshold_c` or `cap_s` elapses; record which."""
     started = clock()
@@ -109,8 +108,6 @@ def wait_for_cooldown(
         temperature = read_temperature()
         elapsed = clock() - started
         samples.append([elapsed, temperature])
-        if on_sample is not None:
-            on_sample(elapsed, temperature)
         verdict = cooldown_verdict(temperature, elapsed, threshold_c, cap_s)
         if verdict != WAITING:
             return CooldownRecord(

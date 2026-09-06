@@ -21,7 +21,6 @@ from typing import Mapping, Optional, Union
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RESULTS_DIR = Path(__file__).resolve().parent / "results"
-RESULTS_README = RESULTS_DIR / "README.md"
 
 SD_MODELS_DIR_ENV = "SD_MODELS_DIR"
 SD_ENGINES_DIR_ENV = "SD_ENGINES_DIR"
