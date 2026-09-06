@@ -100,30 +100,35 @@ def engine_dir_name(scenario: ScenarioConfig) -> str:
 def engine_build_guard(scenario: ScenarioConfig, engines_root: Optional[Path] = None,
                        allow_build: bool = False,
                        usage: Optional[Usage] = None) -> Optional[DiskRecord]:
-    """Two gates on compiling an engine, and the disk reading that justifies the second.
+    """Two gates on compiling an engine, and the disk reading every TensorRT run carries.
 
     Spec 7.2: run the sweep on the `none` accelerator first and confirm only the two
     or three configurations the curve says are interesting. So an uncached engine
     needs `--allow-engine-build` - ~5.1 GB and several minutes is not a surprise
     anyone should get from a typo - and even then the volume has to have room for it.
 
-    Returns the disk reading when a build is imminent, else None: the `none`
-    accelerator and an already-cached engine compile nothing, so there is nothing
-    to gate.
+    Reading and refusing are deliberately not the same decision. Every TensorRT run
+    records its headroom, because issue #3's gate asks for the free-disk check to be
+    *recorded* on each confirmation run and a reader months later cannot otherwise
+    tell "the volume had room" from "nobody looked". Only a run that is about to
+    compile something refuses to continue without it.
+
+    Returns None for the `none` accelerator, which has no engine and so nothing to
+    say about the engines volume.
     """
     if scenario.acceleration != "tensorrt":
         return None
     root = resolve_engines_dir() if engines_root is None else Path(engines_root)
+    record = read_disk(root, required_bytes=MIN_FREE_BYTES_FOR_ENGINE_BUILD,
+                       **({} if usage is None else {"usage": usage}))
     if (root / engine_dir_name(scenario) / "unet.engine").is_file():
-        return None
+        return record
     if not allow_build:
         raise SystemExit(
             f"bench: no cached TensorRT engine for {scenario.name} under {root}.\n"
             f"       Building one costs ~5.1 GB and several minutes. Pass "
             f"--allow-engine-build if that is what you want."
         )
-    record = read_disk(root, required_bytes=MIN_FREE_BYTES_FOR_ENGINE_BUILD,
-                       **({} if usage is None else {"usage": usage}))
     require_free_space(record)
     return record
 

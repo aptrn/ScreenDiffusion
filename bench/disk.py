@@ -6,9 +6,9 @@ they are a timing one. The check is made *before* the build, because a shortfall
 discovered halfway through an ONNX export has already spent the minutes and left a
 partial engine behind.
 
-Reading and refusing are two functions on purpose. Every run records its headroom -
-that is the evidence the gate the issue asks for was actually applied - while only
-a run that is about to compile something refuses to continue without it.
+Reading and refusing are two functions on purpose. Every TensorRT run records its
+headroom - that is the evidence the gate the issue asks for was actually applied -
+while only a run that is about to compile something refuses to continue without it.
 """
 
 from __future__ import annotations

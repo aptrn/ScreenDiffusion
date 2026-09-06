@@ -90,19 +90,28 @@ def test_the_engine_build_guard_refuses_a_build_on_a_full_volume(tmp_path):
     assert record.sufficient is True
 
 
-def test_the_guard_does_not_check_disk_when_nothing_will_be_built(tmp_path):
-    """A cached engine and a `none` run compile nothing, so there is nothing to gate."""
+def test_a_cached_engine_records_its_headroom_but_is_never_refused(tmp_path):
+    """Reading and refusing are separate: loading an engine already on the volume
+    needs no room, but issue #3's gate wants the reading in the file regardless."""
     from bench import cli
     from bench.scenarios import SCENARIOS
-
-    assert cli.engine_build_guard(SCENARIOS["img2img-none-512x512-b1"],
-                                  engines_root=tmp_path, usage=usage(free_gib=0.5)) is None
 
     trt = SCENARIOS["img2img-tensorrt-512x512-b1"]
     cached = tmp_path / cli.engine_dir_name(trt)
     cached.mkdir(parents=True)
     (cached / "unet.engine").write_bytes(b"")
-    assert cli.engine_build_guard(trt, engines_root=tmp_path, usage=usage(free_gib=0.5)) is None
+
+    record = cli.engine_build_guard(trt, engines_root=tmp_path, usage=usage(free_gib=0.5))
+    assert record is not None and record.sufficient is False
+
+
+def test_a_none_run_has_no_engines_volume_to_report(tmp_path):
+    """The `none` accelerator builds and loads no engine, so there is nothing to gate."""
+    from bench import cli
+    from bench.scenarios import SCENARIOS
+
+    assert cli.engine_build_guard(SCENARIOS["img2img-none-512x512-b1"],
+                                  engines_root=tmp_path, usage=usage(free_gib=0.5)) is None
 
 
 def test_a_result_carries_no_disk_reading_when_nothing_was_built(tmp_path):
