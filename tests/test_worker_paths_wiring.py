@@ -47,9 +47,17 @@ def test_the_banner_reaches_the_startup_log(sink):
         if isinstance(call, ast.Call)
         and isinstance(call.func, ast.Name)
         and call.func.id == sink
-        and any(isinstance(a, ast.Name) and a.id == "_paths_banner" for a in call.args)
+        and any(isinstance(a, ast.Name) and a.id == "banner" for a in call.args)
     ]
     assert banner_calls, f"the cache-paths banner is never passed to {sink}()"
+
+
+def test_the_engines_root_goes_through_the_shared_rule():
+    """Not `Path(engine_dir)`: a relative value must not re-anchor to the worker's cwd."""
+    call = next(n for n in ast.walk(WORKER)
+                if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                and n.func.id == "resolve_engines_dir")
+    assert [a.id for a in call.args if isinstance(a, ast.Name)] == ["engine_dir"]
 
 
 def test_the_wrapper_is_built_with_an_explicit_engine_dir():

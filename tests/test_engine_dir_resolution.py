@@ -15,10 +15,15 @@ FAKE_REPO_ROOT = Path(r"C:\Program Files\Screen Diffusion")
 
 _symbols = load_symbols(
     "wrapper.py",
-    ["_resolve_engine_dir"],
+    ["SD_ENGINES_DIR_ENV", "_unquoted_path", "_resolve_engine_dir"],
     extra_globals={"os": os, "Path": Path, "REPO_ROOT": FAKE_REPO_ROOT},
 )
+SD_ENGINES_DIR_ENV = _symbols["SD_ENGINES_DIR_ENV"]
 _resolve_engine_dir = _symbols["_resolve_engine_dir"]
+
+
+def test_the_variable_is_the_one_main_gpu_addon_documents():
+    assert SD_ENGINES_DIR_ENV == "SD_ENGINES_DIR"
 
 
 def test_nothing_set_is_the_repo_root(monkeypatch, tmp_path):
@@ -28,13 +33,18 @@ def test_nothing_set_is_the_repo_root(monkeypatch, tmp_path):
 
 def test_the_variable_is_used_when_no_path_is_passed(tmp_path):
     shared = tmp_path / "shared caches" / "engines"
-    assert _resolve_engine_dir(None, environ={"SD_ENGINES_DIR": str(shared)}) == shared
+    assert _resolve_engine_dir(None, environ={SD_ENGINES_DIR_ENV: str(shared)}) == shared
 
 
 def test_an_explicit_absolute_path_wins_over_the_variable(tmp_path):
     explicit = tmp_path / "explicit engines"
-    resolved = _resolve_engine_dir(explicit, environ={"SD_ENGINES_DIR": str(tmp_path / "ignored")})
+    resolved = _resolve_engine_dir(explicit, environ={SD_ENGINES_DIR_ENV: str(tmp_path / "ignored")})
     assert resolved == explicit
+
+
+def test_a_quoted_windows_path_is_unwrapped():
+    quoted = r'"D:\shared caches\engines"'
+    assert _resolve_engine_dir(None, environ={SD_ENGINES_DIR_ENV: quoted}) == Path(r"D:\shared caches\engines")
 
 
 def test_an_explicit_relative_path_becomes_absolute(monkeypatch, tmp_path):

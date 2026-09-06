@@ -29,12 +29,12 @@ ENGINE_FILES = ("unet.engine", "vae_encoder.engine", "vae_decoder.engine")
 
 _paths = load_symbols(
     "main_gpu_addon.py",
-    ["SD_MODELS_DIR_ENV", "SD_ENGINES_DIR_ENV", "_resolve_cache_dir",
-     "resolve_models_dir", "resolve_engines_dir"],
+    ["SD_MODELS_DIR_ENV", "SD_ENGINES_DIR_ENV", "_unquoted_path",
+     "_resolve_cache_dir", "resolve_models_dir", "resolve_engines_dir"],
     extra_globals={"os": os, "Path": Path, "APP_ROOT": ROOT},
 )
 _resolve_engine_dir = load_symbols(
-    "wrapper.py", ["_resolve_engine_dir"],
+    "wrapper.py", ["SD_ENGINES_DIR_ENV", "_unquoted_path", "_resolve_engine_dir"],
     extra_globals={"os": os, "Path": Path, "REPO_ROOT": ROOT},
 )["_resolve_engine_dir"]
 

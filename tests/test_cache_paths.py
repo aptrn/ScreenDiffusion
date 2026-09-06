@@ -21,6 +21,7 @@ _symbols = load_symbols(
     [
         "SD_MODELS_DIR_ENV",
         "SD_ENGINES_DIR_ENV",
+        "_unquoted_path",
         "_resolve_cache_dir",
         "resolve_models_dir",
         "resolve_engines_dir",
@@ -92,6 +93,24 @@ def test_dot_segments_are_normalised():
 def test_the_process_environment_is_the_default_source(monkeypatch, tmp_path):
     monkeypatch.setenv(SD_ENGINES_DIR_ENV, str(tmp_path / "from the process env"))
     assert resolve_engines_dir() == tmp_path / "from the process env"
+
+
+def test_an_explicit_path_wins_over_the_variable(tmp_path):
+    """How the worker passes the root the GUI resolved for it."""
+    explicit = tmp_path / "explicit engines"
+    resolved = resolve_engines_dir(explicit, environ={SD_ENGINES_DIR_ENV: str(tmp_path / "ignored")})
+    assert resolved == explicit
+
+
+def test_an_explicit_relative_path_anchors_to_the_app_root(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    assert resolve_engines_dir("engines", environ={}) == FAKE_APP_ROOT / "engines"
+
+
+def test_a_blank_explicit_path_falls_through_to_the_variable(tmp_path):
+    shared = tmp_path / "shared caches" / "engines"
+    for blank in (None, "", "   "):
+        assert resolve_engines_dir(blank, environ={SD_ENGINES_DIR_ENV: str(shared)}) == shared
 
 
 def test_an_explicit_base_dir_overrides_the_app_root(tmp_path):

@@ -4,7 +4,7 @@ import tempfile, time, queue, random, threading, pathlib, subprocess, shutil, re
 from collections import deque
 from multiprocessing import get_context, Queue
 from multiprocessing.connection import Connection
-from typing import List, Literal, Dict, Optional, Deque, Any
+from typing import List, Literal, Dict, Mapping, Optional, Deque, Any, Union
 import numpy as np
 from PIL import Image, ImageTk, ImageDraw
 import PIL.Image
@@ -378,35 +378,55 @@ SD_MODELS_DIR_ENV = "SD_MODELS_DIR"
 SD_ENGINES_DIR_ENV = "SD_ENGINES_DIR"
 
 
-def _resolve_cache_dir(env_var: str, default_name: str, base_dir=None, environ=None) -> Path:
-    """Absolute cache root: $env_var when set, else `<app root>/<default_name>`.
+# A path argument: a string, a Path, or nothing given.
+_PathArg = Optional[Union[str, Path]]
+
+
+def _unquoted_path(value: _PathArg) -> str:
+    """`value` as a bare path string, empty when there is nothing usable.
+
+    A path pasted into a Windows env var often keeps its surrounding quotes.
+    """
+    return "" if value is None else str(value).strip().strip('"').strip()
+
+
+def _resolve_cache_dir(env_var: str, default_name: str, explicit: _PathArg = None,
+                       base_dir: _PathArg = None,
+                       environ: Optional[Mapping[str, str]] = None) -> Path:
+    """Absolute cache root: `explicit`, else $env_var, else `<app root>/<default_name>`.
 
     Absolute at the resolution point on purpose - a relative path handed to the
     wrapper re-anchors to the worker's cwd, which is the bug this exists to fix.
-    A relative *value* in the variable is anchored to the app root too, so the
-    answer never depends on where the process was started from.
+    A relative *value* is anchored to the app root too, so the answer never
+    depends on where the process was started from.
+
+    `_resolve_engine_dir()` in wrapper.py mirrors this rule. The two cannot share
+    an implementation: wrapper.py imports torch, and the GUI process must not.
     """
     environ = os.environ if environ is None else environ
     base = Path(APP_ROOT if base_dir is None else base_dir)
-    # A path pasted into a Windows env var often keeps its surrounding quotes.
-    raw = (environ.get(env_var) or "").strip().strip('"').strip()
+    raw = _unquoted_path(explicit) or _unquoted_path(environ.get(env_var))
     candidate = Path(raw).expanduser() if raw else base / default_name
     if not candidate.is_absolute():
         candidate = base / candidate
-    return Path(os.path.normpath(str(candidate)))
+    # normpath, not resolve(): collapse `..` and settle on one slash direction
+    # without touching the filesystem or following symlinks.
+    return Path(os.path.normpath(candidate))
 
 
-def resolve_models_dir(base_dir=None, environ=None) -> Path:
+def resolve_models_dir(explicit: _PathArg = None, base_dir: _PathArg = None,
+                       environ: Optional[Mapping[str, str]] = None) -> Path:
     """Where downloaded models live. See `SD_MODELS_DIR` in CLAUDE.md."""
-    return _resolve_cache_dir(SD_MODELS_DIR_ENV, "models", base_dir, environ)
+    return _resolve_cache_dir(SD_MODELS_DIR_ENV, "models", explicit, base_dir, environ)
 
 
-def resolve_engines_dir(base_dir=None, environ=None) -> Path:
+def resolve_engines_dir(explicit: _PathArg = None, base_dir: _PathArg = None,
+                        environ: Optional[Mapping[str, str]] = None) -> Path:
     """Where compiled TensorRT engines live. See `SD_ENGINES_DIR` in CLAUDE.md."""
-    return _resolve_cache_dir(SD_ENGINES_DIR_ENV, "engines", base_dir, environ)
+    return _resolve_cache_dir(SD_ENGINES_DIR_ENV, "engines", explicit, base_dir, environ)
 
 
-def _cache_paths_banner(models_root, engines_root) -> str:
+def _cache_paths_banner(models_root: Path, engines_root: Path) -> str:
     """The line the worker logs at startup, so a wrong root is visible immediately."""
     return f"Cache roots: models={models_root} | engines={engines_root}"
 
@@ -708,11 +728,13 @@ def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Qu
         try: status_queue.put_nowait(msg)
         except Exception: pass
 
+    # The GUI passes an already-absolute root; going through the same rule anyway
+    # is what stops a relative one from re-anchoring to this process's cwd.
     models_root = resolve_models_dir()
-    engines_root = Path(engine_dir) if engine_dir else resolve_engines_dir()
-    _paths_banner = _cache_paths_banner(models_root, engines_root)
-    print(_paths_banner, flush=True)
-    _status(_paths_banner)
+    engines_root = resolve_engines_dir(engine_dir)
+    banner = _cache_paths_banner(models_root, engines_root)
+    print(banner, flush=True)
+    _status(banner)
 
     try:
         if import_torch is None:
