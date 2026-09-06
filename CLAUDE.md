@@ -3,11 +3,18 @@
 Real-time img2img screen renderer on StreamDiffusion. Windows-only, CUDA + TensorRT,
 single NVIDIA GPU. Fork of `rudyaa-sd/ScreenDiffusion`.
 
-The active project is the **Prompt-Driven Orchestrator** — read
-[`docs/prompt-orchestrator-spec.md`](docs/prompt-orchestrator-spec.md) before working
-on detection, region selection, plan compilation, or anything touching the frame loop.
-It defines the vocabulary the issues use: **hot path**, **cold path**, **Render Plan**,
-**slot**, **track**, **concept**.
+The active project is **object-aware selective restyling** — read
+[`docs/prompt-orchestrator-spec.md`](docs/prompt-orchestrator-spec.md) before working on
+detection, region selection, or anything touching the frame loop. It defines the
+vocabulary the issues use: **hot path**, **cold path**, **Render Plan**, **slot**,
+**track**, **concept**.
+
+Read it for that vocabulary and for the measurement discipline in §7.4 — not for scope.
+The spec's LLM prompt-compiler (§1's two planes, §5.1 components C1/C2, §8.4, §8.6, and
+all of §11) is **cut from v1**, and those sections are historical. **The GitHub issues
+are the source of truth for what is being built.** The Render Plan's producer is the
+GUI: a target field whose text goes to the open-vocabulary detector, and a style field
+whose text goes to StreamDiffusion.
 
 ## Environment
 
