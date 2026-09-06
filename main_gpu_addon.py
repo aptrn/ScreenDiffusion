@@ -27,6 +27,12 @@ from render_plan import (
     validate_plan,
 )
 
+# The tracker and the worker's detector (issue #7, spec 5.1 C3/C4). Neither imports
+# torch or ultralytics at module scope - the weights are loaded on the detector's
+# own thread, inside the worker process - so this import costs the GUI nothing.
+from detection import fps_payload, is_detect_frame
+from detector_worker import BackgroundDetector, UltralyticsDetector
+
 APP_ROOT = (Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent)
 INTERNAL_DIR = APP_ROOT / "_internal"
 try:
@@ -528,6 +534,27 @@ def _control_transition(msg: Any, t_index_list: List[int],
 
     return {}
 
+def _format_fps(payload: Any) -> str:
+    """The status line for whatever the worker put on the fps queue.
+
+    Two shapes, and both have to read: the channel carried a bare number for as
+    long as this app has existed, and a run whose plan names no target still sends
+    one. A mapping may also carry what detection cost (issue #7, step 5) - the
+    count, the detect, and what that detect amortises to at the plan's cadence,
+    which is the figure spec 7.1 budgets and the only one worth watching.
+    """
+    fields = payload if isinstance(payload, dict) else {"fps": payload}
+    fps = fields.get("fps")
+    if not isinstance(fps, (int, float)):
+        return "FPS: --"
+    line = f"FPS: {int(round(float(fps)))}"
+    if "detections" in fields:
+        line += (f"  |  {fields['detections']} obj  "
+                 f"{float(fields.get('detector_ms', 0.0)):.1f} ms/detect "
+                 f"({float(fields.get('amortised_ms', 0.0)):.1f} ms/frame "
+                 f"every {fields.get('detect_every_n')})")
+    return line
+
 SHOW = {
     "model_path": True, "prompt": True, "negative_prompt": True, "seed": True,
     "frame_buffer_size": False, "acceleration": True, "use_denoising_batch": False,
@@ -815,12 +842,21 @@ def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Qu
         cap_thr.start()
         current_t_index_list = list(t_index_list)
         frame_count = 0
+        frame_index = 0
         # The plan in force. It starts as today's behaviour expressed as a plan -
         # one prompt over the whole frame - so "no plan yet" is never a state the
         # frame loop has to handle. Only `set_plan` moves it, and only at a frame
         # boundary (see `begin_frame` below).
         active_plan = ActivePlan(global_plan(prompt, negative_prompt,
                                              previous_version=INITIAL_PLAN_VERSION))
+        # Detection (issue #7). Built after the engine, because the engine is the
+        # tenant that must get its VRAM first, and loaded later still: the weights
+        # are only read once a plan names a concept, so a `global` plan pays
+        # nothing. Every call the frame loop makes on it returns immediately - the
+        # detect itself happens on this thread, never on the frame path.
+        detection = BackgroundDetector(UltralyticsDetector(models_root), log=_status)
+        detection.start()
+        tracks = detection.tracks
 
         while close_queue.empty():
             try:
@@ -874,6 +910,11 @@ def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Qu
                     prompt = frame_plan.plan.effective_prompt
                     negative_prompt = frame_plan.plan.effective_negative_prompt
                     _apply_prompt(prompt)
+                    # Cold path: a changed vocabulary is re-encoded and re-warmed
+                    # on the detector's thread, so the frame after a prompt edit
+                    # does not pay the ~108 ms `set_classes` costs (spec 8.1).
+                    detection.follow(frame_plan.plan)
+                detect_every_n = frame_plan.plan.settings.detect_every_n
 
                 t0 = time.time()
                 if frame_buffer_size == 1:
@@ -891,6 +932,19 @@ def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Qu
                 if isinstance(batch, import_torch.Tensor):
                     batch = batch.to(device=stream.device, dtype=stream.dtype)
 
+                # Every `detect_every_n`th frame the newest capture is handed to
+                # the detector, which may or may not get to it - it drops what it
+                # cannot keep up with, exactly as the capture deque does. The
+                # detect then runs alongside this frame's diffusion rather than
+                # in front of it, and `tracks` is one reference read.
+                if is_detect_frame(frame_index, detect_every_n):
+                    detection.offer(batch, frame_index)
+                tracks = detection.tracks
+                # Frames the pipeline took, not frames the GUI accepted:
+                # `frame_count` stalls whenever the preview queue is full, and a
+                # cadence counted on a stalled number is every frame or no frame.
+                frame_index += 1
+
                 res = stream.img2img(batch)
                 images = []
                 if isinstance(res, Image.Image): images = [res]
@@ -907,10 +961,11 @@ def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Qu
                 while not fps_queue.empty():
                     try: fps_queue.get_nowait()
                     except Exception: break
-                fps_queue.put(int(round(fps)))
+                fps_queue.put(fps_payload(int(round(fps)), tracks, detect_every_n))
             except Exception:
                 time.sleep(0.01)
 
+        detection.stop()
         cap_stop.set()
         cap_thr.join(timeout=2.0)
     except KeyboardInterrupt:
@@ -2047,8 +2102,7 @@ class StreamGUI(ctk.CTk):
         if self.fps_q is not None:
             try:
                 while True:
-                    fps = self.fps_q.get_nowait()
-                    self.fps_var.set(f"FPS: {int(fps)}")
+                    self.fps_var.set(_format_fps(self.fps_q.get_nowait()))
             except Exception: pass
         if self.status_q is not None:
             try:
