@@ -9,6 +9,8 @@ import pytest
 
 from sourceloader import load_symbols
 
+# _clamp_t_index is not referenced directly below, but _control_transition resolves
+# it out of this namespace at call time - drop it from the list and the tests break.
 _symbols = load_symbols(
     "main_gpu_addon.py",
     ["T_INDEX_MIN", "T_INDEX_MAX", "_clamp_t_index", "_control_transition"],

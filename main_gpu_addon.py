@@ -397,7 +397,7 @@ def _frame_to_rgb(frame: np.ndarray, force_swap_rb: Optional[bool] = False) -> n
 T_INDEX_MIN = 2
 T_INDEX_MAX = 49
 
-def _clamp_t_index(value) -> int:
+def _clamp_t_index(value: Any) -> int:
     return max(T_INDEX_MIN, min(T_INDEX_MAX, int(value)))
 
 def _control_transition(msg: Any, t_index_list: List[int]) -> Dict[str, Any]:
@@ -678,10 +678,27 @@ def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Qu
         if offline: enforce_offline_mode()
         verify_local_model_path_dir(model_path_dir)
 
-        stream = StreamDiffusionWrapper(
-            model_id_or_path=model_path_dir, t_index_list=list(t_index_list), frame_buffer_size=frame_buffer_size, width=width, height=height, warmup=2, acceleration=acceleration, do_add_noise=do_add_noise, enable_similar_image_filter=enable_similar_image_filter, similar_image_filter_threshold=similar_image_filter_threshold, similar_image_filter_max_skip_frame=similar_image_filter_max_skip_frame, mode="img2img", use_denoising_batch=use_denoising_batch, cfg_type=cfg_type, seed=seed, lora_dict=lora_dict, use_lcm_lora=use_lcm_lora, lcm_lora_id=lcm_lora_id
-        )
-        stream.prepare(prompt=prompt, negative_prompt=negative_prompt, num_inference_steps=50, guidance_scale=guidance_scale, delta=delta)
+        def _build_stream(steps: List[int]):
+            """Build and prepare a wrapper for `steps`, on the current prompts.
+
+            TensorRT keys an engine on the step *count*, so calling this for a count
+            with no cached engine compiles one - minutes, not milliseconds.
+            """
+            wrapper = StreamDiffusionWrapper(
+                model_id_or_path=model_path_dir, t_index_list=list(steps),
+                frame_buffer_size=frame_buffer_size, width=width, height=height,
+                warmup=2, acceleration=acceleration, do_add_noise=do_add_noise,
+                enable_similar_image_filter=enable_similar_image_filter,
+                similar_image_filter_threshold=similar_image_filter_threshold,
+                similar_image_filter_max_skip_frame=similar_image_filter_max_skip_frame,
+                mode="img2img", use_denoising_batch=use_denoising_batch,
+                cfg_type=cfg_type, seed=seed, lora_dict=lora_dict,
+                use_lcm_lora=use_lcm_lora, lcm_lora_id=lcm_lora_id
+            )
+            wrapper.prepare(prompt=prompt, negative_prompt=negative_prompt, num_inference_steps=50, guidance_scale=guidance_scale, delta=delta)
+            return wrapper
+
+        stream = _build_stream(t_index_list)
         first_rect = monitor_receiver.recv()
         region_ref = {"rect": dict(first_rect)}
         inputs = deque(maxlen=frame_buffer_size * 2)
@@ -702,24 +719,13 @@ def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Qu
                         if update["engine_swap"]:
                             _status(f"Swapping engine for {len(current_t_index_list)} steps...")
 
-                            # Flush current engine from VRAM
+                            # Flush the current engine from VRAM before the next one loads
                             del stream
-                            import gc; gc.collect(); import_torch.cuda.empty_cache()
+                            import gc
+                            gc.collect()
+                            import_torch.cuda.empty_cache()
 
-                            # Re-instantiate the wrapper to load the correct TensorRT engine
-                            stream = StreamDiffusionWrapper(
-                                model_id_or_path=model_path_dir, 
-                                t_index_list=list(current_t_index_list), 
-                                frame_buffer_size=frame_buffer_size, width=width, height=height, 
-                                warmup=2, acceleration=acceleration, do_add_noise=do_add_noise, 
-                                enable_similar_image_filter=enable_similar_image_filter, 
-                                similar_image_filter_threshold=similar_image_filter_threshold, 
-                                similar_image_filter_max_skip_frame=similar_image_filter_max_skip_frame, 
-                                mode="img2img", use_denoising_batch=use_denoising_batch, 
-                                cfg_type=cfg_type, seed=seed, lora_dict=lora_dict,
-                                use_lcm_lora=use_lcm_lora, lcm_lora_id=lcm_lora_id
-                            )
-                            stream.prepare(prompt=prompt, negative_prompt=negative_prompt, num_inference_steps=50, guidance_scale=guidance_scale, delta=delta)
+                            stream = _build_stream(current_t_index_list)
                             _status("Engine swap complete!")
                         else:
                             # Same step count (slider was dragged). Update values instantly!

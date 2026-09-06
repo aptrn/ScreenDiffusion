@@ -80,10 +80,10 @@ def run_tests() -> bool:
         print("verify: no non-GPU tests collected")
         return True
 
-    passed = re.search(r"(\d+) passed", result.stdout)
-    count = passed.group(1) if passed else "0"
     ok = result.returncode == 0
-    print(f"verify: tests {'OK' if ok else 'FAILED'} ({count} passed, GPU tier deselected)")
+    summary = re.search(r"(\d+) passed", result.stdout)
+    passed_count = summary.group(1) if summary else "0"
+    print(f"verify: tests {'OK' if ok else 'FAILED'} ({passed_count} passed, GPU tier deselected)")
     return ok
 
 

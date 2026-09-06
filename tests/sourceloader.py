@@ -44,8 +44,9 @@ def load_symbols(
     # utf-8-sig: wrapper.py carries a BOM, which ast.parse rejects.
     tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
 
-    body = [node for node in tree.body if _defined_names(node) & wanted]
-    missing = wanted - {name for node in body for name in _defined_names(node)}
+    selected = [(node, _defined_names(node) & wanted) for node in tree.body]
+    body = [node for node, bound in selected if bound]
+    missing = wanted - {name for _, bound in selected for name in bound}
     if missing:
         raise AssertionError(f"{filename} defines no top-level {sorted(missing)}")
 
