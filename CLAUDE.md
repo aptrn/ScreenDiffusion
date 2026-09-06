@@ -44,10 +44,19 @@ pipeline drops frames rather than falling behind — preserve that.
 - **TensorRT engines compile per configuration.** Resolution, batch size
   (`frame_buffer_size`), step count, and fused LoRA weights each key a distinct engine.
   Changing step *count* at runtime tears down the wrapper and rebuilds — minutes, not
-  milliseconds. Any design that changes these per-frame is a stall.
+  milliseconds. Any design that changes these per-frame is a stall. Each built engine
+  is ~5.1 GB on disk, so a sweep across configurations is a capacity decision before it
+  is a timing one.
+- **Dev and deploy hardware differ.** Development is an RTX 3080 laptop; deployment
+  targets RTX 3090 Ti / 4090. Curve shapes and relative rankings carry across; absolute
+  ms/frame, VRAM ceilings and engine build times do not. Any 30 FPS claim is a
+  deploy-hardware claim.
 - **GPU benchmarks need a thermal cooldown**, or you measure the throttle instead of
-  the change. Wait for the GPU to fall below ~62 °C before each rep, and report the
-  clocks and temperature alongside the timing so a throttled run is visible.
+  the change. Wait for the GPU to fall below ~62 °C before each rep, cap the wait, and
+  record whether the threshold was actually reached — a laptop under sustained load may
+  never get there. Every result carries a hardware fingerprint (GPU name, VRAM, driver,
+  power limit, raw `nvidia-smi` with a timestamp): it identifies the machine and is the
+  evidence the number was measured rather than invented.
 - **`models/` and `engines/` are gitignored** and hold multi-GB downloads and compiled
   engines. Leave them out of commits and out of test fixtures.
 - **The worker enforces offline mode** (`enforce_offline_mode()`). Network calls from

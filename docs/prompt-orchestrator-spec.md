@@ -2,7 +2,10 @@
 
 **Status:** idea capture / pre-research. Nothing here is implemented.
 **Base:** fork of ScreenDiffusion v0.2 (`main_gpu_addon.py`, `wrapper.py`).
-**Target hardware:** single RTX 3090 Ti (24 GB), Windows 10/11, CUDA 12.8 + TensorRT 10.8.
+**Hardware:** Windows 10/11, CUDA 12.8 + TensorRT 10.8, single NVIDIA GPU.
+Development happens on an **RTX 3080 laptop**; deployment targets **RTX 3090 Ti /
+4090** desktops. The two are not interchangeable, and §7.4 says which conclusions
+survive the move and which do not.
 
 ---
 
@@ -243,7 +246,8 @@ The LLM appears nowhere in this table. That is the point.
 
 ### 7.2 The numbers we actually need
 
-Not assumed — measured, on this GPU, by the harness M0 builds:
+Not assumed — measured by the harness M0 builds, with the hardware recorded
+alongside every number (§7.4):
 
 1. SD-Turbo 1-step img2img at 512², TRT vs `none`, batch 1 — ms/frame.
 2. Same at batch 2 / 4 / 8 — **is the per-crop marginal cost sublinear?** This
@@ -252,6 +256,12 @@ Not assumed — measured, on this GPU, by the harness M0 builds:
 4. Detector latency for each candidate in §8.1 at 640² input, TRT.
 5. Peak VRAM with diffusion engine + detector + (optional) local LLM resident.
 6. Cost of swapping prompt embeddings per batch item.
+
+Measure the batch and resolution sweep on the **`none` accelerator first**. It
+answers the question that actually matters — the *shape* of the marginal-cost
+curve — at zero engine-build cost, and only then is it worth spending 5.1 GB and
+several minutes per TensorRT engine to confirm the two or three configurations
+the curve says are interesting.
 
 ### 7.3 The batch-size problem (the hard one)
 
@@ -273,6 +283,36 @@ A TensorRT engine is built for a **fixed batch size**. The scene contains a
   enough for uniform edits.
 
 Option (d) is the fastest thing to test, and the answer might simply be (d) + (a).
+
+### 7.4 Dev and deploy hardware are different
+
+Development runs on an RTX 3080 laptop; deployment targets RTX 3090 Ti / 4090
+desktops. Laptop silicon is power- and thermally-limited in a way desktop silicon
+is not, and the VRAM ceiling differs sharply. A measurement is only meaningful
+with its hardware attached.
+
+**Every result record carries a hardware fingerprint**: GPU name, total VRAM,
+driver version, power limit, and raw `nvidia-smi` output with a timestamp. That
+fingerprint does two jobs — it says which machine a number came from, and it is
+the evidence that the number was measured rather than invented.
+
+What survives the move from laptop to desktop:
+
+| Conclusion                                     | Portable?                                          |
+| ---------------------------------------------- | -------------------------------------------------- |
+| Shape of the marginal-cost curve vs batch size | Yes — the sublinearity question is architectural   |
+| Relative ranking of detector candidates        | Yes                                                |
+| Relative ranking of the §8.2 primitives        | Yes                                                |
+| Absolute ms/frame, and whether 30 FPS is met   | **No** — re-measure on the deploy GPU              |
+| VRAM ceilings and OOM thresholds               | **No** — a laptop OOM says nothing about 24 GB     |
+| Engine build times                             | **No**                                             |
+
+The 30 FPS gate in §11 is therefore a **deploy-hardware** criterion. On the
+laptop the same run is a regression check, not an acceptance test.
+
+A laptop also may never reach the §7.2 cooldown threshold under sustained load.
+The harness caps the wait and records that the threshold was not met, rather than
+blocking forever or silently reporting a throttled number.
 
 ---
 
@@ -368,6 +408,8 @@ rendering. Never a black screen, never a crash.
 | LLM emits plausible-but-wrong plans               | user confusion          | Constrained decoding, validator, visible `notes`, manual override |
 | VRAM exhaustion (diffusion + detector + LLM)      | crash                   | CPU LLM; measure peak; hard budget                     |
 | Detector vocabulary too narrow                    | "it doesn't understand me" | Open-vocab detector, or an honest UI error listing what *is* supported |
+| Laptop numbers used as deploy numbers             | ship a design that misses 30 FPS on the target | §7.4 — fingerprint every result; treat absolutes and VRAM ceilings as non-portable |
+| Disk exhaustion from TensorRT engines             | benchmark run dies partway  | 5.1 GB per engine; sweep on `none` first, build TRT only for the configurations that matter |
 
 ---
 
@@ -402,7 +444,8 @@ cheaply — which is the point of ordering them this way.
 
 1. User types "find all people and give them a red hat" and, within 3 s and
    without restarting generation, people on screen render with red hats.
-2. Sustained ≥ 30 FPS output with up to 4 tracked objects at 512² diffusion.
+2. Sustained ≥ 30 FPS output with up to 4 tracked objects at 512² diffusion,
+   measured **on deploy hardware** (RTX 3090 Ti / 4090) — see §7.4.
 3. Typing a new instruction swaps behaviour with **no stutter** in the output
    stream and **no TensorRT rebuild**.
 4. Non-target pixels are bit-identical to the capture (verifiable).
