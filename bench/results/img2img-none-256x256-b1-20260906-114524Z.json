@@ -1,0 +1,118 @@
+{
+  "cooldown": {
+    "cap_s": 120.0,
+    "enabled": true,
+    "final_temperature_c": 57.0,
+    "outcome": "reached",
+    "reached": true,
+    "samples": [
+      [
+        0.030999999999039574,
+        57.0
+      ]
+    ],
+    "threshold_c": 62.0,
+    "waited_s": 0.030999999999039574
+  },
+  "hardware": {
+    "cuda_version": "12.8",
+    "driver_version": "595.79",
+    "enforced_power_limit_w": 120.0,
+    "gpu_name": "NVIDIA GeForce RTX 3080 Laptop GPU",
+    "hostname": "Ale-Zephyrus",
+    "nvidia_smi_captured_utc": "2026-09-06T11:45:17Z",
+    "nvidia_smi_raw": "Sun Sep  6 13:45:17 2026       \n+-----------------------------------------------------------------------------------------+\n| NVIDIA-SMI 595.79                 Driver Version: 595.79         CUDA Version: 13.2     |\n+-----------------------------------------+------------------------+----------------------+\n| GPU  Name                  Driver-Model | Bus-Id          Disp.A | Volatile Uncorr. ECC |\n| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |\n|                                         |                        |               MIG M. |\n|=========================================+========================+======================|\n|   0  NVIDIA GeForce RTX 3080 ...  WDDM  |   00000000:01:00.0 Off |                  N/A |\n| N/A   51C    P8             11W /  120W |       0MiB /  16384MiB |      0%      Default |\n|                                         |                        |                  N/A |\n+-----------------------------------------+------------------------+----------------------+\n\n+-----------------------------------------------------------------------------------------+\n| Processes:                                                                              |\n|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |\n|        ID   ID                                                               Usage      |\n|=========================================================================================|\n|  No running processes found                                                             |\n+-----------------------------------------------------------------------------------------+\n",
+    "power_limit_w": null,
+    "torch_version": "2.7.0+cu128",
+    "total_vram_mib": 16384.0
+  },
+  "run": {
+    "finished_utc": "2026-09-06T11:45:24Z",
+    "fps": 21.292,
+    "gpu_samples": [
+      [
+        0.04920189999938884,
+        1800.0,
+        58.0
+      ],
+      [
+        0.5975278000005346,
+        1785.0,
+        63.0
+      ],
+      [
+        1.139914499999577,
+        1740.0,
+        64.0
+      ]
+    ],
+    "max_ms_per_frame": 59.7627,
+    "max_temperature_c": 64.0,
+    "mean_ms_per_frame": 46.9668,
+    "mean_sm_clock_mhz": 1775.0,
+    "median_ms_per_frame": 44.2633,
+    "min_ms_per_frame": 42.2337,
+    "p95_ms_per_frame": 59.4341,
+    "peak_vram_bytes": 2637917184,
+    "peak_vram_mib": 2515.7,
+    "per_module_ms": null,
+    "per_rep_ms": [
+      48.8017,
+      42.8476,
+      42.239,
+      42.2337,
+      44.2772,
+      42.492,
+      43.5652,
+      44.2977,
+      44.2495,
+      44.099,
+      44.5202,
+      44.1279,
+      48.89,
+      45.014,
+      43.6177,
+      43.8276,
+      43.9854,
+      42.6247,
+      44.2288,
+      42.8059,
+      43.2823,
+      48.5746,
+      45.58,
+      45.3465,
+      51.2351,
+      55.5439,
+      59.7627,
+      59.4341,
+      58.1184,
+      59.3807
+    ],
+    "reps": 30,
+    "started_utc": "2026-09-06T11:45:23Z",
+    "stdev_ms_per_frame": 5.6689,
+    "warmup_reps": 5
+  },
+  "scenario": {
+    "acceleration": "none",
+    "batch_size": 1,
+    "cfg_type": "none",
+    "do_add_noise": true,
+    "height": 256,
+    "mode": "img2img",
+    "model": "sd-turbo-fp16",
+    "name": "img2img-none-256x256-b1",
+    "prompt": "a photograph of a city street, cinematic lighting",
+    "reps": 30,
+    "seed": 2,
+    "t_index_list": [
+      35
+    ],
+    "use_denoising_batch": true,
+    "use_lcm_lora": false,
+    "use_tiny_vae": true,
+    "warmup_reps": 5,
+    "width": 256
+  },
+  "schema_version": 1
+}

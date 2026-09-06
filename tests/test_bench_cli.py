@@ -97,3 +97,15 @@ def test_a_tensorrt_scenario_needs_an_explicit_opt_in_to_build_an_engine(tmp_pat
     engine_build_guard(trt, engines_root=tmp_path, allow_build=True)
     engine_build_guard(SCENARIOS["img2img-none-512x512-b1"], engines_root=tmp_path,
                        allow_build=False)
+
+
+def test_marginal_reads_the_committed_results_and_exits_zero():
+    """Issue #3: the marginal cost is recomputed from the JSON, not retyped from it."""
+    result = subprocess.run(
+        [sys.executable, "-m", "bench", "--marginal"],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "marginal ms/item" in result.stdout
+    assert "sublinear" in result.stdout
+    assert "Normalised to" in result.stdout, "the normalised table names the clock it assumes"

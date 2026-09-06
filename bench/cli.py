@@ -13,6 +13,14 @@ from pathlib import Path
 from typing import Optional, Sequence, TextIO
 
 from bench.cooldown import DEFAULT_CAP_S, DEFAULT_POLL_INTERVAL_S, DEFAULT_THRESHOLD_C
+from bench.disk import (
+    MIN_FREE_BYTES_FOR_ENGINE_BUILD,
+    DiskRecord,
+    Usage,
+    read_disk,
+    require_free_space,
+)
+from bench import marginal
 from bench.paths import RESULTS_DIR, resolve_engines_dir
 from bench.scenarios import SCENARIOS, ScenarioConfig
 
@@ -33,6 +41,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("scenario", nargs="?", help="scenario name; --list shows them all")
     parser.add_argument("--list", action="store_true", help="list the scenarios and exit")
+    parser.add_argument("--marginal", action="store_true",
+                        help="report the marginal cost per additional batch item from "
+                             "the committed results, and exit")
     parser.add_argument("--reps", type=int, help="timed reps (default: the scenario's)")
     parser.add_argument("--warmup", type=int, dest="warmup_reps",
                         help="warmup reps before timing (default: the scenario's)")
@@ -87,23 +98,61 @@ def engine_dir_name(scenario: ScenarioConfig) -> str:
 
 
 def engine_build_guard(scenario: ScenarioConfig, engines_root: Optional[Path] = None,
-                       allow_build: bool = False) -> None:
-    """Refuse to silently spend ~5.1 GB and several minutes compiling an engine.
+                       allow_build: bool = False,
+                       usage: Optional[Usage] = None) -> Optional[DiskRecord]:
+    """Two gates on compiling an engine, and the disk reading that justifies the second.
 
     Spec 7.2: run the sweep on the `none` accelerator first and confirm only the two
-    or three configurations the curve says are interesting. An accidental TensorRT
-    run across the registry would fill the disk.
+    or three configurations the curve says are interesting. So an uncached engine
+    needs `--allow-engine-build` - ~5.1 GB and several minutes is not a surprise
+    anyone should get from a typo - and even then the volume has to have room for it.
+
+    Returns the disk reading when a build is imminent, else None: the `none`
+    accelerator and an already-cached engine compile nothing, so there is nothing
+    to gate.
     """
-    if scenario.acceleration != "tensorrt" or allow_build:
-        return
+    if scenario.acceleration != "tensorrt":
+        return None
     root = resolve_engines_dir() if engines_root is None else Path(engines_root)
     if (root / engine_dir_name(scenario) / "unet.engine").is_file():
+        return None
+    if not allow_build:
+        raise SystemExit(
+            f"bench: no cached TensorRT engine for {scenario.name} under {root}.\n"
+            f"       Building one costs ~5.1 GB and several minutes. Pass "
+            f"--allow-engine-build if that is what you want."
+        )
+    record = read_disk(root, required_bytes=MIN_FREE_BYTES_FOR_ENGINE_BUILD,
+                       **({} if usage is None else {"usage": usage}))
+    require_free_space(record)
+    return record
+
+
+def report_marginal(results_dir: Path, out: TextIO = sys.stdout) -> None:
+    """The batch curves in `results_dir`, raw and normalised to one SM clock.
+
+    Both tables, because both are needed to read the result honestly: the raw one is
+    what the machine did, and the normalised one is what it would have done had the
+    120 W limit not lowered the clock under a longer call. Spec 7.4 wants the curve
+    *shape* to be the portable conclusion, and at 512 the raw shape is partly the
+    power limit.
+    """
+    curves = marginal.curves_from_results(marginal.load_results(results_dir))
+    if not curves:
+        out.write(f"no results under {results_dir}\n")
         return
-    raise SystemExit(
-        f"bench: no cached TensorRT engine for {scenario.name} under {root}.\n"
-        f"       Building one costs ~5.1 GB and several minutes. Pass "
-        f"--allow-engine-build if that is what you want."
-    )
+    reference = marginal.reference_clock_mhz(curves)
+    normalised = [curve.normalised_to(reference) for curve in curves]
+
+    sections = [
+        "As measured",
+        marginal.format_table(curves),
+        marginal.format_verdicts(curves),
+        f"Normalised to {reference:.0f} MHz (estimate: ms x clock / reference)",
+        marginal.format_table(normalised),
+        marginal.format_verdicts(normalised),
+    ]
+    out.write("\n\n".join(sections) + "\n")
 
 
 def list_scenarios(out: TextIO = sys.stdout) -> None:
@@ -119,13 +168,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.list:
         list_scenarios()
         return 0
+    if args.marginal:
+        report_marginal(args.results_dir)
+        return 0
     if not args.scenario:
         parser.print_usage()
         print("bench: name a scenario, or pass --list", file=sys.stderr)
         return 2
 
     scenario = resolve_scenario(args)
-    engine_build_guard(scenario, allow_build=args.allow_engine_build)
+    disk = engine_build_guard(scenario, allow_build=args.allow_engine_build)
 
     from bench.runner import run_scenario  # imports torch - kept off the --help path
 
@@ -137,5 +189,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         threshold_c=args.cooldown_threshold,
         cap_s=args.cooldown_cap,
         poll_interval_s=args.cooldown_poll,
+        disk=disk,
     )
     return 0

@@ -34,6 +34,7 @@ from bench.cooldown import (
     skipped_cooldown,
     wait_for_cooldown,
 )
+from bench.disk import DiskRecord
 from bench.fingerprint import capture_fingerprint, read_gpu_sample, utc_now
 from bench.paths import (
     REPO_ROOT,
@@ -257,6 +258,7 @@ def run_scenario(
     poll_interval_s: float = DEFAULT_POLL_INTERVAL_S,
     engines_root: Optional[Path] = None,
     sample_interval_s: float = DEFAULT_SAMPLE_INTERVAL_S,
+    disk: Optional[DiskRecord] = None,
     log: Callable[[str], None] = print,
 ) -> BenchResult:
     """Measure `scenario` once and write its result. Returns the record that was written."""
@@ -318,7 +320,7 @@ def run_scenario(
         gpu_samples=sampler.samples,
     )
     result = BenchResult(scenario=scenario, run=run, cooldown=cooldown_record,
-                         hardware=fingerprint)
+                         hardware=fingerprint, disk=disk)
 
     results_dir = Path(results_dir)
     path = write_result(result, results_dir=results_dir)
