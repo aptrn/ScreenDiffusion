@@ -113,6 +113,7 @@ def test_a_payload_with_detection_shows_the_count_and_the_cost():
     assert line.startswith("FPS: 28")
     assert "4" in line and "14.3" in line and "4.8" in line
 
+
 def test_nonsense_on_the_fps_queue_does_not_take_the_gui_down():
     assert _format_fps(None) == "FPS: --"
     assert _format_fps({}) == "FPS: --"

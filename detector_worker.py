@@ -25,7 +25,7 @@ import os
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Optional, Sequence, Tuple, Union
 
 from detection import EMPTY_TRACKS, Box, Detection, Tracker, Tracks
 
@@ -62,10 +62,8 @@ def concepts_of(plan) -> Tuple[str, ...]:
     A plan with no target asks for nothing, and a detector is never loaded for it:
     `mode: "global"` is the whole frame restyled, which needs no boxes.
     """
-    seen: Dict[str, None] = {}
-    for target in getattr(plan, "targets", ()):
-        seen.setdefault(target.concept, None)
-    return tuple(seen)
+    return tuple(dict.fromkeys(target.concept
+                               for target in getattr(plan, "targets", ())))
 
 
 def frame_to_array(frame):
@@ -92,10 +90,13 @@ def frame_to_array(frame):
         return tensor.to("cpu").numpy().astype(np.uint8)
 
     array = np.asarray(frame)
-    if array.dtype != np.uint8:
-        array = np.clip(array, 0.0, 1.0) * 255.0 if array.max() <= 1.0 else array
-        array = array.astype(np.uint8)
-    return array
+    if array.dtype == np.uint8:
+        return array
+    # A float frame is 0..1 from the capture path or already 0..255 from a decoder;
+    # only the first needs scaling, and the array's own range is what says which.
+    if array.max() <= 1.0:
+        array = np.clip(array, 0.0, 1.0) * 255.0
+    return array.astype(np.uint8)
 
 
 class UltralyticsDetector:
@@ -388,11 +389,15 @@ class BackgroundDetector:
         harness. The frame loop never waits for detection; that is the point of it.
         """
         deadline = time.perf_counter() + timeout
-        while self._ticks < ticks:
+        while True:
+            # Cleared *before* the count is read: a tick published in between would
+            # otherwise have its flag thrown away and this would wait out the whole
+            # timeout for a snapshot that had already arrived.
             self._published.clear()
+            if self._ticks >= ticks:
+                return True
             if not self._published.wait(max(0.0, deadline - time.perf_counter())):
                 return self._ticks >= ticks
-        return True
 
     def _run(self) -> None:
         while not self._stop.is_set():

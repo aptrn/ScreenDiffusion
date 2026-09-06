@@ -30,7 +30,7 @@ from render_plan import (
 # The tracker and the worker's detector (issue #7, spec 5.1 C3/C4). Neither imports
 # torch or ultralytics at module scope - the weights are loaded on the detector's
 # own thread, inside the worker process - so this import costs the GUI nothing.
-from detection import Tracks, fps_payload, is_detect_frame
+from detection import fps_payload, is_detect_frame
 from detector_worker import BackgroundDetector, UltralyticsDetector
 
 APP_ROOT = (Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent)
@@ -543,15 +543,16 @@ def _format_fps(payload: Any) -> str:
     count, the detect, and what that detect amortises to at the plan's cadence,
     which is the figure spec 7.1 budgets and the only one worth watching.
     """
-    fps = payload.get("fps") if isinstance(payload, dict) else payload
+    fields = payload if isinstance(payload, dict) else {"fps": payload}
+    fps = fields.get("fps")
     if not isinstance(fps, (int, float)):
         return "FPS: --"
     line = f"FPS: {int(round(float(fps)))}"
-    if isinstance(payload, dict) and "detections" in payload:
-        line += (f"  |  {payload['detections']} obj  "
-                 f"{float(payload.get('detector_ms', 0.0)):.1f} ms/detect "
-                 f"({float(payload.get('amortised_ms', 0.0)):.1f} ms/frame "
-                 f"every {payload.get('detect_every_n')})")
+    if "detections" in fields:
+        line += (f"  |  {fields['detections']} obj  "
+                 f"{float(fields.get('detector_ms', 0.0)):.1f} ms/detect "
+                 f"({float(fields.get('amortised_ms', 0.0)):.1f} ms/frame "
+                 f"every {fields.get('detect_every_n')})")
     return line
 
 SHOW = {

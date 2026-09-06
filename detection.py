@@ -35,6 +35,12 @@ import dataclasses
 from dataclasses import dataclass
 from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
+# Detect every Nth frame when nobody has said - the plan's `global.detect_every_n`
+# is what actually decides, and it is taken from here when a plan does not carry
+# one. Imported rather than spelt again so the fallback and the plan default
+# cannot drift apart; `render_plan` is stdlib-only too, so this costs nothing.
+from render_plan import DEFAULT_DETECT_EVERY_N
+
 # --- how identity is decided ------------------------------------------------
 
 # How much two boxes must overlap for the later one to be the earlier one's object.
@@ -53,10 +59,6 @@ TRACK_SMOOTHING = 0.4
 # not cost an object its identity, while a departed object is gone within a few
 # hundred milliseconds rather than haunting the render.
 MAX_MISSES = 2
-
-# Detect every Nth frame; the plan's `global.detect_every_n` overrides it. Here only
-# so `is_detect_frame` has an answer when nobody has said.
-DEFAULT_DETECT_EVERY_N = 3
 
 
 class Box(NamedTuple):
@@ -267,6 +269,9 @@ class Tracker:
         object, and a tracker that let the box decide would hand it the person's
         seed and prompt.
         """
+        # `-track_id` is the tie-break: two equal overlaps go to the older object,
+        # deterministically, and `max` never has to compare two `Track`s - which are
+        # frozen dataclasses and not ordered.
         candidates = [(iou(track.box, detection.box), -track_id, track)
                       for track_id, track in self._tracks.items()
                       if track_id not in claimed and track.concept == detection.concept]
@@ -285,7 +290,9 @@ def is_detect_frame(frame_index: int, detect_every_n: int = DEFAULT_DETECT_EVERY
     that is not a cadence detects every frame, which is dear and correct, rather
     than raising inside the render loop.
     """
-    return frame_index % detect_every_n == 0 if detect_every_n > 0 else True
+    if detect_every_n <= 0:
+        return True
+    return frame_index % detect_every_n == 0
 
 
 def amortised_ms(detector_ms: float, detect_every_n: int) -> float:
