@@ -3,7 +3,7 @@ import os
 import hashlib
 from pathlib import Path
 import traceback
-from typing import List, Literal, Optional, Union, Dict
+from typing import List, Literal, Mapping, Optional, Union, Dict
 
 import numpy as np
 import torch
@@ -24,6 +24,43 @@ torch.set_grad_enabled(False)
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 torch.backends.cudnn.benchmark = True  # Add this flag
+
+
+REPO_ROOT = Path(__file__).resolve().parent
+SD_ENGINES_DIR_ENV = "SD_ENGINES_DIR"
+
+# A path argument: a string, a Path, or nothing given.
+_PathArg = Optional[Union[str, Path]]
+
+
+def _unquoted_path(value: _PathArg) -> str:
+    """`value` as a bare path string, empty when there is nothing usable.
+
+    A path pasted into a Windows env var often keeps its surrounding quotes.
+    """
+    return "" if value is None else str(value).strip().strip('"').strip()
+
+
+def _resolve_engine_dir(engine_dir: _PathArg = None, base_dir: _PathArg = None,
+                        environ: Optional[Mapping[str, str]] = None) -> Path:
+    """Absolute engines root: `engine_dir`, else $SD_ENGINES_DIR, else `<repo>/engines`.
+
+    Compiled engines are ~5.1 GB each and gitignored, so a relative path - which
+    re-anchors to the process cwd - makes a worktree rebuild caches it already has.
+    Relative values are anchored to the repo root instead. See CLAUDE.md.
+
+    Mirrors `_resolve_cache_dir()` in main_gpu_addon.py: the GUI process must not
+    import this module, so the rule is spelled out in both places.
+    """
+    environ = os.environ if environ is None else environ
+    base = Path(REPO_ROOT if base_dir is None else base_dir)
+    raw = _unquoted_path(engine_dir) or _unquoted_path(environ.get(SD_ENGINES_DIR_ENV))
+    candidate = Path(raw).expanduser() if raw else base / "engines"
+    if not candidate.is_absolute():
+        candidate = base / candidate
+    # normpath, not resolve(): collapse `..` and settle on one slash direction
+    # without touching the filesystem or following symlinks.
+    return Path(os.path.normpath(candidate))
 
 
 def _broadcast_list(vals: Optional[List[float]], n: int, default: float = 1.0) -> List[float]:
@@ -73,7 +110,7 @@ class StreamDiffusionWrapper:
         cfg_type: Literal["none", "full", "self", "initialize"] = "self",
         seed: int = 2,
         use_safety_checker: bool = False,
-        engine_dir: Optional[Union[str, Path]] = "engines",
+        engine_dir: Optional[Union[str, Path]] = None,
     ):
         """
         Initializes the StreamDiffusionWrapper.
@@ -526,7 +563,7 @@ class StreamDiffusionWrapper:
         use_tiny_vae: bool = True,
         cfg_type: Literal["none", "full", "self", "initialize"] = "self",
         seed: int = 2,
-        engine_dir: Optional[Union[str, Path]] = "engines",
+        engine_dir: Optional[Union[str, Path]] = None,
     ) -> StreamDiffusion:
         """
         Loads the model.
@@ -788,7 +825,7 @@ class StreamDiffusionWrapper:
                         f"--mode-{self.mode}"
                     )
 
-                engine_dir = Path(engine_dir)
+                engine_dir = _resolve_engine_dir(engine_dir)
                 unet_path = os.path.join(
                     engine_dir,
                     create_prefix(
