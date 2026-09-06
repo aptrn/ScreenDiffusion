@@ -638,10 +638,9 @@ box. Boxes may be too coarse; a segmentation stage or a body-part heuristic
 ### 8.2 Is crop-and-diffuse the right primitive at all?
 
 Honest risk: img2img on a 64×64 person crop upscaled to 512² will hallucinate
-detail, drift in identity frame to frame, and flicker. Alternatives worth
-benchmarking side by side before committing:
+detail, drift in identity frame to frame, and flicker. The four options:
 
-- **A. Crop → diffuse → composite** (this spec's default).
+- **A. Crop → diffuse → composite** (this spec's original default).
 - **B. Full-frame diffuse once, masked composite.** Constant cost, temporally
   smoother, but every object gets the same prompt.
 - **C. Latent-space masking / inpainting.** Diffuse the full latent, blending
@@ -651,7 +650,150 @@ benchmarking side by side before committing:
   wired up plus a TRT engine that supports it. Best structure preservation,
   highest cost.
 
-**This comparison should probably happen before anything else is built.**
+A and B were implemented offline and measured against each other on the committed
+reference clips; C and D were assessed from the source rather than built, which is
+what issue #5 asked for.
+
+#### Decision (2026-09-06)
+
+Generated from `bench/results/primitives/`, not transcribed. Regenerate with
+`uv run python -m bench --primitive-report`; a new comparison fails the merge gate
+until this block is regenerated.
+
+<!-- BEGIN PRIMITIVE DECISION -->
+
+Measured: NVIDIA GeForce RTX 3080 Laptop GPU, engine img2img-tensorrt-512x512-b1. Committed clips: dog.mp4 (48 consecutive frames), people.mp4 (48 consecutive frames). Both primitives are timed on the same frames, interleaved frame by frame, so the laptop's clock drift lands on both arms.
+
+| case | primitive | option | denoise t_index | strength | objects/frame | calls/frame | ms/frame | ms/frame at basis clock | flicker (static px) | expresses |
+|---|---|---|---|---|---|---|---|---|---|---|
+| restyle-people | crop | A | 35 | 0.64 | 6.00 | 6.00 | 931.23 | 461.26 @ 2100 MHz | 1.62 (225146) | yes |
+| restyle-people | masked | B | 40 | 0.49 | 6.00 | 1.00 | 158.57 | 78.55 @ 2100 MHz | 1.43 (225146) | yes |
+| identity-dog | crop | A | 20 | 0.92 | 1.00 | 1.00 | 81.75 | 46.40 @ 2100 MHz | 17.38 (16341) | no |
+| identity-dog | masked | B | 25 | 0.85 | 1.00 | 1.00 | 85.73 | 48.67 @ 2100 MHz | 19.50 (16341) | yes |
+
+Denoise strength each case turned out to need:
+
+- **restyle-people / crop:** t_index 35 - timestep 299, denoise strength 0.64. Selected as the least denoise whose mean absolute change inside the region, net of the resize control, reached 8/255; it changed the region by 9.4/255 - 8.6 of it net of the 0.8/255 the resize alone costs - against 0.0/255 outside it.
+- **restyle-people / masked:** t_index 40 - timestep 199, denoise strength 0.49. Selected as the least denoise whose mean absolute change inside the region, net of the resize control, reached 8/255; it changed the region by 13.1/255 - 10.5 of it net of the 2.6/255 the resize alone costs - against 0.0/255 outside it.
+- **identity-dog / crop:** No rung of the ladder met the criterion (the least denoise at which the detector read at least 50% of the probed frames as the new identity). The strongest denoise tried was t_index 20 (timestep 599, strength 0.92), which changed the region by 24.1/255 net of resizing and was read as the new identity in 1/4 frames. The comparison was timed at that setting and the case is recorded as not achieved.
+- **identity-dog / masked:** t_index 25 - timestep 499, denoise strength 0.85. Selected as the least denoise at which the detector read at least 50% of the probed frames as the new identity; it changed the region by 36.5/255 - 33.5 of it net of the 3.0/255 the resize alone costs - against 0.0/255 outside it, and was read as the new identity in 3/4 probed frames.
+
+- **A, crop -> diffuse -> composite (`crop`) cannot express:** A small crop, cheaply. Every region gets the engine's full 512x512 canvas whatever its source size, so a 45 px-wide region is upscaled 11x before it is diffused and the model invents the detail it finds there - the small-crop quality floor. Cost scales with the object count, so the number of objects becomes a frame-budget decision rather than a detection one; and each object is diffused with no sight of the rest of the frame, so nothing ties two objects' output together.
+- **B, full-frame diffuse, masked composite (`masked`) cannot express:** One prompt and one denoise per frame. Every object in the frame is rendered from the same text embedding at the same strength, so "turn the dog into a cat and the man into a statue" is two frames' work, not one. Nor can it spend detail where it matters: the whole frame is squeezed onto one 512x512 canvas, so a region occupying 45 px of a 1280 px-wide frame is diffused at ~18 px and comes back with roughly that much detail.
+
+Findings:
+
+- **Small objects, people.mp4:** 288 rendered regions, smallest side 45 px and largest smallest-side 293 px. 48 have a side under 96 px; 0 are under 96 px in *both* dimensions. The Gate's small-object case is therefore met on the smallest-side reading and not on the small-in-area one - the gap issue #17 recorded when it committed these clips, and it is still open.
+- **identity-dog separates the two primitives:** crop did not express it at any rung of the ladder and masked did. That is the half of the comparison no millisecond figure carries.
+- **Small objects, dog.mp4:** 48 rendered regions, smallest side 138 px and largest smallest-side 192 px. 0 have a side under 96 px; 0 are under 96 px in *both* dimensions. The Gate's small-object case is therefore met on the smallest-side reading and not on the small-in-area one - the gap issue #17 recorded when it committed these clips, and it is still open.
+
+**Decision: masked.** **B, full-frame diffuse, masked composite** (`masked`). On the priority case (restyle-people) it costs 158.6 ms/frame at 6.0 objects per frame, against 931.2 ms/frame for crop (5.87x), which expressed it too. Flicker over the pixels static in the source, 0-255 units, lower steadier: crop 1.62, masked 1.43. On the eventual case (identity-dog) it held up at 85.7 ms/frame. What it cannot express: One prompt and one denoise per frame. Every object in the frame is rendered from the same text embedding at the same strength, so "turn the dog into a cat and the man into a statue" is two frames' work, not one. Nor can it spend detail where it matters: the whole frame is squeezed onto one 512x512 canvas, so a region occupying 45 px of a 1280 px-wide frame is diffused at ~18 px and comes back with roughly that much detail. That limitation is accepted for v1 - one concept at a time - and is recorded here rather than discovered later.
+
+Side-by-side clips for human judgement (source | A | B), under `bench/results/primitives/`: `restyle-people-20260906-181553Z-triptych.mp4`, `identity-dog-20260906-181841Z-triptych.mp4`. **The metric ranks cost and temporal stability, not beauty** - a human still has to watch these and confirm the priority case is acceptable.
+
+<!-- END PRIMITIVE DECISION -->
+
+#### How the comparison was run
+
+- **One clip, one committed box track, per case.** `bench/clips/people.mp4` for the
+  priority case and `bench/clips/dog.mp4` for the identity change (issue #17). The
+  boxes come from `bench/clips/*.track.json`, generated once with YOLO-World and
+  committed, so two runs render exactly the same regions. Box smoothing — one of
+  §8.5's own levers — is applied when the track is written, so neither primitive is
+  charged for detector jitter and both see identical regions.
+- **Both primitives are timed on the same frames, interleaved frame by frame.** One
+  arm after the other would have compared a boost clock against a throttled one
+  (§7.4, issue #13).
+- **What is timed is the whole primitive** — resizes and composite included —
+  because the frame loop pays those too. Both render through the one cached
+  512² batch-1 TensorRT engine, so the A-against-B ratio is a property of the
+  primitives and not of two engines.
+- **The denoise strength is measured, not assumed.** Each case is swept over
+  `t_index` 20–45 before the timed pass; higher `t_index` is *less* denoise (index
+  20 is timestep 599, noise amplitude 0.92; index 45 is timestep 99, 0.32). The
+  restyle case selects the least denoise whose change inside the region reaches
+  8/255. The identity case cannot be selected that way — a frame can change
+  enormously and still be a dog — so it is judged by asking YOLO-World whether the
+  rendered subject now reads as a cat.
+- **Flicker** is the mean absolute difference between consecutive outputs over the
+  pixels that were static in the source *and* painted by the primitive, in 0–255
+  units. Both restrictions matter: a moving subject is the render working, and the
+  untouched pass-through pixels are identical by construction, so leaving them in
+  would rank the primitive that restyles least as the steadiest. `bench/flicker.py`,
+  pure, unit-tested.
+- **B's `region_change` includes its own resampling loss.** B squeezes the whole
+  frame onto the 512² canvas and stretches it back, so part of what the change
+  figure measures inside the region is blur rather than style. That is not an
+  artefact of the measurement — it is what B costs — but it does mean B's change
+  figure is not a like-for-like measure of style against A's.
+
+#### What the comparison changed about this section's assumptions
+
+Two of them, and both went against what §8.2 assumed when it was written.
+
+- **The identity change is where A was supposed to be necessary, and A is the one
+  that failed it.** Asked for `dog` and `cat` on the rendered frames, YOLO-World
+  read B's output as a cat in 37 of 48 frames and A's in 12. A upscales a 424×280
+  dog to 512² and diffuses it with no sight of the rest of the frame; B diffuses the
+  whole scene, and the scene is what carries a cat. So "A's dedicated 512² canvas
+  per object may be necessary for an identity change" is not what the measurement
+  says.
+- **A is not steadier, and B is not dramatically smoother either.** On the priority
+  case the two are within 12% of each other on flicker (1.62 against 1.43, in 0–255
+  units over 225k static painted pixels per pair), which is far less separation than
+  the cost difference. Temporal stability was expected to be B's argument; it is not
+  the argument that decides this.
+
+Two defects the stills show that no metric here scores, both visible in
+`*-triptych.jpg`:
+
+- **A squashes a non-square region onto a square canvas.** Every engine this app
+  builds is 512×512 (§7.2 — the resolution in an engine directory name is a lie), so
+  a 424×280 dog box is stretched to a square, diffused, and stretched back. In the
+  identity-case still that is most of why A returns a dog's face at the wrong scale.
+  Letterboxing the crop would fix the aspect and throw away canvas; a non-square
+  engine is a rebuild. Neither is free, and it is a cost that belongs to A alone.
+- **Both primitives leave a hard rectangular seam at the region boundary** once the
+  denoise is high enough to change anything. `outside_change` is 0.0/255 by
+  construction — the composite is exact — so the discontinuity lands entirely on the
+  box edge. Feathering the composite is the obvious mitigation and is unbuilt; it
+  belongs to whoever implements the chosen primitive, and it is cheap for B (one
+  alpha blend per frame) and K times dearer for A.
+
+One caveat on the absolute figures, and it is §7.4's: the priority-case run was
+timed with the cooldown gate **capped rather than reached** — the laptop never got
+under 62 °C — so its milliseconds are throttled ones. An earlier run of the same
+comparison on a cooler die measured 490 ms/frame for A and 87 for B, against 931 and
+159 here. The **ratio** moved from 5.62× to 5.87×; the absolutes moved by ~90%. The
+ratio is the portable conclusion, the absolutes are not, and neither is a claim
+about hitting 30 FPS.
+
+#### C and D, assessed rather than built
+
+**C — latent-space masking — is not a third primitive on a one-step schedule.**
+Its idea is to blend masked and unmasked latents *between* denoising steps, and
+`DEFAULT_T_INDEX_LIST` is a single rung: every engine this app has is built for one
+step. With one step there is no intermediate latent, so the blend happens once,
+after the only UNet pass — which is B, with the mask moved from pixel space into a
+64×64 latent grid. That costs exactly what B costs and buys an 8×-coarser region
+edge. It becomes interesting only once the pipeline has more than one step, and
+more steps is the engine rebuild §7.2 prices, not a setting.
+`tests/test_primitive_options_c_and_d.py` pins the step count so this assessment
+fails rather than rots.
+
+**D — ControlNet-conditioned — is a fork, not a flag.** `controlnet_paths` and
+`controlnet_scales` are accepted by `image_generation_process()` and reach nothing:
+the worker never passes them on, `wrapper.py` does not mention ControlNet, and
+neither does the pinned StreamDiffusion 0.1.1. So D means a ControlNet-aware
+pipeline that does not exist here, plus a TensorRT engine taking the extra
+conditioning inputs — another ~5.0 GB and 15–25 minutes per configuration
+(§7.2) — plus the per-frame cost of the conditioning pass itself. The issue's
+instruction was to implement D only if A and B both failed the priority case. They
+did not, so it stays unbuilt. The same test pins the three places ControlNet is
+absent, so if a dependency ever ships one this assessment fails rather than rots.
+
+**This comparison happened before anything else was built**, which is what this
+section asked for.
 
 ### 8.3 Per-object prompts
 
