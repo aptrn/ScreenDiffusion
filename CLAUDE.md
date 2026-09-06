@@ -54,6 +54,16 @@ the cooldown gate is on unless `--no-cooldown` and records `reached` / `capped`
 either way, and `--per-module` splits UNet / VAE-encode / VAE-decode. Only
 `bench/runner.py` imports torch, and only inside its functions.
 
+Every result also records its **clock regime** - `locked`, `unlocked` or `unknown`,
+under `hardware.clock_lock` - and a result that does not cannot be written.
+Unlocked, it carries a clock-normalised ms/frame beside the raw one
+(`clock_normalization`, basis `clocks.max.sm`, `ms x sampled clock / basis`); locked,
+it carries the raw figure and says so. The normalised figure is a first-order
+estimate and is labelled one everywhere it appears - it makes a confounded sweep
+readable, it does not make it a locked one. `--require-locked-clocks` exits non-zero
+unless a lock is detected, for the runs that decide something; `unknown` fails it
+too, since an undetectable lock is not a lock.
+
 `tests/sourceloader.py` executes named top-level definitions straight out of
 `main_gpu_addon.py` / `wrapper.py`. Importing either module in the GPU-free tier is
 not an option - one primes the DLL search path and pulls in the GUI stack, the other
@@ -100,6 +110,26 @@ pipeline drops frames rather than falling behind — preserve that.
   never get there. Every result carries a hardware fingerprint (GPU name, VRAM, driver,
   power limit, raw `nvidia-smi` with a timestamp): it identifies the machine and is the
   evidence the number was measured rather than invented.
+- **Cooling is not enough: a comparative sweep wants locked clocks.** The cooldown
+  gate only cools *before* a rep, and under the 120 W limit this laptop falls from
+  boost to its floor within about two seconds of a run starting — so a short call
+  measures boost and a long one measures the throttle, and the two are not
+  comparable. Locking the clock is a **manual step this loop cannot perform**:
+  `nvidia-smi --lock-gpu-clocks` needs an elevated shell, and the agent loop does not
+  have one. From an Administrator PowerShell, before a sweep that decides something:
+
+  ```powershell
+  nvidia-smi --lock-gpu-clocks=1200,1200   # pick a clock the card holds under load
+  nvidia-smi --query-gpu=clocks_event_reasons.applications_clocks_setting --format=csv
+  # ... run the sweep, e.g. uv run python -m bench <scenario> --require-locked-clocks
+  nvidia-smi --reset-gpu-clocks            # always, or the machine stays clamped
+  ```
+
+  The harness only ever *detects* a lock — it never sets one, and a failed attempt
+  must never be read as a lock. Detection is the `clocks_event_reasons.
+  applications_clocks_setting` event reason, the only lock signal driver 595.79
+  exposes on consumer Ampere; when it cannot be read the regime is `unknown`, which
+  is not a synonym for `unlocked` and does not satisfy `--require-locked-clocks`.
 - **`models/` and `engines/` are gitignored** and hold multi-GB downloads and compiled
   engines. Leave them out of commits and out of test fixtures. Point `SD_MODELS_DIR` /
   `SD_ENGINES_DIR` at a shared copy rather than re-downloading or rebuilding per

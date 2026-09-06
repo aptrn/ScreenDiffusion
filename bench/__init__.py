@@ -16,4 +16,7 @@ the cooldown gate, the fingerprint and the result records all stay testable in
 the merge gate's GPU-free tier.
 """
 
-RESULT_SCHEMA_VERSION = 1
+# 2: every result records its clock regime and, when unlocked, a
+# clock-normalised ms/frame beside the raw one (issue #13). Version 1
+# results predate that and are read as unlocked by absence.
+RESULT_SCHEMA_VERSION = 2

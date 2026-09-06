@@ -26,6 +26,7 @@ import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
+from bench.clocks import clock_normalization, regime_summary
 from bench.cooldown import (
     DEFAULT_CAP_S,
     DEFAULT_POLL_INTERVAL_S,
@@ -267,7 +268,8 @@ def run_scenario(
     # First, so a machine that cannot be fingerprinted fails before it spends
     # minutes building an engine for a result that could never be written.
     fingerprint = capture_fingerprint()
-    log(f"gpu: {fingerprint.gpu_name} | driver {fingerprint.driver_version}")
+    log(f"gpu: {fingerprint.gpu_name} | driver {fingerprint.driver_version} | "
+        f"{regime_summary(fingerprint.clock_lock)}")
 
     log(f"building {scenario.name} ({scenario.acceleration}, "
         f"{scenario.width}x{scenario.height}, batch {scenario.batch_size})")
@@ -319,12 +321,23 @@ def run_scenario(
         per_module_ms=per_module_ms,
         gpu_samples=sampler.samples,
     )
+    # From the trace the sampler already took, and from the lock state read at the
+    # top of this function - not from a second reading, which could disagree with
+    # the one the result records (issue #13).
+    normalisation = clock_normalization(fingerprint.clock_lock, sampler.samples,
+                                        raw_ms_per_frame=run.mean_ms_per_frame)
     result = BenchResult(scenario=scenario, run=run, cooldown=cooldown_record,
-                         hardware=fingerprint, disk=disk)
+                         hardware=fingerprint, disk=disk,
+                         clock_normalization=normalisation)
 
     results_dir = Path(results_dir)
     path = write_result(result, results_dir=results_dir)
     append_readme_row(result, results_dir / README_NAME, filename=path.name)
     log(f"{scenario.name}: {run.mean_ms_per_frame:.2f} ms/frame ({run.fps:.1f} FPS), "
         f"peak {peak_vram_bytes / BYTES_PER_MIB:.0f} MiB -> {path.name}")
+    if normalisation.ms_per_frame is not None:
+        log(f"clocks {normalisation.regime}: {normalisation.ms_per_frame:.2f} ms/frame "
+            f"estimated at {normalisation.basis_mhz:.0f} MHz "
+            f"(sampled {normalisation.sampled_mean_sm_clock_mhz:.0f} MHz) - an "
+            f"estimate, not a measurement")
     return result

@@ -1,9 +1,16 @@
-"""Result records: the shape on disk, and the one rule that guards it.
+"""Result records: the shape on disk, and the rules that guard it.
 
-The rule is that nothing reaches `bench/results/` without a hardware fingerprint.
+Two rules, both enforced at the two doors to disk - `write_result` and
+`append_readme_row` - and both refusing rather than warning.
+
+The first is that nothing reaches `bench/results/` without a hardware fingerprint.
 The merge gate cannot tell a measured number from an invented one; the fingerprint
-is what makes that difference checkable, so `write_result` refuses rather than
-warns, and the README row goes through the same check.
+is what makes that difference checkable.
+
+The second (issue #13) is that nothing reaches it without saying which clock regime
+produced it. A millisecond figure measured at an unlocked clock is not comparable
+with another one at face value, and a reader months later cannot recover the regime
+from the number.
 
 Result files are written by a run and never by hand. If a run did not happen, there
 is no record.
@@ -17,6 +24,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Union
 
 from bench import RESULT_SCHEMA_VERSION
+from bench.clocks import LOCKED, REGIMES, ClockNormalization, regime_of
 from bench.cooldown import CooldownRecord
 from bench.disk import DiskRecord
 from bench.fingerprint import Fingerprint
@@ -39,7 +47,11 @@ BYTES_PER_MIB = 1024 * 1024
 
 
 class FingerprintError(ValueError):
-    """A result that does not say which machine produced it. Not writable."""
+    """A result that does not say which machine, or which clock regime, produced it.
+
+    Not writable either way: both are claims the merge gate cannot check for itself
+    after the fact.
+    """
 
 
 @dataclass(frozen=True)
@@ -90,6 +102,11 @@ class BenchResult:
     # check to be *recorded*, not merely applied: a reviewer reading the JSON is the
     # one who has to see that the ~5.1 GB gate was cleared before the build started.
     disk: Optional[DiskRecord] = None
+    # Issue #13: which clock regime produced this number, and - when the clocks were
+    # not locked - what it would have been at one clock. The regime itself lives in
+    # the fingerprint, because it is a fact about the machine; this is what follows
+    # from it for the timing, which is why it sits beside the run instead.
+    clock_normalization: Optional[ClockNormalization] = None
 
     def to_dict(self) -> dict:
         return {
@@ -99,6 +116,8 @@ class BenchResult:
             "cooldown": self.cooldown.to_dict(),
             "hardware": self.hardware.to_dict(),
             "disk": None if self.disk is None else self.disk.to_dict(),
+            "clock_normalization": (None if self.clock_normalization is None
+                                    else self.clock_normalization.to_dict()),
         }
 
 
@@ -129,6 +148,29 @@ def require_fingerprint(result: dict) -> None:
         raise FingerprintError(f"fingerprint has no power limit under any of {POWER_LIMIT_FIELDS}")
 
 
+def require_clock_lock_state(result: dict) -> None:
+    """Raise `FingerprintError` unless the record says which clock regime produced it.
+
+    Separate from `require_fingerprint` on purpose. The results committed before
+    issue #13 carry no such field and are not retro-edited - they were all measured
+    on this laptop with no lock in force, and `regime_of` reads their silence as
+    exactly that. This rule applies at the door to disk, so everything written from
+    now on answers for itself instead of relying on that reading.
+
+    `unknown` passes: a driver that cannot answer is a real state of a real machine,
+    and refusing it would discard a measurement. `--require-locked-clocks` is where
+    a run that must not be unlocked says so.
+    """
+    hardware = result.get("hardware")
+    if not isinstance(hardware, dict):
+        raise FingerprintError("result has no hardware fingerprint")
+    lock = hardware.get("clock_lock")
+    if not isinstance(lock, dict) or "state" not in lock:
+        raise FingerprintError("result does not record whether the GPU clocks were locked")
+    if lock["state"] not in REGIMES:
+        raise FingerprintError(f"clock lock state {lock['state']!r} is not one of {REGIMES}")
+
+
 def result_filename(scenario_name: str, timestamp: str) -> str:
     return f"{scenario_name}-{timestamp}.json"
 
@@ -137,6 +179,7 @@ def write_result(result: ResultLike, results_dir: Path, timestamp: Optional[str]
     """Write `<scenario>-<timestamp>.json` under `results_dir`; return its path."""
     data = _as_dict(result)
     require_fingerprint(data)
+    require_clock_lock_state(data)
     if timestamp is None:
         timestamp = _timestamp_from(data)
     results_dir = Path(results_dir)
@@ -157,16 +200,42 @@ README_INTRO = (
     "Written by `uv run python -m bench <scenario>`, never by hand. Each row points at\n"
     "the JSON file holding the full scenario config and hardware fingerprint.\n\n"
     "Absolute ms/frame and VRAM figures belong to the GPU in the row - spec 7.4. Compare\n"
-    "rows across GPUs for curve shape and ranking only.\n"
+    "rows across GPUs for curve shape and ranking only.\n\n"
+    "`clock regime` says whether the GPU clocks were locked while the row was measured.\n"
+    "Unlocked, the last column carries a first-order estimate of the same work at one\n"
+    "clock - an estimate, not a measurement. A row with neither cell was written before\n"
+    "the field existed, and was measured unlocked (issue #13).\n"
 )
+# The two clock columns (issue #13) are appended *after* `file` rather than inserted
+# beside the SM clock, because the rows already committed have no cells for them: a
+# new column in the middle would slide every older row's values one place left and
+# misreport them. Appended, an older row simply stops early - which is what "unlocked
+# by absence" looks like in a table.
 README_HEADER = (
     "| finished (UTC) | scenario | GPU | accel | res | batch | steps | ms/frame | FPS |"
     " peak VRAM (MiB) | SM clock (MHz) | max temp (C) | cooldown | file |"
+    " clock regime | ms/frame at basis clock |"
 )
 # Derived, so adding a column to the header cannot leave a separator of the wrong
 # width behind - which renders the whole table as plain text.
 README_SEPARATOR = "|" + "---|" * (README_HEADER.count("|") - 1)
 README_NAME = "README.md"
+
+
+def _normalised_cell(result: dict) -> str:
+    """The clock-normalised ms/frame, or why there is none.
+
+    `raw` for a locked run: there is nothing to correct, and the raw column already
+    holds the comparable figure. Spelt out with its basis otherwise, because a
+    millisecond figure with no clock attached is what issue #13 is about.
+    """
+    if regime_of(result) == LOCKED:
+        return "raw (clocks locked)"
+    normalisation = result.get("clock_normalization") or {}
+    ms, basis = normalisation.get("ms_per_frame"), normalisation.get("basis_mhz")
+    if ms is None or basis is None:
+        return "-"
+    return f"{ms:.2f} @ {basis:.0f} MHz"
 
 
 def readme_row(result: dict, filename: str) -> str:
@@ -191,6 +260,8 @@ def readme_row(result: dict, filename: str) -> str:
         number(run["max_temperature_c"], 0),
         cooldown["outcome"],
         f"[{filename}]({filename})",
+        regime_of(result),
+        _normalised_cell(result),
     ]) + " |"
 
 
@@ -198,6 +269,7 @@ def append_readme_row(result: ResultLike, readme_path: Path, filename: str) -> N
     """Append one readable row, creating the table if this is the first result."""
     data = _as_dict(result)
     require_fingerprint(data)
+    require_clock_lock_state(data)
     readme_path = Path(readme_path)
     if not readme_path.exists():
         readme_path.parent.mkdir(parents=True, exist_ok=True)

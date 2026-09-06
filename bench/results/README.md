@@ -6,8 +6,13 @@ the JSON file holding the full scenario config and hardware fingerprint.
 Absolute ms/frame and VRAM figures belong to the GPU in the row - spec 7.4. Compare
 rows across GPUs for curve shape and ranking only.
 
-| finished (UTC) | scenario | GPU | accel | res | batch | steps | ms/frame | FPS | peak VRAM (MiB) | SM clock (MHz) | max temp (C) | cooldown | file |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+`clock regime` says whether the GPU clocks were locked while the row was measured.
+Unlocked, the last column carries a first-order estimate of the same work at one
+clock - an estimate, not a measurement. A row with neither cell was written before
+the field existed, and was measured unlocked (issue #13).
+
+| finished (UTC) | scenario | GPU | accel | res | batch | steps | ms/frame | FPS | peak VRAM (MiB) | SM clock (MHz) | max temp (C) | cooldown | file | clock regime | ms/frame at basis clock |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | 2026-09-06T11:28:59Z | img2img-none-256x256-b1 | NVIDIA GeForce RTX 3080 Laptop GPU | none | 256x256 | 1 | 1 | 47.96 | 20.8 | 2515 | 1675 | 68 | reached | [img2img-none-256x256-b1-20260906-112859Z.json](img2img-none-256x256-b1-20260906-112859Z.json) |
 | 2026-09-06T11:29:18Z | img2img-none-384x384-b1 | NVIDIA GeForce RTX 3080 Laptop GPU | none | 384x384 | 1 | 1 | 51.00 | 19.6 | 2549 | 1690 | 75 | reached | [img2img-none-384x384-b1-20260906-112918Z.json](img2img-none-384x384-b1-20260906-112918Z.json) |
 | 2026-09-06T11:29:37Z | img2img-none-512x512-b1 | NVIDIA GeForce RTX 3080 Laptop GPU | none | 512x512 | 1 | 1 | 79.09 | 12.6 | 2594 | 1290 | 79 | reached | [img2img-none-512x512-b1-20260906-112937Z.json](img2img-none-512x512-b1-20260906-112937Z.json) |

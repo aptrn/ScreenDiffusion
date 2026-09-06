@@ -11,6 +11,7 @@ import pytest
 
 from sourceloader import ROOT
 
+from bench.clocks import LOCKED, UNKNOWN, UNLOCKED
 from bench.cli import build_parser, resolve_scenario
 from bench.scenarios import SCENARIOS, ScenarioConfig
 
@@ -130,3 +131,60 @@ def test_a_cached_tensorrt_run_still_records_its_free_disk(tmp_path):
     assert record is not None, "a cached TensorRT run records its headroom too"
     assert record.free_bytes > 0
     assert "free_gib" in record.to_dict()
+
+
+# --- clock regime gate (issue #13) -----------------------------------------
+
+def test_require_locked_clocks_is_off_by_default():
+    parser = build_parser()
+    args = parser.parse_args(["img2img-none-512x512-b1"])
+    assert args.require_locked_clocks is False
+    assert parser.parse_args(
+        ["img2img-none-512x512-b1", "--require-locked-clocks"]
+    ).require_locked_clocks is True
+
+
+def a_lock(state):
+    from bench.clocks import ClockLock
+
+    return ClockLock(state=state, applied_clock_mhz=1200.0 if state == LOCKED else None,
+                     max_sm_clock_mhz=2100.0, current_sm_clock_mhz=210.0,
+                     evidence=f"clocks_event_reasons.applications_clocks_setting={state}")
+
+
+def test_the_gate_lets_a_locked_gpu_through():
+    from bench.cli import clock_lock_guard
+
+    lock = clock_lock_guard(True, read=lambda: a_lock(LOCKED))
+    assert lock.locked is True
+
+
+@pytest.mark.parametrize("state", [UNLOCKED, UNKNOWN])
+def test_the_gate_stops_a_run_that_would_decide_something_on_an_unlocked_gpu(state):
+    """Issue #13 step 4, and its trap: `unknown` is not permission to proceed."""
+    from bench.cli import clock_lock_guard
+
+    with pytest.raises(SystemExit) as exit_info:
+        clock_lock_guard(True, read=lambda: a_lock(state))
+    message = str(exit_info.value)
+    assert state in message
+    assert "--lock-gpu-clocks" in message, "the message has to say how to fix it"
+    assert "elevated" in message, "and that it takes a shell this loop does not have"
+
+
+@pytest.mark.parametrize("state", [LOCKED, UNLOCKED, UNKNOWN])
+def test_without_the_flag_the_gate_only_reports(state):
+    from bench.cli import clock_lock_guard
+
+    assert clock_lock_guard(False, read=lambda: a_lock(state)).state == state
+
+
+def test_an_unlocked_run_that_demands_a_lock_exits_non_zero():
+    """End to end on this machine, which has no elevated shell to lock with."""
+    result = subprocess.run(
+        [sys.executable, "-m", "bench", "img2img-none-256x256-b1",
+         "--require-locked-clocks", "--reps", "1"],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert result.returncode != 0
+    assert "--lock-gpu-clocks" in (result.stdout + result.stderr)
