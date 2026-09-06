@@ -23,6 +23,16 @@ Treat those five pins as fixed unless the task is specifically to move them.
 
 `package.json` exists only for the Sandcastle agent loop. The application is Python.
 
+`SD_MODELS_DIR` and `SD_ENGINES_DIR` point the model downloads (5.4 GB) and the
+compiled TensorRT engines (~5.1 GB each) at one shared location. Both directories are
+gitignored, so a fresh worktree has neither - set the two variables to the main
+checkout's `models/` and `engines/` and every worktree reuses the caches instead of
+rebuilding them. Unset, they resolve to `models/` and `engines/` beside
+`main_gpu_addon.py`, which is the old behaviour. Resolution (`resolve_models_dir()` /
+`resolve_engines_dir()` in `main_gpu_addon.py`, `_resolve_engine_dir()` in
+`wrapper.py`) always returns an absolute path and anchors a relative value to the repo
+root, never to the cwd; the worker logs both roots at startup.
+
 Tests are two tiers. `uv run pytest -m "not gpu"` is the merge gate's tier: no CUDA
 device, no torch import at collection time. `uv run pytest -m gpu` is everything that
 needs the GPU. `python scripts/verify.py` runs the GPU-free tier through the venv's
@@ -68,7 +78,9 @@ pipeline drops frames rather than falling behind — preserve that.
   power limit, raw `nvidia-smi` with a timestamp): it identifies the machine and is the
   evidence the number was measured rather than invented.
 - **`models/` and `engines/` are gitignored** and hold multi-GB downloads and compiled
-  engines. Leave them out of commits and out of test fixtures.
+  engines. Leave them out of commits and out of test fixtures. Point `SD_MODELS_DIR` /
+  `SD_ENGINES_DIR` at a shared copy rather than re-downloading or rebuilding per
+  worktree.
 - **The worker enforces offline mode** (`enforce_offline_mode()`). Network calls from
   the frame path will fail there by design.
 - **`controlnet_paths` / `controlnet_scales`** are accepted by

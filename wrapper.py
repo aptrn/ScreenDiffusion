@@ -26,6 +26,28 @@ torch.backends.cudnn.allow_tf32 = True
 torch.backends.cudnn.benchmark = True  # Add this flag
 
 
+REPO_ROOT = Path(__file__).resolve().parent
+
+
+def _resolve_engine_dir(engine_dir=None, base_dir=None, environ=None) -> Path:
+    """Absolute engines root: the given path, else $SD_ENGINES_DIR, else `<repo>/engines`.
+
+    Compiled engines are ~5.1 GB each and gitignored, so a relative path - which
+    re-anchors to the process cwd - makes a worktree rebuild caches it already has.
+    Relative values are anchored to the repo root instead. See CLAUDE.md.
+    """
+    environ = os.environ if environ is None else environ
+    base = Path(REPO_ROOT if base_dir is None else base_dir)
+    # A path pasted into a Windows env var often keeps its surrounding quotes.
+    raw = str(engine_dir).strip() if engine_dir is not None else ""
+    if not raw:
+        raw = (environ.get("SD_ENGINES_DIR") or "").strip().strip('"').strip()
+    candidate = Path(raw).expanduser() if raw else base / "engines"
+    if not candidate.is_absolute():
+        candidate = base / candidate
+    return Path(os.path.normpath(str(candidate)))
+
+
 def _broadcast_list(vals: Optional[List[float]], n: int, default: float = 1.0) -> List[float]:
     if n <= 0:
         return []
@@ -73,7 +95,7 @@ class StreamDiffusionWrapper:
         cfg_type: Literal["none", "full", "self", "initialize"] = "self",
         seed: int = 2,
         use_safety_checker: bool = False,
-        engine_dir: Optional[Union[str, Path]] = "engines",
+        engine_dir: Optional[Union[str, Path]] = None,
     ):
         """
         Initializes the StreamDiffusionWrapper.
@@ -526,7 +548,7 @@ class StreamDiffusionWrapper:
         use_tiny_vae: bool = True,
         cfg_type: Literal["none", "full", "self", "initialize"] = "self",
         seed: int = 2,
-        engine_dir: Optional[Union[str, Path]] = "engines",
+        engine_dir: Optional[Union[str, Path]] = None,
     ) -> StreamDiffusion:
         """
         Loads the model.
@@ -788,7 +810,7 @@ class StreamDiffusionWrapper:
                         f"--mode-{self.mode}"
                     )
 
-                engine_dir = Path(engine_dir)
+                engine_dir = _resolve_engine_dir(engine_dir)
                 unet_path = os.path.join(
                     engine_dir,
                     create_prefix(

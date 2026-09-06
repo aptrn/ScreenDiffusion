@@ -370,10 +370,50 @@ ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 GD_DETERMINISTIC = bool(int(os.getenv('GD_DETERMINISTIC', '0')))
 LOCAL_MODEL_PATH = r""
+
+# `models/` (multi-GB downloads) and `engines/` (compiled TensorRT engines) are
+# gitignored, so a fresh git worktree has neither. These variables point both at one
+# shared location; unset, they sit next to the app exactly as before.
+SD_MODELS_DIR_ENV = "SD_MODELS_DIR"
+SD_ENGINES_DIR_ENV = "SD_ENGINES_DIR"
+
+
+def _resolve_cache_dir(env_var: str, default_name: str, base_dir=None, environ=None) -> Path:
+    """Absolute cache root: $env_var when set, else `<app root>/<default_name>`.
+
+    Absolute at the resolution point on purpose - a relative path handed to the
+    wrapper re-anchors to the worker's cwd, which is the bug this exists to fix.
+    A relative *value* in the variable is anchored to the app root too, so the
+    answer never depends on where the process was started from.
+    """
+    environ = os.environ if environ is None else environ
+    base = Path(APP_ROOT if base_dir is None else base_dir)
+    # A path pasted into a Windows env var often keeps its surrounding quotes.
+    raw = (environ.get(env_var) or "").strip().strip('"').strip()
+    candidate = Path(raw).expanduser() if raw else base / default_name
+    if not candidate.is_absolute():
+        candidate = base / candidate
+    return Path(os.path.normpath(str(candidate)))
+
+
+def resolve_models_dir(base_dir=None, environ=None) -> Path:
+    """Where downloaded models live. See `SD_MODELS_DIR` in CLAUDE.md."""
+    return _resolve_cache_dir(SD_MODELS_DIR_ENV, "models", base_dir, environ)
+
+
+def resolve_engines_dir(base_dir=None, environ=None) -> Path:
+    """Where compiled TensorRT engines live. See `SD_ENGINES_DIR` in CLAUDE.md."""
+    return _resolve_cache_dir(SD_ENGINES_DIR_ENV, "engines", base_dir, environ)
+
+
+def _cache_paths_banner(models_root, engines_root) -> str:
+    """The line the worker logs at startup, so a wrong root is visible immediately."""
+    return f"Cache roots: models={models_root} | engines={engines_root}"
+
+
 # Offline mode blocks diffusers' repo-id lookup, so prefer a local copy of the
-# LCM-LoRA when one has been staged next to the app.
-LOCAL_LCM_LORA = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                              "models", "loras", "lcm-lora-sdv1-5.safetensors")
+# LCM-LoRA when one has been staged in the models root.
+LOCAL_LCM_LORA = str(resolve_models_dir() / "loras" / "lcm-lora-sdv1-5.safetensors")
 PREVIEW_GAIN = 1.15
 
 def enforce_offline_mode():
@@ -646,7 +686,7 @@ def _load_stream_wrapper():
     spec.loader.exec_module(mod)
     return getattr(mod, "StreamDiffusionWrapper")
 
-def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Queue, status_queue: Queue, control_queue: Queue, debug_queue: Queue, t_index_list: List[int], model_path_dir: str, controlnet_paths: List[str], controlnet_scales: List[float], lora_dict: Optional[Dict[str, float]], use_lcm_lora: bool, lcm_lora_id: Optional[str], prompt: str, negative_prompt: str, frame_buffer_size: int, width: int, height: int, acceleration: Literal["none", "xformers", "tensorrt"], use_denoising_batch: bool, seed: int, cfg_type: Literal["none", "full", "self", "initialize"], guidance_scale: float, delta: float, do_add_noise: bool, enable_similar_image_filter: bool, similar_image_filter_threshold: float, similar_image_filter_max_skip_frame: float, monitor_receiver: Connection, offline: bool = True) -> None:
+def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Queue, status_queue: Queue, control_queue: Queue, debug_queue: Queue, t_index_list: List[int], model_path_dir: str, controlnet_paths: List[str], controlnet_scales: List[float], lora_dict: Optional[Dict[str, float]], use_lcm_lora: bool, lcm_lora_id: Optional[str], prompt: str, negative_prompt: str, frame_buffer_size: int, width: int, height: int, acceleration: Literal["none", "xformers", "tensorrt"], use_denoising_batch: bool, seed: int, cfg_type: Literal["none", "full", "self", "initialize"], guidance_scale: float, delta: float, do_add_noise: bool, enable_similar_image_filter: bool, similar_image_filter_threshold: float, similar_image_filter_max_skip_frame: float, monitor_receiver: Connection, offline: bool = True, engine_dir: Optional[str] = None) -> None:
     import sys, os
     from pathlib import Path
     
@@ -667,6 +707,12 @@ def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Qu
     def _status(msg: str):
         try: status_queue.put_nowait(msg)
         except Exception: pass
+
+    models_root = resolve_models_dir()
+    engines_root = Path(engine_dir) if engine_dir else resolve_engines_dir()
+    _paths_banner = _cache_paths_banner(models_root, engines_root)
+    print(_paths_banner, flush=True)
+    _status(_paths_banner)
 
     try:
         if import_torch is None:
@@ -693,7 +739,8 @@ def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Qu
                 similar_image_filter_max_skip_frame=similar_image_filter_max_skip_frame,
                 mode="img2img", use_denoising_batch=use_denoising_batch,
                 cfg_type=cfg_type, seed=seed, lora_dict=lora_dict,
-                use_lcm_lora=use_lcm_lora, lcm_lora_id=lcm_lora_id
+                use_lcm_lora=use_lcm_lora, lcm_lora_id=lcm_lora_id,
+                engine_dir=str(engines_root)
             )
             wrapper.prepare(prompt=prompt, negative_prompt=negative_prompt, num_inference_steps=50, guidance_scale=guidance_scale, delta=delta)
             return wrapper
@@ -1070,7 +1117,8 @@ class StreamGUI(ctk.CTk):
 
     def _download_sd_turbo(self):
         try:
-            download_dir = filedialog.askdirectory(title="Select directory to download sd-turbo model")
+            download_dir = filedialog.askdirectory(title="Select directory to download sd-turbo model",
+                                                   initialdir=str(resolve_models_dir()))
             if not download_dir: return
             model_path = os.path.join(download_dir, "sd-turbo-fp16")
             self._show_download_dialog(model_path)
@@ -1828,7 +1876,8 @@ class StreamGUI(ctk.CTk):
         return {item["path"]: float(item["scale"]) for item in self.lora_items}
 
     def _browse_model(self):
-        d = filedialog.askdirectory(title="Select diffusers model folder")
+        d = filedialog.askdirectory(title="Select diffusers model folder",
+                                    initialdir=str(resolve_models_dir()))
         if d: self.model_var.set(d)
 
     def _on_start(self):
@@ -1870,7 +1919,7 @@ class StreamGUI(ctk.CTk):
                 int(self.buffer_var.get()), int(self.width_var.get()), int(self.height_var.get()), 
                 self.accel_var.get(), True, int(self.seed_var.get()), 
                 "none", 0.0, 0.5, True, False, 0.99, 10.0,  # <-- Changed the first 'False' to 'True' here!
-                self.monitor_receiver, True
+                self.monitor_receiver, True, str(resolve_engines_dir())
             )
         )
         self.proc_worker.start()
