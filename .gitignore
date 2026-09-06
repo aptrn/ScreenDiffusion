@@ -9,3 +9,11 @@ models/
 engines/
 *.safetensors
 *.engine
+
+# Node tooling (Sandcastle agent loop only; the app is Python)
+node_modules/
+
+# Sandcastle runtime state: .env, logs, monitor history.
+# main.mts is versioned - it is the loop's configuration.
+.sandcastle/*
+!.sandcastle/main.mts

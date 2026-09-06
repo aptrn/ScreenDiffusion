@@ -1,0 +1,15 @@
+{
+  "name": "screendiffusion-tooling",
+  "private": true,
+  "type": "module",
+  "description": "Node-side tooling only (Sandcastle agent loop). The application itself is Python — see pyproject.toml.",
+  "scripts": {
+    "sandcastle": "tsx .sandcastle/main.mts"
+  },
+  "devDependencies": {
+    "@ai-hero/sandcastle": "^0.12.0",
+    "sandcastle-kit": "github:aptrn/sandcastle-kit",
+    "tsx": "^4.23.13",
+    "zod": "^4.5.4"
+  }
+}
