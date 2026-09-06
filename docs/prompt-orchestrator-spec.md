@@ -84,12 +84,15 @@ Grounding facts, from the current code:
 - `image_generation_process()` takes `controlnet_paths` / `controlnet_scales`
   parameters that are **accepted but never passed** to the wrapper — an
   inherited stub, not working ControlNet support.
-- **No benchmark harness is versioned.** Scratch scripts have existed and been
-  deleted; the measurements below currently have nowhere to live, which is why
-  M0 builds a tracked one. Two conventions from those scripts are worth keeping:
-  wait for the GPU to fall below ~62 °C before each rep (otherwise you measure
-  thermal throttle), and time UNet / VAE-encode / VAE-decode separately by
-  wrapping their `forward`.
+- **The benchmark harness is `bench/`** (M0, issue #2): `uv run python -m bench
+  <scenario>` measures one configuration and writes
+  `bench/results/<scenario>-<timestamp>.json` plus a row in
+  `bench/results/README.md`. It keeps the two conventions the deleted scratch
+  scripts had — wait for the GPU to fall below ~62 °C before the timed reps
+  (otherwise you measure thermal throttle), and time UNet / VAE-encode /
+  VAE-decode separately, here behind `--per-module`. It adds two rules those
+  scripts lacked: nothing is written without the §7.4 hardware fingerprint, and
+  results are written by a run and never by hand.
 
 ---
 
@@ -256,6 +259,13 @@ alongside every number (§7.4):
 4. Detector latency for each candidate in §8.1 at 640² input, TRT.
 5. Peak VRAM with diffusion engine + detector + (optional) local LLM resident.
 6. Cost of swapping prompt embeddings per batch item.
+
+Results land in `bench/results/` as JSON, one file per run, with a readable table
+in `bench/results/README.md`. A number that is not in there has to be measured
+again. The first entries are RTX 3080 laptop runs of items 1-3 - and they show the
+laptop's power limit doing exactly what §7.4 warns about: the mean SM clock across
+those runs ranges from ~1150 to ~1690 MHz and the timings track it inversely, which
+is why every row carries its clock.
 
 Measure the batch and resolution sweep on the **`none` accelerator first**. It
 answers the question that actually matters — the *shape* of the marginal-cost

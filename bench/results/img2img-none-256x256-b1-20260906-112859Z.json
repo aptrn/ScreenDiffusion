@@ -1,0 +1,122 @@
+{
+  "cooldown": {
+    "cap_s": 120.0,
+    "enabled": true,
+    "final_temperature_c": 61.0,
+    "outcome": "reached",
+    "reached": true,
+    "samples": [
+      [
+        0.046999999998661224,
+        61.0
+      ]
+    ],
+    "threshold_c": 62.0,
+    "waited_s": 0.046999999998661224
+  },
+  "hardware": {
+    "cuda_version": "12.8",
+    "driver_version": "595.79",
+    "enforced_power_limit_w": 120.0,
+    "gpu_name": "NVIDIA GeForce RTX 3080 Laptop GPU",
+    "hostname": "Ale-Zephyrus",
+    "nvidia_smi_captured_utc": "2026-09-06T11:28:52Z",
+    "nvidia_smi_raw": "Sun Sep  6 13:28:52 2026       \n+-----------------------------------------------------------------------------------------+\n| NVIDIA-SMI 595.79                 Driver Version: 595.79         CUDA Version: 13.2     |\n+-----------------------------------------+------------------------+----------------------+\n| GPU  Name                  Driver-Model | Bus-Id          Disp.A | Volatile Uncorr. ECC |\n| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |\n|                                         |                        |               MIG M. |\n|=========================================+========================+======================|\n|   0  NVIDIA GeForce RTX 3080 ...  WDDM  |   00000000:01:00.0 Off |                  N/A |\n| N/A   56C    P8             12W /  120W |       0MiB /  16384MiB |      0%      Default |\n|                                         |                        |                  N/A |\n+-----------------------------------------+------------------------+----------------------+\n\n+-----------------------------------------------------------------------------------------+\n| Processes:                                                                              |\n|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |\n|        ID   ID                                                               Usage      |\n|=========================================================================================|\n|  No running processes found                                                             |\n+-----------------------------------------------------------------------------------------+\n",
+    "power_limit_w": null,
+    "torch_version": "2.7.0+cu128",
+    "total_vram_mib": 16384.0
+  },
+  "run": {
+    "finished_utc": "2026-09-06T11:28:59Z",
+    "fps": 20.849,
+    "gpu_samples": [
+      [
+        0.04570479999892996,
+        1785.0,
+        63.0
+      ],
+      [
+        0.5876325999997789,
+        1635.0,
+        68.0
+      ],
+      [
+        1.1251859000003606,
+        1605.0,
+        68.0
+      ]
+    ],
+    "max_ms_per_frame": 58.3708,
+    "max_temperature_c": 68.0,
+    "mean_ms_per_frame": 47.9638,
+    "mean_sm_clock_mhz": 1675.0,
+    "median_ms_per_frame": 45.8999,
+    "min_ms_per_frame": 42.1332,
+    "p95_ms_per_frame": 57.4067,
+    "peak_vram_bytes": 2637564928,
+    "peak_vram_mib": 2515.4,
+    "per_module_ms": {
+      "unet": 36.69,
+      "vae_decode": 4.6559,
+      "vae_encode": 4.2542
+    },
+    "per_rep_ms": [
+      50.9009,
+      44.2288,
+      44.7306,
+      44.1007,
+      44.2778,
+      52.7128,
+      57.4067,
+      58.3708,
+      57.0438,
+      44.9991,
+      55.9282,
+      54.7372,
+      48.1748,
+      47.4495,
+      45.6733,
+      44.4733,
+      48.0102,
+      45.0709,
+      46.9659,
+      43.1122,
+      45.1444,
+      43.7687,
+      54.3525,
+      46.3837,
+      43.5854,
+      42.1332,
+      51.2254,
+      46.1265,
+      44.0559,
+      43.77
+    ],
+    "reps": 30,
+    "started_utc": "2026-09-06T11:28:58Z",
+    "stdev_ms_per_frame": 4.9189,
+    "warmup_reps": 5
+  },
+  "scenario": {
+    "acceleration": "none",
+    "batch_size": 1,
+    "cfg_type": "none",
+    "do_add_noise": true,
+    "height": 256,
+    "mode": "img2img",
+    "model": "sd-turbo-fp16",
+    "name": "img2img-none-256x256-b1",
+    "prompt": "a photograph of a city street, cinematic lighting",
+    "reps": 30,
+    "seed": 2,
+    "t_index_list": [
+      35
+    ],
+    "use_denoising_batch": true,
+    "use_lcm_lora": false,
+    "use_tiny_vae": true,
+    "warmup_reps": 5,
+    "width": 256
+  },
+  "schema_version": 1
+}

@@ -70,6 +70,9 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The repo root on sys.path, so the tests can `import bench` the same way
+# `python -m bench` does.
+pythonpath = ["."]
 # --strict-markers: an unregistered marker is an error, so a typo'd @pytest.mark.gpu
 # cannot quietly land a GPU test in the tier the merge gate runs.
 addopts = "--strict-markers"
