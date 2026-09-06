@@ -44,7 +44,9 @@ UNLOCKED = "unlocked"
 UNKNOWN = "unknown"
 REGIMES = (LOCKED, UNLOCKED, UNKNOWN)
 
-# `nvidia-smi --query-gpu=` fields that answer "is a lock in force, and at what clock".
+# The `nvidia-smi --query-gpu=` fields that answer "is a lock in force, and at what
+# clock". Named one by one because `bench.fingerprint` reads each back out of the row
+# by name: the query and the reads then cannot drift apart.
 #
 # `clocks_event_reasons.applications_clocks_setting` is NVML's
 # `nvmlClocksEventReasonApplicationsClocksSetting`: the clocks are being held to a
@@ -52,13 +54,14 @@ REGIMES = (LOCKED, UNLOCKED, UNKNOWN)
 # lock signal this driver (595.79) exposes - it reports no "locked clocks" field, and
 # answers the applications-clock queries with a deprecation notice on consumer
 # Ampere. Hence `UNKNOWN` rather than a second opinion when the field says nothing.
-LOCK_FIELDS = ("clocks_event_reasons.applications_clocks_setting",
-               "clocks.applications.graphics", "clocks.max.sm", "clocks.sm")
-EVENT_REASON_FIELD = LOCK_FIELDS[0]
-
+EVENT_REASON_FIELD = "clocks_event_reasons.applications_clocks_setting"
+APPLIED_CLOCK_FIELD = "clocks.applications.graphics"
+CURRENT_CLOCK_FIELD = "clocks.sm"
 # What the basis clock is read from, carried in the result so the number is traceable
 # to a field rather than to a convention.
 BASIS_SOURCE = "clocks.max.sm"
+LOCK_FIELDS = (EVENT_REASON_FIELD, APPLIED_CLOCK_FIELD, BASIS_SOURCE, CURRENT_CLOCK_FIELD)
+
 NORMALIZATION_METHOD = "ms_per_frame * time-weighted mean SM clock / basis clock"
 
 
@@ -176,44 +179,49 @@ def clock_normalization(
     cannot see a lock, so it must not assume the raw figure is comparable.
     """
     sampled = time_weighted_mean_clock(samples)
-    common = dict(regime=lock.state, sampled_mean_sm_clock_mhz=None if sampled is None
-                  else round(sampled, 1))
+    basis = lock.max_sm_clock_mhz
+
+    def block(note: str, *, ms_per_frame: Optional[float] = None,
+              basis_mhz: Optional[float] = None,
+              basis_source: Optional[str] = BASIS_SOURCE,
+              method: Optional[str] = NORMALIZATION_METHOD) -> ClockNormalization:
+        """One block, with the regime and the sampled clock already filled in.
+
+        The defaults are the unlocked case - the regime this module exists for. Each
+        branch then states only what is different about it.
+        """
+        return ClockNormalization(
+            regime=lock.state, ms_per_frame=ms_per_frame, basis_mhz=basis_mhz,
+            basis_source=basis_source, method=method,
+            sampled_mean_sm_clock_mhz=None if sampled is None else round(sampled, 1),
+            note=note,
+        )
 
     if lock.locked:
-        return ClockNormalization(
-            ms_per_frame=None, basis_mhz=lock.applied_clock_mhz, basis_source=None,
-            method=None,
+        return block(
+            basis_mhz=lock.applied_clock_mhz, basis_source=None, method=None,
             note="Clocks were locked for this run, so the raw ms/frame is the "
                  "comparable figure and nothing is normalised. The sampled clock is "
                  "carried as evidence the lock held.",
-            **common,
         )
     if sampled is None:
-        return ClockNormalization(
-            ms_per_frame=None, basis_mhz=lock.max_sm_clock_mhz,
-            basis_source=BASIS_SOURCE, method=NORMALIZATION_METHOD,
+        return block(
+            basis_mhz=basis,
             note="Clocks were not locked and no SM clock was sampled during the run, "
                  "so this result cannot be compared with another cell.",
-            **common,
         )
-    if lock.max_sm_clock_mhz is None:
-        return ClockNormalization(
-            ms_per_frame=None, basis_mhz=None, basis_source=BASIS_SOURCE,
-            method=NORMALIZATION_METHOD,
+    if basis is None:
+        return block(
             note=f"Clocks were not locked and {BASIS_SOURCE} could not be read, so "
                  f"there is no basis to normalise to.",
-            **common,
         )
-    return ClockNormalization(
-        ms_per_frame=round(normalize_ms(raw_ms_per_frame, sampled,
-                                        lock.max_sm_clock_mhz), 4),
-        basis_mhz=lock.max_sm_clock_mhz, basis_source=BASIS_SOURCE,
-        method=NORMALIZATION_METHOD,
+    return block(
+        ms_per_frame=round(normalize_ms(raw_ms_per_frame, sampled, basis), 4),
+        basis_mhz=basis,
         note=f"Clocks were not locked ({lock.state}), so the raw figure carries this "
              f"run's clock. This is a first-order estimate of the same work at "
-             f"{lock.max_sm_clock_mhz:.0f} MHz, not a measurement, and not a "
-             f"substitute for `nvidia-smi --lock-gpu-clocks` from an elevated shell.",
-        **common,
+             f"{basis:.0f} MHz, not a measurement, and not a substitute for "
+             f"`nvidia-smi --lock-gpu-clocks` from an elevated shell.",
     )
 
 
@@ -232,7 +240,9 @@ def regime_of(result: dict) -> str:
 
 def regime_summary(lock: ClockLock) -> str:
     """One line for a log or an error message."""
-    return (f"clocks {lock.state}"
-            + (f" at {lock.applied_clock_mhz:.0f} MHz" if lock.applied_clock_mhz else "")
-            + (f" (max {lock.max_sm_clock_mhz:.0f} MHz)" if lock.max_sm_clock_mhz else ""))
-
+    parts = [f"clocks {lock.state}"]
+    if lock.applied_clock_mhz:
+        parts.append(f"at {lock.applied_clock_mhz:.0f} MHz")
+    if lock.max_sm_clock_mhz:
+        parts.append(f"(max {lock.max_sm_clock_mhz:.0f} MHz)")
+    return " ".join(parts)

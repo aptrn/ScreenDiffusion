@@ -171,6 +171,16 @@ def require_clock_lock_state(result: dict) -> None:
         raise FingerprintError(f"clock lock state {lock['state']!r} is not one of {REGIMES}")
 
 
+def require_recordable(result: dict) -> None:
+    """Both rules, in the order a reader meets them. Every path to disk calls this.
+
+    One function rather than two calls at each door, so a third rule cannot be added
+    to one door and forgotten at the other.
+    """
+    require_fingerprint(result)
+    require_clock_lock_state(result)
+
+
 def result_filename(scenario_name: str, timestamp: str) -> str:
     return f"{scenario_name}-{timestamp}.json"
 
@@ -178,8 +188,7 @@ def result_filename(scenario_name: str, timestamp: str) -> str:
 def write_result(result: ResultLike, results_dir: Path, timestamp: Optional[str] = None) -> Path:
     """Write `<scenario>-<timestamp>.json` under `results_dir`; return its path."""
     data = _as_dict(result)
-    require_fingerprint(data)
-    require_clock_lock_state(data)
+    require_recordable(data)
     if timestamp is None:
         timestamp = _timestamp_from(data)
     results_dir = Path(results_dir)
@@ -268,8 +277,7 @@ def readme_row(result: dict, filename: str) -> str:
 def append_readme_row(result: ResultLike, readme_path: Path, filename: str) -> None:
     """Append one readable row, creating the table if this is the first result."""
     data = _as_dict(result)
-    require_fingerprint(data)
-    require_clock_lock_state(data)
+    require_recordable(data)
     readme_path = Path(readme_path)
     if not readme_path.exists():
         readme_path.parent.mkdir(parents=True, exist_ok=True)

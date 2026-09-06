@@ -20,6 +20,9 @@ from datetime import datetime, timezone
 from typing import Callable, Dict, Optional, Sequence, Tuple
 
 from bench.clocks import (
+    APPLIED_CLOCK_FIELD,
+    BASIS_SOURCE,
+    CURRENT_CLOCK_FIELD,
     EVENT_REASON_FIELD,
     LOCK_FIELDS,
     UNKNOWN,
@@ -136,9 +139,9 @@ def read_clock_lock(run: Runner = _run) -> ClockLock:
     reason = row.get(EVENT_REASON_FIELD)
     return ClockLock(
         state=interpret_event_reason(reason),
-        applied_clock_mhz=parse_number(row.get("clocks.applications.graphics")),
-        max_sm_clock_mhz=parse_number(row.get("clocks.max.sm")),
-        current_sm_clock_mhz=parse_number(row.get("clocks.sm")),
+        applied_clock_mhz=parse_number(row.get(APPLIED_CLOCK_FIELD)),
+        max_sm_clock_mhz=parse_number(row.get(BASIS_SOURCE)),
+        current_sm_clock_mhz=parse_number(row.get(CURRENT_CLOCK_FIELD)),
         evidence=f"{EVENT_REASON_FIELD}={(reason or '').strip() or '<absent>'}",
     )
 

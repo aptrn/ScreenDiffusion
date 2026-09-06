@@ -11,7 +11,7 @@ import pytest
 
 from sourceloader import ROOT
 
-from bench.clocks import LOCKED, UNKNOWN, UNLOCKED
+from bench.clocks import LOCKED, UNKNOWN, UNLOCKED, ClockLock
 from bench.cli import build_parser, resolve_scenario
 from bench.scenarios import SCENARIOS, ScenarioConfig
 
@@ -145,8 +145,6 @@ def test_require_locked_clocks_is_off_by_default():
 
 
 def a_lock(state):
-    from bench.clocks import ClockLock
-
     return ClockLock(state=state, applied_clock_mhz=1200.0 if state == LOCKED else None,
                      max_sm_clock_mhz=2100.0, current_sm_clock_mhz=210.0,
                      evidence=f"clocks_event_reasons.applications_clocks_setting={state}")
@@ -179,11 +177,16 @@ def test_without_the_flag_the_gate_only_reports(state):
     assert clock_lock_guard(False, read=lambda: a_lock(state)).state == state
 
 
-def test_an_unlocked_run_that_demands_a_lock_exits_non_zero():
-    """End to end on this machine, which has no elevated shell to lock with."""
+def test_an_unlocked_run_that_demands_a_lock_exits_non_zero(tmp_path):
+    """End to end on this machine, which has no elevated shell to lock with.
+
+    Pointed at a throwaway results dir: the gate is expected to refuse before the
+    run starts, and if a machine ever does have its clocks locked this must not
+    append a real run to the tracked `bench/results/`.
+    """
     result = subprocess.run(
         [sys.executable, "-m", "bench", "img2img-none-256x256-b1",
-         "--require-locked-clocks", "--reps", "1"],
+         "--require-locked-clocks", "--reps", "1", "--results-dir", str(tmp_path)],
         cwd=ROOT, capture_output=True, text=True,
     )
     assert result.returncode != 0
