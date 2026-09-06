@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import statistics
 import time
 import urllib.request
 from pathlib import Path
@@ -35,6 +36,18 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from bench.clocks import clock_normalization, regime_summary
 from bench.cooldown import DEFAULT_CAP_S, DEFAULT_POLL_INTERVAL_S, DEFAULT_THRESHOLD_C
+from bench.detector_results import (
+    DETECTOR_README_NAME,
+    ConceptEvidence,
+    Detection,
+    DetectorMetrics,
+    DetectorResult,
+    LatencySummary,
+    VocabularyChange,
+    VramRecord,
+    append_detector_readme_row,
+    write_detector_result,
+)
 from bench.detectors import (
     CONCEPT_PROBES,
     DEFAULT_CADENCE,
@@ -48,18 +61,6 @@ from bench.detectors import (
     budget_verdict,
     frame_path_verdict,
     weights_path,
-)
-from bench.detector_results import (
-    DETECTOR_README_NAME,
-    ConceptEvidence,
-    Detection,
-    DetectorMetrics,
-    DetectorResult,
-    LatencySummary,
-    VocabularyChange,
-    VramRecord,
-    append_detector_readme_row,
-    write_detector_result,
 )
 from bench.fingerprint import capture_fingerprint, read_memory_used_mib, utc_now
 from bench.paths import DETECTOR_RESULTS_DIR, resolve_models_dir
@@ -78,9 +79,15 @@ VOCABULARY_SWAPS = 6
 # comparison. Six, interleaved rather than one arm after the other, because on this
 # machine the clock moves further within a run than the effect being looked for.
 FRAME_PATH_BLOCKS = 6
+# Timed detects per block, unless the configured rep count asks for more. A block
+# thinner than this is one stalled detect away from carrying its own median.
+MIN_BLOCK_REPS = 20
 # At most this many boxes per concept reach the evidence: enough to show what was
 # found, few enough that a result file stays readable.
 MAX_DETECTIONS_RECORDED = 10
+# And this many boxes under some *other* label, which only have to be enough to show
+# what the detector called the thing instead.
+MAX_OTHER_LABELS_RECORDED = 3
 
 
 class DownloadRefused(SystemExit):
@@ -118,9 +125,7 @@ def _cached_photo(probe: ConceptProbe, models_root: Path, allow_download: bool,
 
 def sha256_of(path: Path) -> str:
     """The evidence photograph's identity, since the photograph itself is not committed."""
-    digest = hashlib.sha256()
-    digest.update(Path(path).read_bytes())
-    return digest.hexdigest()
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
 def capture_desktop():
@@ -239,8 +244,9 @@ def set_vocabulary(model, terms: Sequence[str]) -> float:
     return (time.perf_counter() - started) * 1000.0
 
 
-def measure_vocabulary_change(model, config: DetectorConfig,
-                              log: Callable[[str], None] = print) -> Tuple[VocabularyChange, float]:
+def measure_vocabulary_change(
+    model, config: DetectorConfig, log: Callable[[str], None] = print,
+) -> Tuple[VocabularyChange, float]:
     """What a vocabulary change costs, once the text encoder is already loaded.
 
     Returns the record and the median steady-state cost. The first change is timed
@@ -248,8 +254,6 @@ def measure_vocabulary_change(model, config: DetectorConfig,
     once per process, and folding it into a mean would overstate the cost of a prompt
     edit by two orders of magnitude.
     """
-    import statistics
-
     first_ms = set_vocabulary(model, config.vocabulary)
     log(f"vocabulary: first change {first_ms:.0f} ms (includes loading {TEXT_ENCODER})")
 
@@ -293,26 +297,29 @@ def measure_frame_path(model, config: DetectorConfig, frame, change_ms: float,
     arms have to be exposed to the same drift. Each arm is pooled over all of its
     detects and the median taken, so one stalled detect cannot carry the verdict.
     """
-    arms: Dict[int, List[float]] = {0: [], 1: []}
-    blocks: List[float] = []
-    firsts: List[float] = []
-    reps = max(20, config.reps // FRAME_PATH_BLOCKS)
+    # Arm 0 is the vocabulary under test and arm 1 the one swapped to; the blocks
+    # alternate between them, and every detect of a given arm pools into it.
+    vocabularies = (config.vocabulary, config.swap_vocabulary)
+    arms: Tuple[List[float], List[float]] = ([], [])
+    block_medians: List[float] = []
+    first_detects: List[float] = []
+    reps = max(MIN_BLOCK_REPS, config.reps // FRAME_PATH_BLOCKS)
     for index in range(FRAME_PATH_BLOCKS):
         arm = index % 2
-        set_vocabulary(model, config.vocabulary if arm == 0 else config.swap_vocabulary)
+        set_vocabulary(model, vocabularies[arm])
         first, _ = time_detects(model, frame, config, 1)
-        firsts.extend(first)
+        first_detects.extend(first)
         samples, _ = time_detects(model, frame, config, reps)
         arms[arm].extend(samples)
-        blocks.append(LatencySummary.from_samples(samples).median_ms)
+        block_medians.append(LatencySummary.from_samples(samples).median_ms)
     set_vocabulary(model, config.vocabulary)
     detect(model, frame, config)  # re-warm, so the caller is not handed a cold predictor
 
     verdict = frame_path_verdict(
-        LatencySummary.from_samples(arms[0]).median_ms,
-        LatencySummary.from_samples(arms[1]).median_ms,
-        change_ms, passes=blocks,
-        first_detect_ms=LatencySummary.from_samples(firsts).median_ms,
+        before_ms=LatencySummary.from_samples(arms[0]).median_ms,
+        after_ms=LatencySummary.from_samples(arms[1]).median_ms,
+        change_ms=change_ms, passes=block_medians,
+        first_detect_ms=LatencySummary.from_samples(first_detects).median_ms,
     )
     log(f"frame path: {verdict.statement}")
     return verdict
@@ -331,7 +338,9 @@ def _all_detections(result) -> List[Detection]:
     return found
 
 
-def _detections_from(result, wanted: str) -> Tuple[List[Detection], Optional[float], List[Detection]]:
+def _detections_from(
+    result, wanted: str,
+) -> Tuple[List[Detection], Optional[float], List[Detection]]:
     """The boxes labelled `wanted`, the best confidence among them, and the rest.
 
     The rest, because "found nothing" and "found it and called it something else" are
@@ -342,12 +351,14 @@ def _detections_from(result, wanted: str) -> Tuple[List[Detection], Optional[flo
     matching = [detection for detection in everything if detection.label == wanted]
     others = [detection for detection in everything if detection.label != wanted]
     top = matching[0].confidence if matching else None
-    return matching[:MAX_DETECTIONS_RECORDED], top, others[:3]
+    return matching[:MAX_DETECTIONS_RECORDED], top, others[:MAX_OTHER_LABELS_RECORDED]
 
 
-def gather_evidence(model, config: DetectorConfig, probes: Sequence[ConceptProbe],
-                    images: Dict[str, Tuple[Path, str]], desktop, capture_backend: str,
-                    log: Callable[[str], None] = print) -> Tuple[List[ConceptEvidence], ConceptEvidence]:
+def gather_evidence(
+    model, config: DetectorConfig, probes: Sequence[ConceptProbe],
+    images: Dict[str, Tuple[Path, str]], desktop, capture_backend: str,
+    log: Callable[[str], None] = print,
+) -> Tuple[List[ConceptEvidence], ConceptEvidence]:
     """Ask the detector for each concept, on a desktop capture with the photo in it.
 
     A closed-vocabulary detector cannot be asked for `red mug` at all. It is asked

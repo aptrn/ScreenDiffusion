@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional, Sequence, Tuple, Union
 
-# Spec spec 7.1 gives detection 4-8 ms amortised, running "every 3rd frame". Amortised
+# Spec 7.1 gives detection 4-8 ms amortised, running "every 3rd frame". Amortised
 # is the operative word: one detect is paid once and spread over the frames until
 # the next one, so the budget question is `ms / cadence`, never `ms`.
 DETECT_BUDGET_MIN_MS = 4.0
@@ -362,7 +362,12 @@ class Candidate:
 
 @dataclass(frozen=True)
 class Recommendation:
-    """One named detector, the ranking behind it, and why it won."""
+    """One named detector, the ranking behind it, and why it won.
+
+    Rendered as prose into the spec 8.1 block rather than stored, which is why this
+    is the one dataclass here without a `to_dict`: it is a reading of the records,
+    not a record.
+    """
 
     name: str
     fits: bool
@@ -370,11 +375,6 @@ class Recommendation:
     cadence_required: int
     ranking: Tuple[str, ...]
     reason: str
-
-    def to_dict(self) -> dict:
-        data = dataclasses.asdict(self)
-        data["ranking"] = list(self.ranking)
-        return data
 
 
 def recommend(candidates: Sequence[Candidate],
@@ -391,28 +391,33 @@ def recommend(candidates: Sequence[Candidate],
     """
     if not candidates:
         raise ValueError("no measured candidate to recommend")
-    ranking = tuple(candidate.name for candidate
-                    in sorted(candidates, key=lambda c: c.ms_per_detect))
+    by_speed = sorted(candidates, key=lambda c: c.ms_per_detect)
+    ranking = tuple(candidate.name for candidate in by_speed)
 
-    def verdict_for(candidate: Candidate) -> BudgetVerdict:
-        return budget_verdict(candidate.ms_per_detect, cadence, budget_max_ms=budget_max_ms)
-
-    open_vocabulary = [candidate for candidate in candidates
+    # The ones that can be asked for anything *and* found what they were asked for.
+    # Any of those beats every closed-vocabulary candidate; among them, speed decides.
+    open_vocabulary = [candidate for candidate in by_speed
                        if candidate.open_vocabulary
                        and candidate.concepts_resolved == candidate.concepts_probed]
+    winner = (open_vocabulary or by_speed)[0]
+    verdict = budget_verdict(winner.ms_per_detect, cadence, budget_max_ms=budget_max_ms)
+
     if open_vocabulary:
-        winner = min(open_vocabulary, key=lambda c: c.ms_per_detect)
-        verdict = verdict_for(winner)
+        # It usually is not the fastest, and saying so is the point - but it can be,
+        # and a recommendation that insisted otherwise would be reporting a fiction.
+        speed_aside = (
+            "It is also the fastest measured, and speed is not the criterion: "
+            if winner.name == ranking[0] else
+            f"It is not the fastest ({ranking[0]} is), and that is not the criterion: "
+        )
         reason = (
             f"{winner.name} resolved all {winner.concepts_probed} probed concepts and "
-            f"{verdict.statement}. It is not the fastest ({ranking[0]} is), and that is "
-            f"not the criterion: with the prompt compiler cut from v1, a closed "
-            f"vocabulary caps the product at the 80 COCO nouns whatever it costs."
+            f"{verdict.statement}. {speed_aside}with the prompt compiler cut from v1, "
+            f"a closed vocabulary caps the product at the 80 COCO nouns whatever it "
+            f"costs."
         )
     else:
         unresolved = [candidate for candidate in candidates if candidate.open_vocabulary]
-        winner = min(candidates, key=lambda c: c.ms_per_detect)
-        verdict = verdict_for(winner)
         missed = ", ".join(f"{c.name} did not resolve "
                            f"{c.concepts_probed - c.concepts_resolved} of "
                            f"{c.concepts_probed} concepts" for c in unresolved) or \

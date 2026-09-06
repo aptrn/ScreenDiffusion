@@ -17,21 +17,25 @@ from bench import marginal
 from bench.clocks import ClockLock, regime_summary
 from bench.cooldown import DEFAULT_CAP_S, DEFAULT_POLL_INTERVAL_S, DEFAULT_THRESHOLD_C
 from bench.detector_results import format_detector_report, load_detector_results
-from bench.detectors import DEFAULT_CADENCE, DEFAULT_DIFFUSION_SCENARIO, DETECTORS, DetectorConfig
+from bench.detectors import (
+    DEFAULT_CADENCE,
+    DEFAULT_DIFFUSION_SCENARIO,
+    DETECTORS,
+    DetectorConfig,
+)
 from bench.disk import DiskRecord, Usage, read_disk, require_free_space
 from bench.fingerprint import read_clock_lock
-from bench.paths import RESULTS_DIR, resolve_engines_dir
+from bench.paths import DETECTOR_RESULTS_SUBDIR, RESULTS_DIR, resolve_engines_dir
 from bench.scenarios import SCENARIOS, ScenarioConfig
-
-# Detector results live one level down from the diffusion ones, so `--marginal`
-# never meets a record it cannot parse - see bench/detector_results.py.
-DETECTOR_SUBDIR = "detectors"
 
 # The directory name `create_prefix()` in wrapper.py builds for a UNet engine, with
 # `--lora-none` because no scenario fuses a LoRA. Mirrored here so the guard can
 # answer "is this configuration already built?" without loading torch.
 ENGINE_DIR_TEMPLATE = ("{model}--lcm_lora-{lcm}--tiny_vae-{tiny}--max_batch-{batch}"
                        "--min_batch-{batch}--res-{width}x{height}--lora-none--mode-{mode}")
+
+# What the one positional slot can name: a diffusion scenario or a detector.
+Target = Union[ScenarioConfig, DetectorConfig]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -110,12 +114,15 @@ def _rep_overrides(args: argparse.Namespace) -> dict:
     return changes
 
 
-def resolve_target(args: argparse.Namespace) -> Tuple[str, Union[ScenarioConfig, DetectorConfig]]:
+def resolve_target(args: argparse.Namespace) -> Tuple[str, Target]:
     """The scenario or the detector `args.scenario` names, with the overrides applied.
 
     One positional slot for both registries. A run measures one thing, the two kinds
     of name cannot collide, and someone holding a name should not have to know which
     of two flags it belongs behind.
+
+    An unmodified name resolves to the registry's own object, so a caller can tell a
+    plain run from an overridden one by identity.
     """
     if args.scenario in SCENARIOS:
         changes = _rep_overrides(args)
@@ -125,20 +132,12 @@ def resolve_target(args: argparse.Namespace) -> Tuple[str, Union[ScenarioConfig,
         return "scenario", (scenario.replace(**changes) if changes else scenario)
     if args.scenario in DETECTORS:
         changes = _rep_overrides(args)
-        config = DETECTORS[args.scenario]
-        return "detector", (config.replace(**changes) if changes else config)
+        detector = DETECTORS[args.scenario]
+        return "detector", (detector.replace(**changes) if changes else detector)
     raise SystemExit(
         f"bench: unknown scenario or detector {args.scenario!r}. "
         f"Run `python -m bench --list`."
     )
-
-
-def resolve_scenario(args: argparse.Namespace) -> ScenarioConfig:
-    """The named diffusion scenario, refusing a detector name."""
-    kind, target = resolve_target(args)
-    if kind != "scenario":
-        raise SystemExit(f"bench: {args.scenario!r} is a detector, not a scenario.")
-    return target
 
 
 def engine_dir_name(scenario: ScenarioConfig) -> str:
@@ -246,7 +245,8 @@ def report_detectors(results_dir: Path, out: TextIO = sys.stdout) -> None:
     out.write(format_detector_report(load_detector_results(results_dir)) + "\n")
 
 
-def list_scenarios(out: TextIO = sys.stdout) -> None:
+def list_targets(out: TextIO = sys.stdout) -> None:
+    """Both registries, one name per line - whatever the positional slot accepts."""
     for name, scenario in SCENARIOS.items():
         out.write(f"{name}\t{scenario.acceleration}\t{scenario.width}x{scenario.height}"
                   f"\tbatch {scenario.batch_size}\t{scenario.steps} step(s)\n")
@@ -256,18 +256,50 @@ def list_scenarios(out: TextIO = sys.stdout) -> None:
                   f"\t{config.role}\n")
 
 
+def run_detector_target(args: argparse.Namespace, config: DetectorConfig) -> int:
+    """Measure one detector (issue #4). Imported late, like the diffusion runner.
+
+    The diffusion scenario the detector is measured beside goes through the same
+    engine-build guard a diffusion run does: `--with-diffusion` names a TensorRT
+    configuration, and one that is not cached is still ~5.1 GB and several minutes.
+    """
+    if args.with_diffusion:
+        if args.with_diffusion not in SCENARIOS:
+            raise SystemExit(
+                f"bench: --with-diffusion names no scenario: {args.with_diffusion!r}. "
+                f"Run `python -m bench --list`."
+            )
+        engine_build_guard(SCENARIOS[args.with_diffusion],
+                           allow_build=args.allow_engine_build)
+
+    from bench.detector_runner import run_detector  # imports torch, like run_scenario
+
+    run_detector(
+        config,
+        diffusion_scenario=args.with_diffusion,
+        cadence=args.detect_cadence,
+        cooldown=args.cooldown,
+        results_dir=args.results_dir / DETECTOR_RESULTS_SUBDIR,
+        threshold_c=args.cooldown_threshold,
+        cap_s=args.cooldown_cap,
+        poll_interval_s=args.cooldown_poll,
+        allow_download=args.allow_download,
+    )
+    return 0
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
     if args.list:
-        list_scenarios()
+        list_targets()
         return 0
     if args.marginal:
         report_marginal(args.results_dir)
         return 0
     if args.detector_report:
-        report_detectors(Path(args.results_dir) / DETECTOR_SUBDIR)
+        report_detectors(args.results_dir / DETECTOR_RESULTS_SUBDIR)
         return 0
     if not args.scenario:
         parser.print_usage()
@@ -293,32 +325,5 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         cap_s=args.cooldown_cap,
         poll_interval_s=args.cooldown_poll,
         disk=disk,
-    )
-    return 0
-
-
-def run_detector_target(args: argparse.Namespace, config: DetectorConfig) -> int:
-    """Measure one detector (issue #4). Imported late, like the diffusion runner.
-
-    The diffusion scenario the detector is measured beside goes through the same
-    engine-build guard a diffusion run does: `--with-diffusion` names a TensorRT
-    configuration, and one that is not cached is still ~5.1 GB and several minutes.
-    """
-    if args.with_diffusion:
-        engine_build_guard(SCENARIOS[args.with_diffusion],
-                           allow_build=args.allow_engine_build)
-
-    from bench.detector_runner import run_detector
-
-    run_detector(
-        config,
-        diffusion_scenario=args.with_diffusion,
-        cadence=args.detect_cadence,
-        cooldown=args.cooldown,
-        results_dir=Path(args.results_dir) / DETECTOR_SUBDIR,
-        threshold_c=args.cooldown_threshold,
-        cap_s=args.cooldown_cap,
-        poll_interval_s=args.cooldown_poll,
-        allow_download=args.allow_download,
     )
     return 0

@@ -197,8 +197,12 @@ class ConceptEvidence:
 
     def to_dict(self) -> dict:
         data = asdict(self)
+        # Explicitly, rather than leaning on `asdict`'s recursion: `Detection` may
+        # one day derive a key the way `VramRecord` does, and a nested `asdict`
+        # would drop it without a word.
         data["detections"] = [detection.to_dict() for detection in self.detections]
-        data["strongest_other"] = [d.to_dict() for d in self.strongest_other]
+        data["strongest_other"] = [detection.to_dict()
+                                   for detection in self.strongest_other]
         return data
 
 
@@ -497,8 +501,8 @@ def _ranking_basis(results: Sequence[dict]) -> str:
     the recommendation are therefore not the milliseconds in the `ms/detect` column.
     Saying so is cheaper than a reader noticing the discrepancy and distrusting both.
     """
-    if not any(ranking_ms(result) != result["run"]["latency"]["mean_ms"]
-               for result in results):
+    if all(ranking_ms(result) == result["run"]["latency"]["mean_ms"]
+           for result in results):
         return ""
     return (" Ranked on the clock-normalised estimate - the `ms/detect at basis clock` "
             "column, not the raw one - because the clocks were not locked and these "
@@ -515,15 +519,16 @@ def format_detector_report(results: Mapping[str, dict],
     spec 7.2's table is: a table pasted into Markdown drifts the moment a cell is
     re-measured, and nothing notices.
     """
-    ordered = [results[name] for name in sorted(latest_per_detector(results),
-                                                key=lambda n: results[n]["detector"]["name"])]
+    ordered = sorted(latest_per_detector(results).values(),
+                     key=lambda result: result["detector"]["name"])
     if not ordered:
         return "no detector result committed yet"
 
     recommendation = recommend(candidates_from(ordered), cadence=cadence)
     sections = [
         _report_preamble(ordered),
-        "\n".join([REPORT_HEADER, REPORT_SEPARATOR] + [_report_row(r) for r in ordered]),
+        "\n".join([REPORT_HEADER, REPORT_SEPARATOR]
+                  + [_report_row(result) for result in ordered]),
         "Vocabulary evidence - what each detector returned when asked for the "
         "concept, and what a closed vocabulary had to be asked for instead:",
         "\n".join([EVIDENCE_HEADER, EVIDENCE_SEPARATOR] + _evidence_rows(ordered)),

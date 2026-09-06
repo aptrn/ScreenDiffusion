@@ -23,7 +23,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 RESULTS_DIR = Path(__file__).resolve().parent / "results"
 # Detector results (issue #4) live one level down. `bench --marginal` reads every
 # JSON in RESULTS_DIR as a diffusion cell, and a detector record has no batch size.
-DETECTOR_RESULTS_DIR = RESULTS_DIR / "detectors"
+# The subdirectory name is named separately because `--results-dir` moves the root
+# and the detector half has to follow it.
+DETECTOR_RESULTS_SUBDIR = "detectors"
+DETECTOR_RESULTS_DIR = RESULTS_DIR / DETECTOR_RESULTS_SUBDIR
 
 SD_MODELS_DIR_ENV = "SD_MODELS_DIR"
 SD_ENGINES_DIR_ENV = "SD_ENGINES_DIR"

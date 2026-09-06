@@ -12,7 +12,7 @@ import pytest
 from sourceloader import ROOT
 
 from bench.clocks import LOCKED, UNKNOWN, UNLOCKED, ClockLock
-from bench.cli import build_parser, resolve_scenario
+from bench.cli import build_parser, resolve_target
 from bench.scenarios import SCENARIOS, ScenarioConfig
 
 
@@ -72,7 +72,8 @@ def test_the_registry_covers_the_sweep_the_spec_asks_for():
 def test_flags_override_the_scenario_config():
     parser = build_parser()
     args = parser.parse_args(["img2img-none-512x512-b1", "--reps", "5", "--warmup", "1"])
-    scenario = resolve_scenario(args)
+    kind, scenario = resolve_target(args)
+    assert kind == "scenario"
     assert isinstance(scenario, ScenarioConfig)
     assert scenario.reps == 5
     assert scenario.warmup_reps == 1
@@ -197,7 +198,6 @@ def test_an_unlocked_run_that_demands_a_lock_exits_non_zero(tmp_path):
 
 def test_the_detectors_share_the_positional_slot_with_the_scenarios():
     """One name, one run. `--list` shows both registries, so a name is discoverable."""
-    from bench.cli import resolve_target
     from bench.detectors import DETECTORS, PRIMARY_DETECTOR
 
     kind, target = resolve_target(build_parser().parse_args([PRIMARY_DETECTOR]))
@@ -208,16 +208,12 @@ def test_the_detectors_share_the_positional_slot_with_the_scenarios():
 
 
 def test_an_unknown_name_names_both_registries_rather_than_one():
-    from bench.cli import resolve_target
-
     with pytest.raises(SystemExit) as failure:
         resolve_target(build_parser().parse_args(["no-such-thing"]))
     assert "--list" in str(failure.value)
 
 
 def test_reps_override_a_detector_too():
-    from bench.cli import resolve_target
-
     _, detector = resolve_target(build_parser().parse_args(
         ["yolo-world-s-640", "--reps", "7", "--warmup", "2"]))
     assert (detector.reps, detector.warmup_reps) == (7, 2)
@@ -255,6 +251,15 @@ def test_the_detector_report_reads_the_committed_results_and_exits_zero():
     )
     assert result.returncode == 0, result.stderr
     assert "Recommendation:" in result.stdout
+
+
+def test_a_diffusion_scenario_that_does_not_exist_is_refused_by_name():
+    """`--with-diffusion` takes a scenario name, so a typo has to read like one."""
+    import bench.cli as cli
+
+    with pytest.raises(SystemExit) as failure:
+        cli.main(["yolo-world-s-640", "--with-diffusion", "no-such-scenario"])
+    assert "no-such-scenario" in str(failure.value)
 
 
 def test_a_detector_run_gates_the_engine_it_would_have_to_build(tmp_path, monkeypatch):

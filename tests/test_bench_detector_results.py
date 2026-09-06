@@ -18,7 +18,13 @@ from sourceloader import ROOT
 
 from bench.clocks import UNLOCKED, clock_normalization
 from bench.cooldown import REACHED, CooldownRecord
-from bench.detectors import DETECTORS, PRIMARY_DETECTOR, SPEED_FLOOR_DETECTOR, budget_verdict, frame_path_verdict
+from bench.detectors import (
+    DETECTORS,
+    PRIMARY_DETECTOR,
+    SPEED_FLOOR_DETECTOR,
+    budget_verdict,
+    frame_path_verdict,
+)
 from bench.detector_results import (
     DETECTOR_README_HEADER,
     ConceptEvidence,

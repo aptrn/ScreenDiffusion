@@ -158,6 +158,19 @@ def test_the_open_vocabulary_candidate_wins_even_though_it_is_slower():
     assert "80" in outcome.reason
 
 
+def test_an_open_vocabulary_candidate_that_is_also_the_fastest_is_not_told_it_is_slower():
+    """The reason is prose that goes into spec 8.1, so it has to be true of the run
+    that produced it - `It is not the fastest` is a claim, not a turn of phrase."""
+    outcome = recommend([a_candidate(ms_per_detect=5.0),
+                         a_candidate(name="yolov8n-640", ms_per_detect=9.0,
+                                     open_vocabulary=False, concepts_resolved=2)])
+
+    assert outcome.name == "yolo-world-s-640"
+    assert outcome.ranking[0] == "yolo-world-s-640"
+    assert "not the fastest" not in outcome.reason
+    assert "80" in outcome.reason, "the vocabulary cap is still the criterion"
+
+
 def test_an_open_vocabulary_candidate_that_needs_a_slower_cadence_still_wins_but_says_so():
     slow = a_candidate(ms_per_detect=40.0)
     outcome = recommend([slow, a_candidate(name="yolov8n-640", ms_per_detect=5.0,
