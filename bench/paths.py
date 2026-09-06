@@ -31,6 +31,10 @@ DETECTOR_RESULTS_DIR = RESULTS_DIR / DETECTOR_RESULTS_SUBDIR
 # reason, and carry their side-by-side clips beside the JSON that names them.
 PRIMITIVE_RESULTS_SUBDIR = "primitives"
 PRIMITIVE_RESULTS_DIR = RESULTS_DIR / PRIMITIVE_RESULTS_SUBDIR
+# End-to-end selective render runs (issue #8), same rule again: a record whose
+# shape is not a diffusion cell does not sit where the marginal report reads.
+SELECTIVE_RESULTS_SUBDIR = "selective"
+SELECTIVE_RESULTS_DIR = RESULTS_DIR / SELECTIVE_RESULTS_SUBDIR
 
 SD_MODELS_DIR_ENV = "SD_MODELS_DIR"
 SD_ENGINES_DIR_ENV = "SD_ENGINES_DIR"

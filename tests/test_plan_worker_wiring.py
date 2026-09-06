@@ -51,7 +51,19 @@ def test_the_frame_reads_the_active_plan_exactly_once():
 
 
 def test_the_drain_hands_a_submitted_plan_to_the_holder_and_nowhere_else():
-    assert len(_calls_named(WORKER, "submit")) == 1
+    """One submit in the control drain, and every submit goes to the holder.
+
+    The worker's other one is issue #8's hardcoded demo plan, submitted once at
+    startup - which is the same door and lands at the same frame boundary.
+    """
+    # The innermost loop around the transition: the outer one is the frame loop.
+    drain = min([node for node in ast.walk(WORKER)
+                 if isinstance(node, ast.While)
+                 and _calls_named(node, "_control_transition")],
+                key=lambda node: node.end_lineno - node.lineno)
+    assert len(_calls_named(drain, "submit")) == 1
+    assert all(getattr(call.func.value, "id", None) == "active_plan"
+               for call in _calls_named(WORKER, "submit"))
 
 
 def test_a_rejected_plan_reaches_the_user_rather_than_a_swallowed_exception():

@@ -186,15 +186,40 @@ reference assignment, so a frame sees one tick or the next and never half of one
 diffusion engine has a *fixed* batch size. This component decides which ≤K
 regions get diffused this frame, snaps their crops to the engine's native tile
 size, and applies a round-robin / priority policy when there are more objects
-than slots (see §7.3).
+than slots (see §7.3). **Implemented**: `region_scheduler.py`, stdlib-only and
+GPU-free. One difference from the paragraph above, and it follows from §8.2's
+decision: primitive B issues **one** diffusion call per frame whatever K is, so
+there are no crops to snap to a tile size and K limits how much of the frame is
+*composited* rather than how much is diffused. K comes from the honoured target's
+`max_instances`. Regions below a size floor are skipped and counted — under two
+VAE cells there is no restyled content in a region, only resampled blur — and
+they are filtered before the slots are handed out, so a permanently tiny object
+cannot starve the rotation. The rotation cursor is a track id rather than a
+position, ids being monotonic, so with N eligible tracks and K slots every track
+is rendered inside `ceil(N/K)` frames.
 
 **C6 — Diffusion Executor.** The existing `StreamDiffusionWrapper`, driven with
 a batch of crops instead of one full frame. Needs per-item prompt embeddings if
-different objects carry different styles (§8.3).
+different objects carry different styles (§8.3). **Implemented**: as one
+full-frame `img2img` call per frame — §8.2 chose B — and the plan's `denoise`
+reaches it as a `t_index` on the live schedule (`render_plan.t_index_for_denoise`,
+whose amplitudes are held to §8.2's measured ladder by a test). Only the schedule
+*values* move, never the step count, so a plan change is a runtime update and
+never an engine rebuild. A frame whose plan selected no region costs no diffusion
+call at all.
 
 **C7 — Compositor.** Pastes results back with feathered alpha, optional
 colour/exposure match to surrounding pixels, and optional temporal EMA to
 suppress flicker. Everything outside the regions is raw captured pixels.
+**Implemented**: `compositor.py`, numpy and no torch. The alpha ramp climbs
+*inwards* from each region's own edge and is exactly zero one pixel outside it,
+so the soft seam costs the region a few pixels of strength and costs the
+background nothing — which is what makes "bit-identical outside the regions"
+literally true and measurable (§8.8). Overlapping regions take the stronger
+alpha; the blend is written as `source + (rendered - source) * alpha`, whose two
+endpoints are exact in floating point; and only the bounding rectangle of the
+non-zero alpha is written at all. Colour matching and the temporal EMA are not
+built — they are M2 levers (§8.5).
 
 ---
 
@@ -907,6 +932,64 @@ What does the user see when the plan asks for something impossible ("turn the
 music into a bird")? Proposal: the plan carries `confidence` and `notes`; low
 confidence surfaces as a non-blocking banner, and the previous plan keeps
 rendering. Never a black screen, never a crash.
+
+### 8.8 Does the selective path work end to end? — **yes, measured**
+
+Issue #8, the M1 finish line. The question §5's diagram poses and no component test
+answers: with the detector, the tracker, the region scheduler, the engine and the
+compositor all wired together under one plan, does the priority case come out of
+the pipeline — and does everything else come out untouched?
+
+It is measured through the *shipped* modules rather than a harness copy of them.
+`python -m bench selective-people` drives `detector_worker.BackgroundDetector` on
+its own thread, `detection.Tracker`, `region_scheduler.RegionScheduler`, the cached
+512×512 TensorRT engine and `compositor.Compositor` over a committed clip resized
+to the app's own capture canvas, under `render_plan.priority_case_plan()` — the
+same hardcoded plan the worker starts on behind `SD_DEMO_PLAN`. The block below is
+generated from the committed record; re-run the case and the merge gate fails until
+it is regenerated with `uv run python -m bench --selective-report`.
+
+<!-- BEGIN SELECTIVE PATH -->
+Measured on NVIDIA GeForce RTX 3080 Laptop GPU, img2img-tensorrt-512x512-b1, 48 consecutive frames of `people.mp4` resized to the app's 512x512 capture canvas. Clocks unlocked; absolute figures belong to this GPU (spec 7.4), and 30 FPS is M2's gate, not this one's.
+
+| case | plan | regions/frame | diffusion calls/frame | ms/frame | +detect | FPS | flicker (static px) | gate |
+|---|---|---|---|---|---|---|---|---|
+| selective-people | person / lower_half / t_index 40 | 5.04 | 1.00 | 55.1 | 74.7 | 13.4 | 1.49 | pass |
+
+The Gate, measured:
+
+- **Non-target pixels bit-identical** - yes. 48/48 frames left every pixel outside the rendered regions exactly as captured (164676 background pixels on the frame with the most painted).
+- **The region is visibly restyled** - yes. The rendered regions changed by 11.8/255 against the capture - 11.8 net of the 0.00/255 the capture's own round trip costs - against a 8/255 threshold.
+- **No track starved by the round robin** - yes. With 6 tracks over 2 slots no track waited more than 2 frames to be rendered, against a ceil(N/K) bound of 3.
+- **The loop never stalls** - yes. 48/48 frames produced an output; the worst frame spent 0.168 ms offering the capture to the detector (budget 5 ms), and 0 frames had nothing to restyle and passed the capture through.
+
+Manual verification artefact: `selective-people-20260906-202515Z-comparison.mp4` (source | selective render) and `selective-people-20260906-202515Z-comparison.jpg`.
+<!-- END SELECTIVE PATH -->
+
+Three things the numbers say that the Gate does not.
+
+**Detection costs three times more beside diffusion than alone.** §8.1 measured
+YOLO-World at 14–19 ms per detect with the diffusion engine merely *resident*; here
+it runs concurrently with a UNet on the same SMs and each detect costs ~59 ms, so
+at `detect_every_n: 3` it amortises to ~20 ms/frame rather than ~6. Contention
+rather than the clock — the fastest detect in the same run was 15.7 ms. Raising the
+cadence is the cheap lever and is a plan field already; spending it is M2's
+decision, not this one's.
+
+**The composite is ~4 ms/frame of numpy** — the bounding rectangle of the regions,
+blended on the host, on a frame that is otherwise entirely on the GPU. The
+interface (an alpha map and a blend) is the same on either device, so moving it is
+an M2 optimisation and not a redesign.
+
+**Flicker is 1.49 where §8.2 measured 1.43 on the same clip.** The two are not the
+same measurement — this one renders detected boxes at the app's capture geometry,
+that one rendered a committed track at clip resolution — but they are the same
+order, so neither the tracker's box smoothing nor the feathered composite made the
+boiling worse. Per-track seed pinning and the output EMA (§8.5) are still unbuilt.
+
+**30 FPS is not claimed and is not a gate here.** 13.4 FPS on an RTX 3080 laptop
+under a 120 W limit, with unlocked clocks, says the path is correct and roughly
+what it costs; §7.4 is why it says nothing about the deploy hardware.
 
 ---
 

@@ -85,6 +85,18 @@ Those clips are the Gate's manual-verification artefact and are **tracked**.
 `--primitive-report` regenerates the decision block in spec 8.2, held to a byte
 match by a test.
 
+The same slot also takes an **end-to-end selective case** (`selective-people`).
+That run drives the *shipped* modules — detector on its thread, tracker, region
+scheduler, engine, compositor — under `render_plan.priority_case_plan()` over a
+committed clip resized to the app's capture canvas, and writes to
+`bench/results/selective/`: one JSON, one README row, a source|render comparison
+mp4 and a full-resolution still, which are the Gate's manual-verification
+artefact and are **tracked**. Its record carries the four Gate checks as numbers
+with thresholds — background bit-identity, visible change net of a control,
+the `ceil(N/K)` round-robin bound, and whether the loop ever stalled — and
+`--selective-report` regenerates the block in spec 8.8, held to a byte match by
+a test.
+
 The clips in `bench/clips/` are committed and so are their box tracks
 (`*.track.json`). A case reads its boxes rather than detecting them, so two runs
 render identical regions; `python -m bench <case> --write-track` regenerates a
@@ -145,6 +157,30 @@ it has, and an offered frame replaces whatever was queued. A detector that canno
 load or throws disables detection, once, with the reason on the status queue; the
 render loop carries on. Detection count and detector ms ride the existing fps queue
 as a dict (`fps_payload`), which `_format_fps` renders in the GUI.
+
+`region_scheduler.py` (stdlib) and `compositor.py` (numpy) are the **selective
+render path** — spec §5.1 C5 and C7. The scheduler turns a `Tracks` snapshot and a
+plan into a `Selection`: at most K regions, K being the honoured target's
+`max_instances`, banded by each target's `region`, dilated by its `box_scale`,
+clipped to the frame, and rotated so that with N eligible tracks over K slots every
+track is rendered inside `ceil(N/K)` frames. A region under `MIN_REGION_PX` is
+skipped and *counted*, before slots are handed out. There is no crop-to-tile snap:
+issue #5 chose the full-frame masked primitive, so K counts masked regions and one
+diffusion call covers all of them. The compositor turns that selection into a
+`FrameRender` — pass the capture through, render the whole frame, or render and
+composite through a feathered alpha — and the ramp climbs *inwards* from each
+region's edge, so outside the regions the output is the captured pixel byte for
+byte. That is asserted, not asserted-ish: `bench/results/selective/` holds a run
+where 48/48 frames were bit-identical outside the mask.
+
+The plan's `denoise` reaches the engine through `render_plan.t_index_for_denoise`,
+which picks the schedule index whose noise amplitude is nearest — the amplitudes
+are computed from SD-Turbo's own beta schedule in stdlib and pinned to issue #5's
+measured ladder by a test. Only the schedule *values* move, so a plan change is a
+runtime update and never an engine rebuild; a plan with no target leaves the
+t_index slider alone. `SD_DEMO_PLAN=1` starts the worker on
+`priority_case_plan()` — restyle the lower half of every person, gently — which is
+how the whole path is driven until a GUI field exists to drive it.
 
 ## Gotchas
 
@@ -235,6 +271,18 @@ as a dict (`fps_payload`), which `_format_fps` renders in the GUI.
   under the agent loop, so the detector bench falls back to `mss` and records which
   backend produced a frame. The app's own capture path is unaffected; this is a
   property of the session, not of the code.
+- **The detector costs ~3x more beside the diffusion than resident behind it.**
+  Spec 8.1's 14-19 ms per detect was measured with the engine loaded but idle; in
+  the shipped path the detect thread and the UNet share the SMs and a detect
+  measures ~59 ms (fastest in the same run: 15.7 ms). Contention, not the clock.
+  Anything that budgets detection from 8.1's figure is budgeting the wrong number
+  - use `bench/results/selective/`, or raise `global.detect_every_n`.
+- **A feather that bleeds outside its region breaks the whole criterion.** The
+  selective path's promise is that non-target pixels are the captured bytes, so
+  the alpha ramp climbs inwards from the region's own edge and is exactly 0 one
+  pixel outside it. Anything that softens the mask symmetrically - a blur, a
+  dilation, a Gaussian - fails the gate `tests/test_compositor.py` and
+  `tests/test_gpu_selective_render.py` hold.
 
 ## Working agreement
 

@@ -29,11 +29,18 @@ from bench.paths import (
     DETECTOR_RESULTS_SUBDIR,
     PRIMITIVE_RESULTS_SUBDIR,
     RESULTS_DIR,
+    SELECTIVE_RESULTS_SUBDIR,
     resolve_engines_dir,
 )
 from bench.primitive_results import format_primitive_report, load_primitive_results
 from bench.primitives import CASES, CaseConfig
 from bench.scenarios import SCENARIOS, ScenarioConfig
+from bench.selective import CASES as SELECTIVE_CASES
+from bench.selective import (
+    SelectiveCase,
+    format_selective_report,
+    load_selective_results,
+)
 
 # The directory name `create_prefix()` in wrapper.py builds for a UNet engine, with
 # `--lora-none` because no scenario fuses a LoRA. Mirrored here so the guard can
@@ -41,11 +48,11 @@ from bench.scenarios import SCENARIOS, ScenarioConfig
 ENGINE_DIR_TEMPLATE = ("{model}--lcm_lora-{lcm}--tiny_vae-{tiny}--max_batch-{batch}"
                        "--min_batch-{batch}--res-{width}x{height}--lora-none--mode-{mode}")
 
-# What the one positional slot can name: a diffusion scenario, a detector, or a
-# rendering-primitive case (issue #5). One slot for all three - a run measures one
-# thing, the names cannot collide, and someone holding a name should not have to
-# know which of three flags it belongs behind.
-Target = Union[ScenarioConfig, DetectorConfig, CaseConfig]
+# What the one positional slot can name: a diffusion scenario, a detector, a
+# rendering-primitive case (issue #5) or an end-to-end selective render (issue #8).
+# One slot for all four - a run measures one thing, the names cannot collide, and
+# someone holding a name should not have to know which flag it belongs behind.
+Target = Union[ScenarioConfig, DetectorConfig, CaseConfig, SelectiveCase]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -57,11 +64,11 @@ def build_parser() -> argparse.ArgumentParser:
                "happen, there is no record.",
     )
     parser.add_argument("scenario", nargs="?",
-                        help="scenario, detector or primitive-case name; --list "
-                             "shows them all")
+                        help="scenario, detector, primitive-case or selective-case "
+                             "name; --list shows them all")
     parser.add_argument("--list", action="store_true",
-                        help="list the scenarios, detectors and primitive cases, "
-                             "and exit")
+                        help="list the scenarios, detectors, primitive cases and "
+                             "selective cases, and exit")
     parser.add_argument("--marginal", action="store_true",
                         help="report the marginal cost per additional batch item from "
                              "the committed results, and exit")
@@ -71,6 +78,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--primitive-report", action="store_true",
                         help="report the rendering-primitive decision block spec 8.2 "
                              "carries, from the committed comparisons, and exit")
+    parser.add_argument("--selective-report", action="store_true",
+                        help="report the selective render block spec 8.8 carries, "
+                             "from the committed end-to-end runs, and exit")
     parser.add_argument("--reps", type=int, help="timed reps (default: the scenario's)")
     parser.add_argument("--warmup", type=int, dest="warmup_reps",
                         help="warmup reps before timing (default: the scenario's)")
@@ -167,6 +177,9 @@ def resolve_target(args: argparse.Namespace) -> Tuple[str, Target]:
     if args.scenario in CASES:
         case = CASES[args.scenario]
         return "primitive", (case.replace(frames=args.frames) if args.frames else case)
+    if args.scenario in SELECTIVE_CASES:
+        case = SELECTIVE_CASES[args.scenario]
+        return "selective", (case.replace(frames=args.frames) if args.frames else case)
     raise SystemExit(
         f"bench: unknown scenario, detector or case {args.scenario!r}. "
         f"Run `python -m bench --list`."
@@ -283,6 +296,11 @@ def report_primitives(results_dir: Path, out: TextIO = sys.stdout) -> None:
     out.write(format_primitive_report(load_primitive_results(results_dir)) + "\n")
 
 
+def report_selective(results_dir: Path, out: TextIO = sys.stdout) -> None:
+    """The selective-path block spec 8.8 carries, from the committed runs."""
+    out.write(format_selective_report(load_selective_results(results_dir)) + "\n")
+
+
 def list_targets(out: TextIO = sys.stdout) -> None:
     """Every registry, one name per line - whatever the positional slot accepts."""
     for name, scenario in SCENARIOS.items():
@@ -296,6 +314,10 @@ def list_targets(out: TextIO = sys.stdout) -> None:
         priority = "priority case" if case.priority else "eventual case"
         out.write(f"{name}\tprimitive case\t{case.clip}\t{case.region}"
                   f"\t{case.frames} frames\t{priority}\n")
+    for name, case in SELECTIVE_CASES.items():
+        out.write(f"{name}\tselective case\t{case.clip}"
+                  f"\t{case.canvas}x{case.canvas} canvas\t{case.frames} frames"
+                  f"\tthe shipped path end to end\n")
 
 
 def run_detector_target(args: argparse.Namespace, config: DetectorConfig) -> int:
@@ -361,6 +383,28 @@ def run_primitive_target(args: argparse.Namespace, case: CaseConfig) -> int:
     return 0
 
 
+def run_selective_target(args: argparse.Namespace, case: SelectiveCase) -> int:
+    """Drive the shipped selective path over one clip (issue #8). Imported late.
+
+    Through the same cached engine both primitives were compared on, so it goes
+    through the same engine-build guard a diffusion run does.
+    """
+    from bench.selective import ENGINE_SCENARIO
+    from bench.selective_runner import run_selective
+
+    engine_build_guard(SCENARIOS[ENGINE_SCENARIO], allow_build=args.allow_engine_build)
+    run_selective(
+        case,
+        cooldown=args.cooldown,
+        results_dir=args.results_dir / SELECTIVE_RESULTS_SUBDIR,
+        threshold_c=args.cooldown_threshold,
+        cap_s=args.cooldown_cap,
+        poll_interval_s=args.cooldown_poll,
+        write_clips=args.write_clips,
+    )
+    return 0
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -377,6 +421,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.primitive_report:
         report_primitives(args.results_dir / PRIMITIVE_RESULTS_SUBDIR)
         return 0
+    if args.selective_report:
+        report_selective(args.results_dir / SELECTIVE_RESULTS_SUBDIR)
+        return 0
     if not args.scenario:
         parser.print_usage()
         print("bench: name a scenario, a detector or a case, or pass --list",
@@ -389,6 +436,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return run_detector_target(args, target)
     if kind == "primitive":
         return run_primitive_target(args, target)
+    if kind == "selective":
+        return run_selective_target(args, target)
 
     scenario = target
     disk = engine_build_guard(scenario, allow_build=args.allow_engine_build)

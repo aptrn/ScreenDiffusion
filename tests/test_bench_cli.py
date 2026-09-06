@@ -335,3 +335,50 @@ def test_writing_a_track_needs_no_engine_at_all():
     body = source.read_text(encoding="utf-8").split("def run_primitive_target", 1)[1]
     assert body.index("args.write_track") < body.index("engine_build_guard")
     assert RESTYLE_CASE in CASES
+
+
+# --- the selective render path (issue #8) ------------------------------------
+
+def test_the_selective_case_shares_the_positional_slot_too():
+    """A fourth registry, still one slot: the CLI works out the kind from the name."""
+    from bench.selective import CASES, PRIORITY_CASE
+
+    kind, target = resolve_target(build_parser().parse_args([PRIORITY_CASE]))
+    assert kind == "selective" and target is CASES[PRIORITY_CASE]
+
+
+def test_a_selective_run_can_be_shortened_for_a_development_run():
+    from bench.selective import PRIORITY_CASE
+
+    _, case = resolve_target(build_parser().parse_args([PRIORITY_CASE, "--frames", "6"]))
+    assert case.frames == 6
+
+
+def test_list_names_the_selective_case_as_well():
+    result = subprocess.run(
+        [sys.executable, "-m", "bench", "--list"],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "selective-people" in result.stdout
+    assert "the shipped path end to end" in result.stdout
+
+
+def test_the_selective_report_reads_the_committed_runs_and_exits_zero():
+    result = subprocess.run(
+        [sys.executable, "-m", "bench", "--selective-report"],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "selective-people" in result.stdout
+
+
+def test_a_selective_run_gates_the_engine_it_renders_through(tmp_path, monkeypatch):
+    """Refused before `bench.selective_runner` imports torch, like every other run."""
+    import bench.cli as cli
+    from bench.selective import PRIORITY_CASE
+
+    monkeypatch.setattr(cli, "resolve_engines_dir", lambda: tmp_path)
+    with pytest.raises(SystemExit) as failure:
+        cli.main([PRIORITY_CASE])
+    assert "--allow-engine-build" in str(failure.value)
