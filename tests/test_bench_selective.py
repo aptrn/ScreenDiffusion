@@ -33,6 +33,7 @@ from bench.selective import (
     latest_per_case,
     plan_record,
     selective_readme_row,
+    staleness_summary,
     RegionSummary,
     SelectiveResult,
     SelectiveRunMetrics,
@@ -208,6 +209,8 @@ def a_selective_result(**overrides) -> SelectiveResult:
         change=change_check(13.0, 0.0),
         coverage=coverage_check([tracks_of(5)] * 6, plan, CANVAS, CANVAS, 2),
         stall=stall_check(48, 48, 0.02, 2),
+        staleness=staleness_summary(
+            [tracks_of(5)] * 6, detect_every_n=3, ms_per_frame=88.0),
         cooldown=CooldownRecord(enabled=True, outcome=REACHED, threshold_c=62.0,
                                 cap_s=120.0, waited_s=12.0,
                                 final_temperature_c=60.0, samples=[[0.0, 70.0]]),
@@ -309,3 +312,127 @@ def test_the_gate_lines_belong_to_the_newest_run_and_say_which_machine(record):
         "laptop.json": record,
         "deploy.json": on_gpu(record, DEPLOY_GPU, "2026-09-07T10:00:00Z")})
     assert f"The Gate, measured on {DEPLOY_GPU}:" in report
+
+
+# --- how stale the boxes a frame renders are (issue #23) --------------------
+
+
+def snapshot(boxes, frame_index, tick):
+    """One detector tick as the frame loop reads it: `boxes` is {track_id: Box}."""
+    return Tracks(
+        tracks=tuple(Track(track_id=track_id, box=box, concept="person",
+                           confidence=0.9)
+                     for track_id, box in boxes.items()),
+        frame_index=frame_index, ticks=tick)
+
+
+def test_the_age_of_the_boxes_a_frame_renders_is_what_a_cadence_costs():
+    """One detect on frame 0, read by six frames: the sixth renders boxes five
+    frames old, and that is the whole of what raising `detect_every_n` buys."""
+    boxes = {1: Box(0, 0, 40, 40)}
+    summary = staleness_summary([snapshot(boxes, 0, 1)] * 6, detect_every_n=6,
+                                ms_per_frame=20.0)
+    assert summary.mean_age_frames == pytest.approx(2.5)
+    assert summary.worst_age_frames == 5
+    assert summary.mean_age_ms == pytest.approx(50.0)
+
+
+def test_a_frame_rendered_before_the_first_detect_is_counted_not_aged():
+    """`EMPTY_TRACKS` has no frame to be old relative to, and averaging it in as
+    age zero would report the staleness of a frame that had no boxes at all."""
+    snapshots = [Tracks(), Tracks(), snapshot({1: Box(0, 0, 8, 8)}, 2, 1)]
+    summary = staleness_summary(snapshots, detect_every_n=2)
+    assert summary.frames_without_tracks == 2
+    assert summary.mean_age_frames == 0.0
+    assert summary.mean_age_ms is None, "no ms/frame was given to convert with"
+
+
+def test_how_far_an_object_moves_between_two_refreshes_is_measured():
+    """The other half of staleness: not how old the box is, but how wrong. A
+    40 px box that moved 40 px shares no pixels with where it turns out to be."""
+    first = snapshot({1: Box(0, 0, 40, 40)}, 0, 1)
+    second = snapshot({1: Box(40, 0, 80, 40)}, 6, 2)
+    summary = staleness_summary([first] * 6 + [second] * 6, detect_every_n=6)
+    assert summary.refreshes == 1
+    assert summary.mean_refresh_iou == 0.0
+    assert summary.mean_refresh_shift_px == pytest.approx(40.0)
+
+
+def test_a_box_that_did_not_move_between_refreshes_is_perfectly_fresh():
+    boxes = {1: Box(10, 10, 50, 50)}
+    summary = staleness_summary([snapshot(boxes, 0, 1), snapshot(boxes, 3, 2)],
+                                detect_every_n=3)
+    assert summary.mean_refresh_iou == 1.0
+    assert summary.worst_refresh_shift_px == 0.0
+
+
+def test_an_identity_the_tracker_lost_shows_up_as_a_second_id():
+    """Spec 8.5 pins seeds to track ids, so an object that comes back under a new
+    id has paid the cadence in identity rather than in milliseconds."""
+    summary = staleness_summary(
+        [snapshot({1: Box(0, 0, 40, 40)}, 0, 1),
+         snapshot({2: Box(300, 0, 340, 40)}, 8, 2)], detect_every_n=8)
+    assert summary.distinct_track_ids == 2
+    assert summary.max_concurrent_tracks == 1
+    assert summary.refreshes == 0, "no track survived the refresh to be compared"
+
+
+def test_a_run_with_no_detector_says_so_rather_than_reporting_zero_staleness():
+    summary = staleness_summary([Tracks()] * 4, detect_every_n=3)
+    assert summary.ticks == 0
+    assert "no detect" in summary.statement
+
+
+def test_the_staleness_summary_names_the_cadence_it_belongs_to():
+    summary = staleness_summary([snapshot({1: Box(0, 0, 40, 40)}, 0, 1)] * 3,
+                                detect_every_n=5, ms_per_frame=25.0)
+    assert summary.detect_every_n == 5
+    assert "5" in summary.statement and "frames old" in summary.statement
+
+
+def test_the_record_carries_the_staleness_the_cadence_bought(record):
+    """Issue #23's Gate asks for staleness per setting, so it is a field of the
+    record rather than something a sweep recomputes from clips it did not keep."""
+    assert record["staleness"]["detect_every_n"] == 3
+    assert record["staleness"]["statement"]
+
+
+def test_a_record_written_before_the_field_existed_still_reads():
+    """The 3080 and 4090 baselines predate issue #23 and are not retro-edited."""
+    older = a_selective_result(staleness=None).to_dict()
+    assert older["staleness"] is None
+
+
+# --- the cadence a case is measured at (issue #23) ---------------------------
+
+
+def test_a_case_renders_the_plan_at_the_cadence_it_was_asked_for():
+    """The sweep changes one plan field and nothing else, and it changes it
+    through the validator rather than by reaching into a frozen dataclass."""
+    case = CASES[PRIORITY_CASE].replace(detect_every_n=8)
+    plan = case.plan()
+    assert plan.settings.detect_every_n == 8
+    assert plan.effective_prompt == priority_case_plan().effective_prompt
+    assert plan.targets[0].to_dict() == priority_case_plan().targets[0].to_dict()
+
+
+def test_a_case_with_no_cadence_override_is_the_shipped_plan_untouched():
+    assert CASES[PRIORITY_CASE].detect_every_n is None
+    assert CASES[PRIORITY_CASE].plan().to_dict() == priority_case_plan().to_dict()
+
+
+def test_a_cadence_the_validator_clamps_is_the_clamped_one_that_is_recorded():
+    """`detect_every_n` is validated into 1..30. A sweep that asked for 99 must
+    record what the plan actually ran at, not what it typed."""
+    plan = CASES[PRIORITY_CASE].replace(detect_every_n=99).plan()
+    assert plan.settings.detect_every_n == 30
+
+
+def test_the_wire_key_the_cadence_override_writes_is_the_plan_s_own():
+    """`bench.selective` spells `global` itself rather than importing it, because
+    the shipped modules are imported inside its functions. One value, or a cadence
+    override would land in a key the validator drops."""
+    import render_plan
+    from bench.selective import GLOBAL_KEY
+
+    assert GLOBAL_KEY == render_plan.GLOBAL_KEY

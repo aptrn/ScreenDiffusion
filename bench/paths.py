@@ -35,6 +35,13 @@ PRIMITIVE_RESULTS_DIR = RESULTS_DIR / PRIMITIVE_RESULTS_SUBDIR
 # shape is not a diffusion cell does not sit where the marginal report reads.
 SELECTIVE_RESULTS_SUBDIR = "selective"
 SELECTIVE_RESULTS_DIR = RESULTS_DIR / SELECTIVE_RESULTS_SUBDIR
+# The `detect_every_n` sweep (issue #23) is the same record shape as a selective
+# run, and that is exactly why it needs its own directory: `--selective-report` and
+# `--portability-report` reduce the selective directory to the newest run per
+# (case, GPU), so an arm measured at another cadence sitting there would silently
+# become the row spec 8.8 and 7.4 quote.
+CADENCE_RESULTS_SUBDIR = "cadence"
+CADENCE_RESULTS_DIR = RESULTS_DIR / CADENCE_RESULTS_SUBDIR
 
 SD_MODELS_DIR_ENV = "SD_MODELS_DIR"
 SD_ENGINES_DIR_ENV = "SD_ENGINES_DIR"

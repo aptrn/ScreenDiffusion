@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Callable, Optional, Sequence, TextIO, Tuple, Union
 
 from bench import marginal
+from bench.cadence import format_cadence_report
 from bench.clocks import ClockLock, regime_summary
 from bench.cooldown import DEFAULT_CAP_S, DEFAULT_POLL_INTERVAL_S, DEFAULT_THRESHOLD_C
 from bench.detector_results import format_detector_report, load_detector_results
@@ -26,9 +27,11 @@ from bench.detectors import (
 from bench.disk import DiskRecord, Usage, read_disk, require_free_space
 from bench.fingerprint import read_clock_lock
 from bench.paths import (
+    CADENCE_RESULTS_SUBDIR,
     DETECTOR_RESULTS_SUBDIR,
     PRIMITIVE_RESULTS_SUBDIR,
     RESULTS_DIR,
+    SELECTIVE_RESULTS_DIR,
     SELECTIVE_RESULTS_SUBDIR,
     resolve_engines_dir,
 )
@@ -37,10 +40,13 @@ from bench.primitive_results import format_primitive_report, load_primitive_resu
 from bench.primitives import CASES, CaseConfig
 from bench.scenarios import SCENARIOS, ScenarioConfig
 from bench.selective import (
+    CADENCE_README_PREAMBLE,
     CASES as SELECTIVE_CASES,
+    SELECTIVE_README_PREAMBLE,
     SelectiveCase,
     format_selective_report,
     load_selective_results,
+    results_subdir,
 )
 
 # The directory name `create_prefix()` in wrapper.py builds for a UNet engine, with
@@ -85,6 +91,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--portability-report", action="store_true",
                         help="report the dev-vs-deploy block spec 7.4 carries, from "
                              "the committed selective runs on each GPU, and exit")
+    parser.add_argument("--cadence-report", action="store_true",
+                        help="report the detect_every_n sweep spec 8.8 carries, from "
+                             "the committed arms, and exit")
     parser.add_argument("--reps", type=int, help="timed reps (default: the scenario's)")
     parser.add_argument("--warmup", type=int, dest="warmup_reps",
                         help="warmup reps before timing (default: the scenario's)")
@@ -140,6 +149,13 @@ def build_parser() -> argparse.ArgumentParser:
                                 "development only")
     primitive.set_defaults(write_clips=True)
 
+    selective = parser.add_argument_group("selective render path (issues #8, #23)")
+    selective.add_argument("--detect-every-n", type=int, metavar="N",
+                           help="run this selective case at one detector cadence "
+                                "instead of the plan's, as one arm of the sweep. "
+                                "The arm is named `<case>-nN` and is written under "
+                                "bench/results/cadence/, never beside the baselines")
+
     parser.add_argument("--allow-engine-build", action="store_true",
                         help="permit compiling a TensorRT engine that is not cached "
                              "(~5.1 GB and several minutes)")
@@ -156,6 +172,22 @@ def _rep_overrides(args: argparse.Namespace) -> dict:
     if args.warmup_reps is not None:
         changes["warmup_reps"] = args.warmup_reps
     return changes
+
+
+def _selective_case(case: SelectiveCase, args: argparse.Namespace) -> SelectiveCase:
+    """One selective case with its overrides applied.
+
+    A cadence override renames the arm after the cadence it ran at, so a filename
+    on disk says what it measured and two arms cannot overwrite each other's
+    record. The name carries what was *asked* for; `plan.detect_every_n` in the
+    record carries what the validator allowed, and those can differ by a clamp.
+    """
+    if args.frames:
+        case = case.replace(frames=args.frames)
+    if args.detect_every_n is not None:
+        case = case.replace(name=f"{case.name}-n{args.detect_every_n}",
+                            detect_every_n=args.detect_every_n)
+    return case
 
 
 def resolve_target(args: argparse.Namespace) -> Tuple[str, Target]:
@@ -182,8 +214,7 @@ def resolve_target(args: argparse.Namespace) -> Tuple[str, Target]:
         case = CASES[args.scenario]
         return "primitive", (case.replace(frames=args.frames) if args.frames else case)
     if args.scenario in SELECTIVE_CASES:
-        case = SELECTIVE_CASES[args.scenario]
-        return "selective", (case.replace(frames=args.frames) if args.frames else case)
+        return "selective", _selective_case(SELECTIVE_CASES[args.scenario], args)
     raise SystemExit(
         f"bench: unknown scenario, detector or case {args.scenario!r}. "
         f"Run `python -m bench --list`."
@@ -315,6 +346,20 @@ def report_portability(results_dir: Path, out: TextIO = sys.stdout) -> None:
     out.write(format_portability_report(load_selective_results(results_dir)) + "\n")
 
 
+def report_cadence(results_dir: Path, out: TextIO = sys.stdout,
+                   baseline_dir: Path = SELECTIVE_RESULTS_DIR) -> None:
+    """The `detect_every_n` sweep block spec 8.8 carries (issue #23).
+
+    Two directories, because the block answers two questions with one set of
+    arithmetic: `baseline_dir` holds issue #24's unmodified runs, which say whether
+    there was a gap to close at all, and `results_dir` holds the arms that say what
+    the one quality-free lever buys.
+    """
+    out.write(format_cadence_report(load_selective_results(results_dir),
+                                    baseline=load_selective_results(baseline_dir))
+              + "\n")
+
+
 def list_targets(out: TextIO = sys.stdout) -> None:
     """Every registry, one name per line - whatever the positional slot accepts."""
     for name, scenario in SCENARIOS.items():
@@ -402,6 +447,10 @@ def run_selective_target(args: argparse.Namespace, case: SelectiveCase) -> int:
 
     Rendered through the same cached engine both primitives were compared on, so it
     passes the same engine-build guard a diffusion run does.
+
+    Where the record lands is `results_subdir`'s decision, not this function's: an
+    arm of the cadence sweep (issue #23) must not sit beside the baselines that
+    spec 8.8 and 7.4 quote.
     """
     from bench.selective import ENGINE_SCENARIO
     from bench.selective_runner import run_selective
@@ -410,7 +459,9 @@ def run_selective_target(args: argparse.Namespace, case: SelectiveCase) -> int:
     run_selective(
         case,
         cooldown=args.cooldown,
-        results_dir=args.results_dir / SELECTIVE_RESULTS_SUBDIR,
+        results_dir=args.results_dir / results_subdir(case),
+        readme_preamble=(SELECTIVE_README_PREAMBLE if case.detect_every_n is None
+                         else CADENCE_README_PREAMBLE),
         threshold_c=args.cooldown_threshold,
         cap_s=args.cooldown_cap,
         poll_interval_s=args.cooldown_poll,
@@ -440,6 +491,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 0
     if args.portability_report:
         report_portability(args.results_dir / SELECTIVE_RESULTS_SUBDIR)
+        return 0
+    if args.cadence_report:
+        report_cadence(args.results_dir / CADENCE_RESULTS_SUBDIR,
+                       baseline_dir=args.results_dir / SELECTIVE_RESULTS_SUBDIR)
         return 0
     if not args.scenario:
         parser.print_usage()

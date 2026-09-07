@@ -392,3 +392,38 @@ def test_a_selective_run_gates_the_engine_it_renders_through(tmp_path, monkeypat
     with pytest.raises(SystemExit) as failure:
         cli.main([PRIORITY_CASE])
     assert "--allow-engine-build" in str(failure.value)
+
+
+# --- the detect_every_n sweep (issue #23) ------------------------------------
+
+def test_a_selective_run_can_be_asked_for_one_cadence():
+    """The sweep's one moving part: `--detect-every-n` overrides the plan field
+    and names the arm after it, so a run's filename says what it measured."""
+    from bench.selective import PRIORITY_CASE
+
+    _, case = resolve_target(
+        build_parser().parse_args([PRIORITY_CASE, "--detect-every-n", "8"]))
+    assert case.detect_every_n == 8
+    assert case.name == f"{PRIORITY_CASE}-n8"
+
+
+def test_a_swept_arm_is_written_beside_the_other_arms_not_beside_the_baselines():
+    """The rule the whole sweep rests on: `--selective-report` and
+    `--portability-report` reduce `bench/results/selective/` to the newest run per
+    (case, GPU), so an arm at another cadence landing there would silently become
+    the row spec 8.8 and 7.4 quote."""
+    from bench.paths import CADENCE_RESULTS_SUBDIR, SELECTIVE_RESULTS_SUBDIR
+    from bench.selective import CASES, PRIORITY_CASE, results_subdir
+
+    assert results_subdir(CASES[PRIORITY_CASE]) == SELECTIVE_RESULTS_SUBDIR
+    assert results_subdir(
+        CASES[PRIORITY_CASE].replace(detect_every_n=5)) == CADENCE_RESULTS_SUBDIR
+
+
+def test_the_cadence_report_reads_the_committed_arms_and_exits_zero():
+    result = subprocess.run(
+        [sys.executable, "-m", "bench", "--cadence-report"],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "detect_every_n" in result.stdout
