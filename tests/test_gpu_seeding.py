@@ -54,9 +54,9 @@ class Pipeline:
             dtype=torch.float16 if dtype is None else dtype)
 
 
-def selection_of(*boxes, ids=None):
+def selection_of(*boxes, ids=None, capture=CANVAS):
     """A selection over `boxes`, with `ids` when a test needs two frames to hold the
-    same track in different places."""
+    same track in different places, and `capture` when the frame is not the canvas."""
     track_ids = range(len(boxes)) if ids is None else ids
     tracks = Tracks(tracks=tuple(
         Track(track_id=track_id, box=Box(*box), concept="person", confidence=0.9)
@@ -64,7 +64,7 @@ def selection_of(*boxes, ids=None):
     plan = validate_plan({"source_prompt": "wet denim",
                           "targets": [{"id": "t0", "concept": "person",
                                        "region": "full_box", "box_scale": 1.0}]}).plan
-    return RegionScheduler().select(tracks, plan, CANVAS, CANVAS)
+    return RegionScheduler().select(tracks, plan, capture, capture)
 
 
 def field_of(policy, torch):
@@ -245,3 +245,48 @@ def test_the_written_field_is_finite_and_of_the_expected_scale(torch):
     written = pipeline.init_noise.float().cpu().numpy()
     assert np.isfinite(written).all()
     assert 0.5 < float(np.std(written)) < 2.0
+
+
+# --- the capture geometry (issue #39) ---------------------------------------
+
+
+def test_per_track_pins_to_the_canvas_cells_the_geometry_names(torch):
+    """The lever's whole claim is that a track's noise sits under the track. At a
+    capture twice the canvas, reading the selection's boxes unmapped would put the
+    patch at twice the coordinates - off the canvas entirely for a box in the far
+    half of the frame, so the track would get no noise of its own at all.
+    """
+    from seeding import CanvasGeometry
+
+    pipeline = Pipeline(torch)
+    prepared = pipeline.init_noise.clone()
+    capture = CANVAS * 2
+    # The lower-right quadrant of the capture: the upper-left quarter of the canvas
+    # if it is mapped, and off the canvas if it is not.
+    box = Box(capture // 2, capture // 2, capture // 2 + CANVAS, capture // 2 + CANVAS)
+    field = NoiseField(policy=PER_TRACK)
+
+    field.apply(pipeline, selection_of(box, capture=capture),
+                CanvasGeometry(capture, capture, CANVAS, CANVAS))
+
+    written = pipeline.init_noise
+    half = LATENT // 2
+    assert not torch.equal(written[..., half:, half:], prepared[..., half:, half:])
+    assert torch.equal(written[..., :half, :half], prepared[..., :half, :half])
+
+
+def test_under_crop_the_rendered_region_owns_the_whole_canvas(torch):
+    """The crop primitive hands the engine one region on the whole canvas, so
+    every latent cell is that track's."""
+    from seeding import CanvasGeometry
+
+    pipeline = Pipeline(torch)
+    prepared = pipeline.init_noise.clone()
+    crop = Box(300, 200, 800, 700)
+    field = NoiseField(policy=PER_TRACK)
+
+    field.apply(pipeline, selection_of(crop, capture=1920),
+                CanvasGeometry(1920, 1080, CANVAS, CANVAS, crop=crop))
+
+    assert not torch.equal(pipeline.init_noise, prepared)
+    assert torch.equal(pipeline.init_noise, pipeline.init_noise)

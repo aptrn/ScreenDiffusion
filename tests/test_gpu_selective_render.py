@@ -118,7 +118,7 @@ def run(stream, detector, frames, plan):
         selection = scheduler.select(tracks, plan, CANVAS, CANVAS)
         render = compositor.frame(selection, CANVAS, CANVAS)
         output, _, _ = render_frame(stream, tensor, compositor, render,
-                                    source, noise, selection)
+                                    source, noise, selection, CANVAS)
         sources.append(source)
         outputs.append(output)
         masks.append(painted_mask(render.alpha) if render.alpha is not None
@@ -200,7 +200,7 @@ def test_a_frame_with_nothing_detected_comes_out_as_the_capture(stream, frames):
     source = frame_to_array(tensor)
     output, _, _ = render_frame(stream, tensor, compositor, render, source,
                                 NoiseField(policy=absent.effective_seed_policy),
-                                selection)
+                                selection, CANVAS)
     assert np.array_equal(output, source)
 
 

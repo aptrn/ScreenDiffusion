@@ -13,10 +13,12 @@ in this tier.
 """
 
 import ast
-from typing import Any, Dict, NamedTuple, Optional, Sequence
+from typing import Any, Dict, NamedTuple, Optional, Sequence, Tuple
 
 import pytest
-from render_plan import plan_from_fields
+from render_plan import CROP as PLAN_CROP
+from render_plan import MASKED as PLAN_MASKED
+from render_plan import DEFAULT_MAX_INSTANCES, plan_from_fields
 
 from guisource import assignment_to, calls_named, gui_method, mentions
 from sourceloader import load_symbols
@@ -26,10 +28,13 @@ CUSTOM_COLORS = {"success": "#10B981", "error": "#EF4444", "surface": "#374151"}
 _symbols = load_symbols(
     "main_gpu_addon.py",
     ["ADVANCED", "GLOBAL_STATE", "PLAN_NOTE_COLOR", "PlanUpdate", "SHOW", "_plan_note",
+     "DETAIL_ALL_OBJECTS", "DETAIL_ONE_OBJECT", "DETAIL_PRESETS", "detail_plan",
      "_plan_state_line", "_plan_status_line", "_plan_update_from_fields"],
     extra_globals={"plan_from_fields": plan_from_fields, "NamedTuple": NamedTuple,
-                   "Optional": Optional, "Dict": Dict, "Any": Any,
-                   "Sequence": Sequence, "CUSTOM_COLORS": CUSTOM_COLORS},
+                   "Optional": Optional, "Dict": Dict, "Any": Any, "Tuple": Tuple,
+                   "Sequence": Sequence, "CUSTOM_COLORS": CUSTOM_COLORS,
+                   "PLAN_MASKED": PLAN_MASKED, "PLAN_CROP": PLAN_CROP,
+                   "DEFAULT_MAX_INSTANCES": DEFAULT_MAX_INSTANCES},
 )
 ADVANCED = _symbols["ADVANCED"]
 PLAN_NOTE_COLOR = _symbols["PLAN_NOTE_COLOR"]

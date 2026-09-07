@@ -1,0 +1,2477 @@
+{
+  "arms": [
+    {
+      "background": {
+        "background_pixels": 213844,
+        "frames": 48,
+        "identical_frames": 48,
+        "passed": true,
+        "statement": "48/48 frames left every pixel outside the rendered regions exactly as captured (213844 background pixels on the frame with the most painted)",
+        "worst_pixels_changed": 0
+      },
+      "capture_height": 512,
+      "capture_width": 512,
+      "clip_file": "",
+      "crop_frames": 0,
+      "denoise": {
+        "kind": "identity",
+        "met": true,
+        "points": [
+          {
+            "frames": 4,
+            "identity_frames": 4,
+            "identity_hits": 0,
+            "net_region_change": 13.3549,
+            "outside_change": 0.0,
+            "region_change": 13.3549,
+            "resample_change": 0.0,
+            "strength": 0.323323,
+            "t_index": 45,
+            "timestep": 99
+          },
+          {
+            "frames": 4,
+            "identity_frames": 4,
+            "identity_hits": 2,
+            "net_region_change": 17.6681,
+            "outside_change": 0.0,
+            "region_change": 17.6681,
+            "resample_change": 0.0,
+            "strength": 0.494734,
+            "t_index": 40,
+            "timestep": 199
+          },
+          {
+            "frames": 4,
+            "identity_frames": 4,
+            "identity_hits": 3,
+            "net_region_change": 22.8577,
+            "outside_change": 0.0,
+            "region_change": 22.8577,
+            "resample_change": 0.0,
+            "strength": 0.638606,
+            "t_index": 35,
+            "timestep": 299
+          },
+          {
+            "frames": 4,
+            "identity_frames": 4,
+            "identity_hits": 4,
+            "net_region_change": 26.6121,
+            "outside_change": 0.0,
+            "region_change": 26.6121,
+            "resample_change": 0.0,
+            "strength": 0.757571,
+            "t_index": 30,
+            "timestep": 399
+          },
+          {
+            "frames": 4,
+            "identity_frames": 4,
+            "identity_hits": 4,
+            "net_region_change": 31.4809,
+            "outside_change": 0.0,
+            "region_change": 31.4809,
+            "resample_change": 0.0,
+            "strength": 0.8499,
+            "t_index": 25,
+            "timestep": 499
+          },
+          {
+            "frames": 4,
+            "identity_frames": 4,
+            "identity_hits": 3,
+            "net_region_change": 35.0972,
+            "outside_change": 0.0,
+            "region_change": 35.0972,
+            "resample_change": 0.0,
+            "strength": 0.915559,
+            "t_index": 20,
+            "timestep": 599
+          }
+        ],
+        "rule": "the least denoise at which the detector read at least 50% of the probed frames as the new identity",
+        "statement": "t_index 40 - timestep 199, denoise strength 0.49. Selected as the least denoise at which the detector read at least 50% of the probed frames as the new identity; it changed the region by 17.7/255 - 17.7 of it net of the 0.0/255 the resize alone costs - against 0.0/255 outside it, and was read as the new identity in 2/4 probed frames.",
+        "strength": 0.494734,
+        "t_index": 40,
+        "timestep": 199
+      },
+      "denoise_points": [
+        {
+          "frames": 4,
+          "identity_frames": 4,
+          "identity_hits": 3,
+          "net_region_change": 35.0972,
+          "outside_change": 0.0,
+          "region_change": 35.0972,
+          "resample_change": 0.0,
+          "strength": 0.915559,
+          "t_index": 20,
+          "timestep": 599
+        },
+        {
+          "frames": 4,
+          "identity_frames": 4,
+          "identity_hits": 4,
+          "net_region_change": 31.4809,
+          "outside_change": 0.0,
+          "region_change": 31.4809,
+          "resample_change": 0.0,
+          "strength": 0.8499,
+          "t_index": 25,
+          "timestep": 499
+        },
+        {
+          "frames": 4,
+          "identity_frames": 4,
+          "identity_hits": 4,
+          "net_region_change": 26.6121,
+          "outside_change": 0.0,
+          "region_change": 26.6121,
+          "resample_change": 0.0,
+          "strength": 0.757571,
+          "t_index": 30,
+          "timestep": 399
+        },
+        {
+          "frames": 4,
+          "identity_frames": 4,
+          "identity_hits": 3,
+          "net_region_change": 22.8577,
+          "outside_change": 0.0,
+          "region_change": 22.8577,
+          "resample_change": 0.0,
+          "strength": 0.638606,
+          "t_index": 35,
+          "timestep": 299
+        },
+        {
+          "frames": 4,
+          "identity_frames": 4,
+          "identity_hits": 2,
+          "net_region_change": 17.6681,
+          "outside_change": 0.0,
+          "region_change": 17.6681,
+          "resample_change": 0.0,
+          "strength": 0.494734,
+          "t_index": 40,
+          "timestep": 199
+        },
+        {
+          "frames": 4,
+          "identity_frames": 4,
+          "identity_hits": 0,
+          "net_region_change": 13.3549,
+          "outside_change": 0.0,
+          "region_change": 13.3549,
+          "resample_change": 0.0,
+          "strength": 0.323323,
+          "t_index": 45,
+          "timestep": 99
+        }
+      ],
+      "detail": {
+        "canvas_px": 155.5,
+        "gain": 1.0,
+        "region_px": 155.5,
+        "statement": "a region 156 px across in a 512 px frame is diffused at 156 px under `masked`"
+      },
+      "diffusion_calls": 48,
+      "flicker": {
+        "frame_pixels": 262144,
+        "mean_abs_diff": 5.817874,
+        "note": "mean absolute difference between consecutive outputs over the 14498 pixels per pair that were static in the source (within 2/255) and painted in both frames; 0-255 units, lower is steadier",
+        "pairs": 47,
+        "pairs_scored": 47,
+        "per_pair_abs_diff": [
+          6.028224,
+          6.592128,
+          7.233539,
+          6.559385,
+          4.868083,
+          4.882086,
+          4.691496,
+          4.280173,
+          4.483336,
+          4.347605,
+          4.376786,
+          5.00397,
+          5.098702,
+          5.968057,
+          7.54575,
+          6.795145,
+          7.668382,
+          8.634981,
+          8.334105,
+          4.701396,
+          5.132313,
+          5.408507,
+          7.889651,
+          6.999338,
+          7.821573,
+          8.175512,
+          7.921285,
+          6.960958,
+          5.532775,
+          5.866359,
+          9.432062,
+          7.793866,
+          6.000032,
+          5.334414,
+          5.163089,
+          5.738879,
+          5.198107,
+          4.512736,
+          4.742441,
+          4.326105,
+          4.25191,
+          4.300709,
+          3.711452,
+          4.531139,
+          3.653993,
+          4.341867,
+          4.605664
+        ],
+        "static_fraction": 0.055305,
+        "static_pixels": 14498,
+        "threshold": 2.0
+      },
+      "fps": 60.0633,
+      "frames": 48,
+      "identity": {
+        "achieved": false,
+        "asked_for": [
+          "dog",
+          "cat"
+        ],
+        "became": 23,
+        "conf": 0.25,
+        "detector": "yolo-world-s-640",
+        "frames_probed": 48,
+        "remained": 35,
+        "statement": "Asked for `dog` and `cat` at conf 0.25, yolo-world-s-640 read 23 of 48 rendered frames as `cat` and 35 as still `dog`. The identity change does not read as achieved."
+      },
+      "latency": {
+        "max_ms": 18.085,
+        "mean_ms": 16.6144,
+        "median_ms": 16.5166,
+        "min_ms": 15.6023,
+        "p95_ms": 17.4929,
+        "stdev_ms": 0.4575
+      },
+      "meets_budget": true,
+      "ms_per_frame": 16.6491,
+      "name": "masked-512x512",
+      "net_region_change": 15.8386,
+      "primitive": "masked",
+      "region_change": 15.8386,
+      "regions_per_frame": 1.0,
+      "resample_change": 0.0,
+      "stages": {
+        "composite_ms": 0.9515,
+        "diffuse_ms": 15.6352,
+        "frame_path_ms": 16.6491,
+        "host_copy_ms": 0.1457,
+        "ipc_put_ms": 0.054,
+        "ipc_roundtrip_ms": 0.6497,
+        "preview_ms": 0.3565,
+        "resize_in_ms": 0.0084
+      },
+      "visible": true
+    },
+    {
+      "background": {
+        "background_pixels": 213844,
+        "frames": 48,
+        "identical_frames": 48,
+        "passed": true,
+        "statement": "48/48 frames left every pixel outside the rendered regions exactly as captured (213844 background pixels on the frame with the most painted)",
+        "worst_pixels_changed": 0
+      },
+      "capture_height": 512,
+      "capture_width": 512,
+      "clip_file": "",
+      "crop_frames": 48,
+      "denoise": {
+        "kind": "identity",
+        "met": true,
+        "points": [
+          {
+            "frames": 4,
+            "identity_frames": 4,
+            "identity_hits": 0,
+            "net_region_change": 5.4962,
+            "outside_change": 0.0,
+            "region_change": 7.4416,
+            "resample_change": 1.9454,
+            "strength": 0.323323,
+            "t_index": 45,
+            "timestep": 99
+          },
+          {
+            "frames": 4,
+            "identity_frames": 4,
+            "identity_hits": 0,
+            "net_region_change": 7.5956,
+            "outside_change": 0.0,
+            "region_change": 9.541,
+            "resample_change": 1.9454,
+            "strength": 0.494734,
+            "t_index": 40,
+            "timestep": 199
+          },
+          {
+            "frames": 4,
+            "identity_frames": 4,
+            "identity_hits": 0,
+            "net_region_change": 10.2464,
+            "outside_change": 0.0,
+            "region_change": 12.1918,
+            "resample_change": 1.9454,
+            "strength": 0.638606,
+            "t_index": 35,
+            "timestep": 299
+          },
+          {
+            "frames": 4,
+            "identity_frames": 4,
+            "identity_hits": 1,
+            "net_region_change": 13.3107,
+            "outside_change": 0.0,
+            "region_change": 15.2561,
+            "resample_change": 1.9454,
+            "strength": 0.757571,
+            "t_index": 30,
+            "timestep": 399
+          },
+          {
+            "frames": 4,
+            "identity_frames": 4,
+            "identity_hits": 3,
+            "net_region_change": 16.7834,
+            "outside_change": 0.0,
+            "region_change": 18.7288,
+            "resample_change": 1.9454,
+            "strength": 0.8499,
+            "t_index": 25,
+            "timestep": 499
+          },
+          {
+            "frames": 4,
+            "identity_frames": 4,
+            "identity_hits": 3,
+            "net_region_change": 20.5271,
+            "outside_change": 0.0,
+            "region_change": 22.4725,
+            "resample_change": 1.9454,
+            "strength": 0.915559,
+            "t_index": 20,
+            "timestep": 599
+          }
+        ],
+        "rule": "the least denoise at which the detector read at least 50% of the probed frames as the new identity",
+        "statement": "t_index 25 - timestep 499, denoise strength 0.85. Selected as the least denoise at which the detector read at least 50% of the probed frames as the new identity; it changed the region by 18.7/255 - 16.8 of it net of the 1.9/255 the resize alone costs - against 0.0/255 outside it, and was read as the new identity in 3/4 probed frames.",
+        "strength": 0.8499,
+        "t_index": 25,
+        "timestep": 499
+      },
+      "denoise_points": [
+        {
+          "frames": 4,
+          "identity_frames": 4,
+          "identity_hits": 3,
+          "net_region_change": 20.5271,
+          "outside_change": 0.0,
+          "region_change": 22.4725,
+          "resample_change": 1.9454,
+          "strength": 0.915559,
+          "t_index": 20,
+          "timestep": 599
+        },
+        {
+          "frames": 4,
+          "identity_frames": 4,
+          "identity_hits": 3,
+          "net_region_change": 16.7834,
+          "outside_change": 0.0,
+          "region_change": 18.7288,
+          "resample_change": 1.9454,
+          "strength": 0.8499,
+          "t_index": 25,
+          "timestep": 499
+        },
+        {
+          "frames": 4,
+          "identity_frames": 4,
+          "identity_hits": 1,
+          "net_region_change": 13.3107,
+          "outside_change": 0.0,
+          "region_change": 15.2561,
+          "resample_change": 1.9454,
+          "strength": 0.757571,
+          "t_index": 30,
+          "timestep": 399
+        },
+        {
+          "frames": 4,
+          "identity_frames": 4,
+          "identity_hits": 0,
+          "net_region_change": 10.2464,
+          "outside_change": 0.0,
+          "region_change": 12.1918,
+          "resample_change": 1.9454,
+          "strength": 0.638606,
+          "t_index": 35,
+          "timestep": 299
+        },
+        {
+          "frames": 4,
+          "identity_frames": 4,
+          "identity_hits": 0,
+          "net_region_change": 7.5956,
+          "outside_change": 0.0,
+          "region_change": 9.541,
+          "resample_change": 1.9454,
+          "strength": 0.494734,
+          "t_index": 40,
+          "timestep": 199
+        },
+        {
+          "frames": 4,
+          "identity_frames": 4,
+          "identity_hits": 0,
+          "net_region_change": 5.4962,
+          "outside_change": 0.0,
+          "region_change": 7.4416,
+          "resample_change": 1.9454,
+          "strength": 0.323323,
+          "t_index": 45,
+          "timestep": 99
+        }
+      ],
+      "detail": {
+        "canvas_px": 512.0,
+        "gain": 3.293,
+        "region_px": 155.5,
+        "statement": "a region 156 px across in a 512 px frame is diffused at 512 px under `crop`"
+      },
+      "diffusion_calls": 48,
+      "flicker": {
+        "frame_pixels": 262144,
+        "mean_abs_diff": 9.721044,
+        "note": "mean absolute difference between consecutive outputs over the 14498 pixels per pair that were static in the source (within 2/255) and painted in both frames; 0-255 units, lower is steadier",
+        "pairs": 47,
+        "pairs_scored": 47,
+        "per_pair_abs_diff": [
+          8.388257,
+          9.059878,
+          13.179529,
+          16.400657,
+          13.197046,
+          11.536056,
+          11.401773,
+          8.812549,
+          8.945591,
+          9.460028,
+          10.984068,
+          12.394573,
+          9.838211,
+          8.12756,
+          11.735599,
+          7.95997,
+          9.27948,
+          8.760448,
+          10.015951,
+          6.117426,
+          8.756479,
+          8.993736,
+          8.118454,
+          7.673051,
+          9.546009,
+          10.912653,
+          7.085098,
+          9.569455,
+          8.789645,
+          6.945735,
+          10.242617,
+          12.333984,
+          10.633394,
+          10.935236,
+          13.377794,
+          10.891374,
+          12.838096,
+          13.281747,
+          8.723083,
+          8.729814,
+          8.9269,
+          6.05327,
+          10.413451,
+          8.474068,
+          7.060202,
+          5.62439,
+          6.364674
+        ],
+        "static_fraction": 0.055305,
+        "static_pixels": 14498,
+        "threshold": 2.0
+      },
+      "fps": 60.2962,
+      "frames": 48,
+      "identity": {
+        "achieved": false,
+        "asked_for": [
+          "dog",
+          "cat"
+        ],
+        "became": 9,
+        "conf": 0.25,
+        "detector": "yolo-world-s-640",
+        "frames_probed": 48,
+        "remained": 33,
+        "statement": "Asked for `dog` and `cat` at conf 0.25, yolo-world-s-640 read 9 of 48 rendered frames as `cat` and 33 as still `dog`. The identity change does not read as achieved."
+      },
+      "latency": {
+        "max_ms": 17.6812,
+        "mean_ms": 16.5973,
+        "median_ms": 16.5391,
+        "min_ms": 15.7566,
+        "p95_ms": 17.1803,
+        "stdev_ms": 0.3806
+      },
+      "meets_budget": true,
+      "ms_per_frame": 16.5848,
+      "name": "crop-512x512",
+      "net_region_change": 15.907,
+      "primitive": "crop",
+      "region_change": 17.8401,
+      "regions_per_frame": 1.0,
+      "resample_change": 1.9331,
+      "stages": {
+        "composite_ms": 0.9518,
+        "diffuse_ms": 15.5426,
+        "frame_path_ms": 16.5848,
+        "host_copy_ms": 0.1568,
+        "ipc_put_ms": 0.0077,
+        "ipc_roundtrip_ms": 0.6593,
+        "preview_ms": 0.381,
+        "resize_in_ms": 0.0827
+      },
+      "visible": true
+    },
+    {
+      "background": {
+        "background_pixels": 751962,
+        "frames": 48,
+        "identical_frames": 48,
+        "passed": true,
+        "statement": "48/48 frames left every pixel outside the rendered regions exactly as captured (751962 background pixels on the frame with the most painted)",
+        "worst_pixels_changed": 0
+      },
+      "capture_height": 720,
+      "capture_width": 1280,
+      "clip_file": "",
+      "crop_frames": 0,
+      "denoise": {
+        "kind": "identity",
+        "met": true,
+        "points": [
+          {
+            "frames": 4,
+            "identity_frames": 4,
+            "identity_hits": 0,
+            "net_region_change": 11.046,
+            "outside_change": 0.0,
+            "region_change": 13.594,
+            "resample_change": 2.548,
+            "strength": 0.323323,
+            "t_index": 45,
+            "timestep": 99
+          },
+          {
+            "frames": 4,
+            "identity_frames": 4,
+            "identity_hits": 0,
+            "net_region_change": 15.43,
+            "outside_change": 0.0,
+            "region_change": 17.978,
+            "resample_change": 2.548,
+            "strength": 0.494734,
+            "t_index": 40,
+            "timestep": 199
+          },
+          {
+            "frames": 4,
+            "identity_frames": 4,
+            "identity_hits": 0,
+            "net_region_change": 20.0069,
+            "outside_change": 0.0,
+            "region_change": 22.5549,
+            "resample_change": 2.548,
+            "strength": 0.638606,
+            "t_index": 35,
+            "timestep": 299
+          },
+          {
+            "frames": 4,
+            "identity_frames": 4,
+            "identity_hits": 1,
+            "net_region_change": 23.6065,
+            "outside_change": 0.0,
+            "region_change": 26.1545,
+            "resample_change": 2.548,
+            "strength": 0.757571,
+            "t_index": 30,
+            "timestep": 399
+          },
+          {
+            "frames": 4,
+            "identity_frames": 4,
+            "identity_hits": 4,
+            "net_region_change": 28.9221,
+            "outside_change": 0.0,
+            "region_change": 31.4701,
+            "resample_change": 2.548,
+            "strength": 0.8499,
+            "t_index": 25,
+            "timestep": 499
+          },
+          {
+            "frames": 4,
+            "identity_frames": 4,
+            "identity_hits": 1,
+            "net_region_change": 34.9279,
+            "outside_change": 0.0,
+            "region_change": 37.4759,
+            "resample_change": 2.548,
+            "strength": 0.915559,
+            "t_index": 20,
+            "timestep": 599
+          }
+        ],
+        "rule": "the least denoise at which the detector read at least 50% of the probed frames as the new identity",
+        "statement": "t_index 25 - timestep 499, denoise strength 0.85. Selected as the least denoise at which the detector read at least 50% of the probed frames as the new identity; it changed the region by 31.5/255 - 28.9 of it net of the 2.5/255 the resize alone costs - against 0.0/255 outside it, and was read as the new identity in 4/4 probed frames.",
+        "strength": 0.8499,
+        "t_index": 25,
+        "timestep": 499
+      },
+      "denoise_points": [
+        {
+          "frames": 4,
+          "identity_frames": 4,
+          "identity_hits": 1,
+          "net_region_change": 34.9279,
+          "outside_change": 0.0,
+          "region_change": 37.4759,
+          "resample_change": 2.548,
+          "strength": 0.915559,
+          "t_index": 20,
+          "timestep": 599
+        },
+        {
+          "frames": 4,
+          "identity_frames": 4,
+          "identity_hits": 4,
+          "net_region_change": 28.9221,
+          "outside_change": 0.0,
+          "region_change": 31.4701,
+          "resample_change": 2.548,
+          "strength": 0.8499,
+          "t_index": 25,
+          "timestep": 499
+        },
+        {
+          "frames": 4,
+          "identity_frames": 4,
+          "identity_hits": 1,
+          "net_region_change": 23.6065,
+          "outside_change": 0.0,
+          "region_change": 26.1545,
+          "resample_change": 2.548,
+          "strength": 0.757571,
+          "t_index": 30,
+          "timestep": 399
+        },
+        {
+          "frames": 4,
+          "identity_frames": 4,
+          "identity_hits": 0,
+          "net_region_change": 20.0069,
+          "outside_change": 0.0,
+          "region_change": 22.5549,
+          "resample_change": 2.548,
+          "strength": 0.638606,
+          "t_index": 35,
+          "timestep": 299
+        },
+        {
+          "frames": 4,
+          "identity_frames": 4,
+          "identity_hits": 0,
+          "net_region_change": 15.43,
+          "outside_change": 0.0,
+          "region_change": 17.978,
+          "resample_change": 2.548,
+          "strength": 0.494734,
+          "t_index": 40,
+          "timestep": 199
+        },
+        {
+          "frames": 4,
+          "identity_frames": 4,
+          "identity_hits": 0,
+          "net_region_change": 11.046,
+          "outside_change": 0.0,
+          "region_change": 13.594,
+          "resample_change": 2.548,
+          "strength": 0.323323,
+          "t_index": 45,
+          "timestep": 99
+        }
+      ],
+      "detail": {
+        "canvas_px": 98.51,
+        "gain": 0.4,
+        "region_px": 246.27,
+        "statement": "a region 246 px across in a 1280 px frame is diffused at 99 px under `masked`"
+      },
+      "diffusion_calls": 48,
+      "flicker": {
+        "frame_pixels": 921600,
+        "mean_abs_diff": 16.528523,
+        "note": "mean absolute difference between consecutive outputs over the 50664 pixels per pair that were static in the source (within 2/255) and painted in both frames; 0-255 units, lower is steadier",
+        "pairs": 47,
+        "pairs_scored": 47,
+        "per_pair_abs_diff": [
+          20.330852,
+          22.633532,
+          21.636934,
+          17.7008,
+          13.777869,
+          14.647713,
+          15.249755,
+          9.254777,
+          12.806014,
+          13.783483,
+          8.075953,
+          19.654883,
+          10.524556,
+          16.218123,
+          12.507028,
+          20.776819,
+          17.963177,
+          33.83617,
+          14.044292,
+          13.861613,
+          17.906027,
+          14.770772,
+          15.654401,
+          22.007874,
+          19.921601,
+          12.088438,
+          25.368006,
+          32.057432,
+          19.735634,
+          21.115615,
+          21.426725,
+          21.523639,
+          12.701386,
+          13.122683,
+          20.140069,
+          18.253734,
+          15.539481,
+          14.653002,
+          14.188242,
+          15.626603,
+          11.139466,
+          14.385732,
+          9.166591,
+          11.747742,
+          9.105412,
+          12.490308,
+          11.719629
+        ],
+        "static_fraction": 0.054974,
+        "static_pixels": 50664,
+        "threshold": 2.0
+      },
+      "fps": 50.223,
+      "frames": 48,
+      "identity": {
+        "achieved": true,
+        "asked_for": [
+          "dog",
+          "cat"
+        ],
+        "became": 38,
+        "conf": 0.25,
+        "detector": "yolo-world-s-640",
+        "frames_probed": 48,
+        "remained": 16,
+        "statement": "Asked for `dog` and `cat` at conf 0.25, yolo-world-s-640 read 38 of 48 rendered frames as `cat` and 16 as still `dog`. The identity change reads as achieved."
+      },
+      "latency": {
+        "max_ms": 27.9823,
+        "mean_ms": 19.9253,
+        "median_ms": 18.4647,
+        "min_ms": 17.8581,
+        "p95_ms": 25.4711,
+        "stdev_ms": 2.913
+      },
+      "meets_budget": true,
+      "ms_per_frame": 19.9112,
+      "name": "masked-1280x720",
+      "net_region_change": 28.7086,
+      "primitive": "masked",
+      "region_change": 31.2128,
+      "regions_per_frame": 1.0,
+      "resample_change": 2.5042,
+      "stages": {
+        "composite_ms": 2.2056,
+        "diffuse_ms": 17.5815,
+        "frame_path_ms": 19.9112,
+        "host_copy_ms": 0.335,
+        "ipc_put_ms": 0.0097,
+        "ipc_roundtrip_ms": 4.0195,
+        "preview_ms": 5.0819,
+        "resize_in_ms": 0.1144
+      },
+      "visible": true
+    },
+    {
+      "background": {
+        "background_pixels": 751962,
+        "frames": 48,
+        "identical_frames": 48,
+        "passed": true,
+        "statement": "48/48 frames left every pixel outside the rendered regions exactly as captured (751962 background pixels on the frame with the most painted)",
+        "worst_pixels_changed": 0
+      },
+      "capture_height": 720,
+      "capture_width": 1280,
+      "clip_file": "",
+      "crop_frames": 48,
+      "denoise": {
+        "kind": "identity",
+        "met": true,
+        "points": [
+          {
+            "frames": 4,
+            "identity_frames": 4,
+            "identity_hits": 0,
+            "net_region_change": 6.6734,
+            "outside_change": 0.0,
+            "region_change": 7.7101,
+            "resample_change": 1.0367,
+            "strength": 0.323323,
+            "t_index": 45,
+            "timestep": 99
+          },
+          {
+            "frames": 4,
+            "identity_frames": 4,
+            "identity_hits": 0,
+            "net_region_change": 9.0024,
+            "outside_change": 0.0,
+            "region_change": 10.0391,
+            "resample_change": 1.0367,
+            "strength": 0.494734,
+            "t_index": 40,
+            "timestep": 199
+          },
+          {
+            "frames": 4,
+            "identity_frames": 4,
+            "identity_hits": 0,
+            "net_region_change": 11.802,
+            "outside_change": 0.0,
+            "region_change": 12.8387,
+            "resample_change": 1.0367,
+            "strength": 0.638606,
+            "t_index": 35,
+            "timestep": 299
+          },
+          {
+            "frames": 4,
+            "identity_frames": 4,
+            "identity_hits": 0,
+            "net_region_change": 15.156,
+            "outside_change": 0.0,
+            "region_change": 16.1927,
+            "resample_change": 1.0367,
+            "strength": 0.757571,
+            "t_index": 30,
+            "timestep": 399
+          },
+          {
+            "frames": 4,
+            "identity_frames": 4,
+            "identity_hits": 0,
+            "net_region_change": 19.0022,
+            "outside_change": 0.0,
+            "region_change": 20.0389,
+            "resample_change": 1.0367,
+            "strength": 0.8499,
+            "t_index": 25,
+            "timestep": 499
+          },
+          {
+            "frames": 4,
+            "identity_frames": 4,
+            "identity_hits": 2,
+            "net_region_change": 23.4407,
+            "outside_change": 0.0,
+            "region_change": 24.4774,
+            "resample_change": 1.0367,
+            "strength": 0.915559,
+            "t_index": 20,
+            "timestep": 599
+          }
+        ],
+        "rule": "the least denoise at which the detector read at least 50% of the probed frames as the new identity",
+        "statement": "t_index 20 - timestep 599, denoise strength 0.92. Selected as the least denoise at which the detector read at least 50% of the probed frames as the new identity; it changed the region by 24.5/255 - 23.4 of it net of the 1.0/255 the resize alone costs - against 0.0/255 outside it, and was read as the new identity in 2/4 probed frames.",
+        "strength": 0.915559,
+        "t_index": 20,
+        "timestep": 599
+      },
+      "denoise_points": [
+        {
+          "frames": 4,
+          "identity_frames": 4,
+          "identity_hits": 2,
+          "net_region_change": 23.4407,
+          "outside_change": 0.0,
+          "region_change": 24.4774,
+          "resample_change": 1.0367,
+          "strength": 0.915559,
+          "t_index": 20,
+          "timestep": 599
+        },
+        {
+          "frames": 4,
+          "identity_frames": 4,
+          "identity_hits": 0,
+          "net_region_change": 19.0022,
+          "outside_change": 0.0,
+          "region_change": 20.0389,
+          "resample_change": 1.0367,
+          "strength": 0.8499,
+          "t_index": 25,
+          "timestep": 499
+        },
+        {
+          "frames": 4,
+          "identity_frames": 4,
+          "identity_hits": 0,
+          "net_region_change": 15.156,
+          "outside_change": 0.0,
+          "region_change": 16.1927,
+          "resample_change": 1.0367,
+          "strength": 0.757571,
+          "t_index": 30,
+          "timestep": 399
+        },
+        {
+          "frames": 4,
+          "identity_frames": 4,
+          "identity_hits": 0,
+          "net_region_change": 11.802,
+          "outside_change": 0.0,
+          "region_change": 12.8387,
+          "resample_change": 1.0367,
+          "strength": 0.638606,
+          "t_index": 35,
+          "timestep": 299
+        },
+        {
+          "frames": 4,
+          "identity_frames": 4,
+          "identity_hits": 0,
+          "net_region_change": 9.0024,
+          "outside_change": 0.0,
+          "region_change": 10.0391,
+          "resample_change": 1.0367,
+          "strength": 0.494734,
+          "t_index": 40,
+          "timestep": 199
+        },
+        {
+          "frames": 4,
+          "identity_frames": 4,
+          "identity_hits": 0,
+          "net_region_change": 6.6734,
+          "outside_change": 0.0,
+          "region_change": 7.7101,
+          "resample_change": 1.0367,
+          "strength": 0.323323,
+          "t_index": 45,
+          "timestep": 99
+        }
+      ],
+      "detail": {
+        "canvas_px": 512.0,
+        "gain": 2.079,
+        "region_px": 246.27,
+        "statement": "a region 246 px across in a 1280 px frame is diffused at 512 px under `crop`"
+      },
+      "diffusion_calls": 48,
+      "flicker": {
+        "frame_pixels": 921600,
+        "mean_abs_diff": 14.396179,
+        "note": "mean absolute difference between consecutive outputs over the 50664 pixels per pair that were static in the source (within 2/255) and painted in both frames; 0-255 units, lower is steadier",
+        "pairs": 47,
+        "pairs_scored": 47,
+        "per_pair_abs_diff": [
+          11.028165,
+          15.90601,
+          15.495848,
+          26.104702,
+          20.718059,
+          18.986599,
+          21.143389,
+          23.82718,
+          20.915942,
+          22.879878,
+          16.255705,
+          19.150597,
+          17.242238,
+          14.373359,
+          14.860169,
+          14.023356,
+          10.096268,
+          12.615537,
+          12.563445,
+          11.763731,
+          11.203528,
+          13.969205,
+          11.464187,
+          14.280705,
+          12.732965,
+          13.884846,
+          16.807228,
+          16.791144,
+          15.239213,
+          9.168452,
+          12.237952,
+          14.031641,
+          11.785536,
+          16.697147,
+          13.463866,
+          12.295865,
+          15.270749,
+          17.652047,
+          12.6183,
+          12.165743,
+          9.303574,
+          10.203039,
+          6.569707,
+          9.841188,
+          7.503835,
+          9.768125,
+          9.720473
+        ],
+        "static_fraction": 0.054974,
+        "static_pixels": 50664,
+        "threshold": 2.0
+      },
+      "fps": 54.7894,
+      "frames": 48,
+      "identity": {
+        "achieved": false,
+        "asked_for": [
+          "dog",
+          "cat"
+        ],
+        "became": 10,
+        "conf": 0.25,
+        "detector": "yolo-world-s-640",
+        "frames_probed": 48,
+        "remained": 24,
+        "statement": "Asked for `dog` and `cat` at conf 0.25, yolo-world-s-640 read 10 of 48 rendered frames as `cat` and 24 as still `dog`. The identity change does not read as achieved."
+      },
+      "latency": {
+        "max_ms": 20.1119,
+        "mean_ms": 18.2643,
+        "median_ms": 18.1834,
+        "min_ms": 17.44,
+        "p95_ms": 19.2942,
+        "stdev_ms": 0.5216
+      },
+      "meets_budget": true,
+      "ms_per_frame": 18.2517,
+      "name": "crop-1280x720",
+      "net_region_change": 22.6485,
+      "primitive": "crop",
+      "region_change": 23.7143,
+      "regions_per_frame": 1.0,
+      "resample_change": 1.0658,
+      "stages": {
+        "composite_ms": 2.0874,
+        "diffuse_ms": 16.061,
+        "frame_path_ms": 18.2517,
+        "host_copy_ms": 0.3378,
+        "ipc_put_ms": 0.0103,
+        "ipc_roundtrip_ms": 4.8923,
+        "preview_ms": 5.0867,
+        "resize_in_ms": 0.093
+      },
+      "visible": true
+    },
+    {
+      "background": {
+        "background_pixels": 1691712,
+        "frames": 48,
+        "identical_frames": 48,
+        "passed": true,
+        "statement": "48/48 frames left every pixel outside the rendered regions exactly as captured (1691712 background pixels on the frame with the most painted)",
+        "worst_pixels_changed": 0
+      },
+      "capture_height": 1080,
+      "capture_width": 1920,
+      "clip_file": "",
+      "crop_frames": 0,
+      "denoise": {
+        "kind": "identity",
+        "met": true,
+        "points": [
+          {
+            "frames": 4,
+            "identity_frames": 4,
+            "identity_hits": 0,
+            "net_region_change": 11.1584,
+            "outside_change": 0.0,
+            "region_change": 13.6746,
+            "resample_change": 2.5162,
+            "strength": 0.323323,
+            "t_index": 45,
+            "timestep": 99
+          },
+          {
+            "frames": 4,
+            "identity_frames": 4,
+            "identity_hits": 0,
+            "net_region_change": 15.5778,
+            "outside_change": 0.0,
+            "region_change": 18.094,
+            "resample_change": 2.5162,
+            "strength": 0.494734,
+            "t_index": 40,
+            "timestep": 199
+          },
+          {
+            "frames": 4,
+            "identity_frames": 4,
+            "identity_hits": 0,
+            "net_region_change": 20.1573,
+            "outside_change": 0.0,
+            "region_change": 22.6735,
+            "resample_change": 2.5162,
+            "strength": 0.638606,
+            "t_index": 35,
+            "timestep": 299
+          },
+          {
+            "frames": 4,
+            "identity_frames": 4,
+            "identity_hits": 1,
+            "net_region_change": 23.7004,
+            "outside_change": 0.0,
+            "region_change": 26.2166,
+            "resample_change": 2.5162,
+            "strength": 0.757571,
+            "t_index": 30,
+            "timestep": 399
+          },
+          {
+            "frames": 4,
+            "identity_frames": 4,
+            "identity_hits": 4,
+            "net_region_change": 29.391,
+            "outside_change": 0.0,
+            "region_change": 31.9072,
+            "resample_change": 2.5162,
+            "strength": 0.8499,
+            "t_index": 25,
+            "timestep": 499
+          },
+          {
+            "frames": 4,
+            "identity_frames": 4,
+            "identity_hits": 1,
+            "net_region_change": 35.3114,
+            "outside_change": 0.0,
+            "region_change": 37.8276,
+            "resample_change": 2.5162,
+            "strength": 0.915559,
+            "t_index": 20,
+            "timestep": 599
+          }
+        ],
+        "rule": "the least denoise at which the detector read at least 50% of the probed frames as the new identity",
+        "statement": "t_index 25 - timestep 499, denoise strength 0.85. Selected as the least denoise at which the detector read at least 50% of the probed frames as the new identity; it changed the region by 31.9/255 - 29.4 of it net of the 2.5/255 the resize alone costs - against 0.0/255 outside it, and was read as the new identity in 4/4 probed frames.",
+        "strength": 0.8499,
+        "t_index": 25,
+        "timestep": 499
+      },
+      "denoise_points": [
+        {
+          "frames": 4,
+          "identity_frames": 4,
+          "identity_hits": 1,
+          "net_region_change": 35.3114,
+          "outside_change": 0.0,
+          "region_change": 37.8276,
+          "resample_change": 2.5162,
+          "strength": 0.915559,
+          "t_index": 20,
+          "timestep": 599
+        },
+        {
+          "frames": 4,
+          "identity_frames": 4,
+          "identity_hits": 4,
+          "net_region_change": 29.391,
+          "outside_change": 0.0,
+          "region_change": 31.9072,
+          "resample_change": 2.5162,
+          "strength": 0.8499,
+          "t_index": 25,
+          "timestep": 499
+        },
+        {
+          "frames": 4,
+          "identity_frames": 4,
+          "identity_hits": 1,
+          "net_region_change": 23.7004,
+          "outside_change": 0.0,
+          "region_change": 26.2166,
+          "resample_change": 2.5162,
+          "strength": 0.757571,
+          "t_index": 30,
+          "timestep": 399
+        },
+        {
+          "frames": 4,
+          "identity_frames": 4,
+          "identity_hits": 0,
+          "net_region_change": 20.1573,
+          "outside_change": 0.0,
+          "region_change": 22.6735,
+          "resample_change": 2.5162,
+          "strength": 0.638606,
+          "t_index": 35,
+          "timestep": 299
+        },
+        {
+          "frames": 4,
+          "identity_frames": 4,
+          "identity_hits": 0,
+          "net_region_change": 15.5778,
+          "outside_change": 0.0,
+          "region_change": 18.094,
+          "resample_change": 2.5162,
+          "strength": 0.494734,
+          "t_index": 40,
+          "timestep": 199
+        },
+        {
+          "frames": 4,
+          "identity_frames": 4,
+          "identity_hits": 0,
+          "net_region_change": 11.1584,
+          "outside_change": 0.0,
+          "region_change": 13.6746,
+          "resample_change": 2.5162,
+          "strength": 0.323323,
+          "t_index": 45,
+          "timestep": 99
+        }
+      ],
+      "detail": {
+        "canvas_px": 98.54,
+        "gain": 0.267,
+        "region_px": 369.54,
+        "statement": "a region 370 px across in a 1920 px frame is diffused at 99 px under `masked`"
+      },
+      "diffusion_calls": 48,
+      "flicker": {
+        "frame_pixels": 2073600,
+        "mean_abs_diff": 16.737354,
+        "note": "mean absolute difference between consecutive outputs over the 114105 pixels per pair that were static in the source (within 2/255) and painted in both frames; 0-255 units, lower is steadier",
+        "pairs": 47,
+        "pairs_scored": 47,
+        "per_pair_abs_diff": [
+          21.034389,
+          23.369451,
+          22.646395,
+          18.753505,
+          13.250996,
+          14.589816,
+          15.083625,
+          9.36119,
+          12.483588,
+          13.240176,
+          8.101423,
+          19.551455,
+          10.505607,
+          16.554409,
+          12.277974,
+          21.306329,
+          18.074013,
+          34.366651,
+          14.070812,
+          14.513514,
+          17.899738,
+          15.216474,
+          16.261643,
+          22.583382,
+          19.959434,
+          11.884791,
+          25.456421,
+          32.480036,
+          20.600802,
+          21.088391,
+          21.526336,
+          21.686367,
+          12.590205,
+          13.153183,
+          20.486719,
+          18.307259,
+          15.479262,
+          14.64574,
+          15.279412,
+          16.883591,
+          10.601873,
+          14.37056,
+          9.066801,
+          11.442781,
+          9.342091,
+          12.528715,
+          12.698301
+        ],
+        "static_fraction": 0.055027,
+        "static_pixels": 114105,
+        "threshold": 2.0
+      },
+      "fps": 45.8274,
+      "frames": 48,
+      "identity": {
+        "achieved": true,
+        "asked_for": [
+          "dog",
+          "cat"
+        ],
+        "became": 39,
+        "conf": 0.25,
+        "detector": "yolo-world-s-640",
+        "frames_probed": 48,
+        "remained": 15,
+        "statement": "Asked for `dog` and `cat` at conf 0.25, yolo-world-s-640 read 39 of 48 rendered frames as `cat` and 15 as still `dog`. The identity change reads as achieved."
+      },
+      "latency": {
+        "max_ms": 34.4986,
+        "mean_ms": 21.8343,
+        "median_ms": 20.9044,
+        "min_ms": 19.6619,
+        "p95_ms": 29.712,
+        "stdev_ms": 3.2229
+      },
+      "meets_budget": true,
+      "ms_per_frame": 21.821,
+      "name": "masked-1920x1080",
+      "net_region_change": 29.0278,
+      "primitive": "masked",
+      "region_change": 31.4854,
+      "regions_per_frame": 1.0,
+      "resample_change": 2.4576,
+      "stages": {
+        "composite_ms": 5.0897,
+        "diffuse_ms": 16.559,
+        "frame_path_ms": 21.821,
+        "host_copy_ms": 1.3495,
+        "ipc_put_ms": 0.012,
+        "ipc_roundtrip_ms": 9.0336,
+        "preview_ms": 10.0008,
+        "resize_in_ms": 0.1603
+      },
+      "visible": true
+    },
+    {
+      "background": {
+        "background_pixels": 1691712,
+        "frames": 48,
+        "identical_frames": 48,
+        "passed": true,
+        "statement": "48/48 frames left every pixel outside the rendered regions exactly as captured (1691712 background pixels on the frame with the most painted)",
+        "worst_pixels_changed": 0
+      },
+      "capture_height": 1080,
+      "capture_width": 1920,
+      "clip_file": "",
+      "crop_frames": 48,
+      "denoise": {
+        "kind": "identity",
+        "met": true,
+        "points": [
+          {
+            "frames": 4,
+            "identity_frames": 4,
+            "identity_hits": 0,
+            "net_region_change": 7.2526,
+            "outside_change": 0.0,
+            "region_change": 7.8006,
+            "resample_change": 0.548,
+            "strength": 0.323323,
+            "t_index": 45,
+            "timestep": 99
+          },
+          {
+            "frames": 4,
+            "identity_frames": 4,
+            "identity_hits": 0,
+            "net_region_change": 9.5972,
+            "outside_change": 0.0,
+            "region_change": 10.1452,
+            "resample_change": 0.548,
+            "strength": 0.494734,
+            "t_index": 40,
+            "timestep": 199
+          },
+          {
+            "frames": 4,
+            "identity_frames": 4,
+            "identity_hits": 0,
+            "net_region_change": 12.3975,
+            "outside_change": 0.0,
+            "region_change": 12.9455,
+            "resample_change": 0.548,
+            "strength": 0.638606,
+            "t_index": 35,
+            "timestep": 299
+          },
+          {
+            "frames": 4,
+            "identity_frames": 4,
+            "identity_hits": 0,
+            "net_region_change": 15.7888,
+            "outside_change": 0.0,
+            "region_change": 16.3368,
+            "resample_change": 0.548,
+            "strength": 0.757571,
+            "t_index": 30,
+            "timestep": 399
+          },
+          {
+            "frames": 4,
+            "identity_frames": 4,
+            "identity_hits": 0,
+            "net_region_change": 19.7165,
+            "outside_change": 0.0,
+            "region_change": 20.2645,
+            "resample_change": 0.548,
+            "strength": 0.8499,
+            "t_index": 25,
+            "timestep": 499
+          },
+          {
+            "frames": 4,
+            "identity_frames": 4,
+            "identity_hits": 2,
+            "net_region_change": 24.3584,
+            "outside_change": 0.0,
+            "region_change": 24.9064,
+            "resample_change": 0.548,
+            "strength": 0.915559,
+            "t_index": 20,
+            "timestep": 599
+          }
+        ],
+        "rule": "the least denoise at which the detector read at least 50% of the probed frames as the new identity",
+        "statement": "t_index 20 - timestep 599, denoise strength 0.92. Selected as the least denoise at which the detector read at least 50% of the probed frames as the new identity; it changed the region by 24.9/255 - 24.4 of it net of the 0.5/255 the resize alone costs - against 0.0/255 outside it, and was read as the new identity in 2/4 probed frames.",
+        "strength": 0.915559,
+        "t_index": 20,
+        "timestep": 599
+      },
+      "denoise_points": [
+        {
+          "frames": 4,
+          "identity_frames": 4,
+          "identity_hits": 2,
+          "net_region_change": 24.3584,
+          "outside_change": 0.0,
+          "region_change": 24.9064,
+          "resample_change": 0.548,
+          "strength": 0.915559,
+          "t_index": 20,
+          "timestep": 599
+        },
+        {
+          "frames": 4,
+          "identity_frames": 4,
+          "identity_hits": 0,
+          "net_region_change": 19.7165,
+          "outside_change": 0.0,
+          "region_change": 20.2645,
+          "resample_change": 0.548,
+          "strength": 0.8499,
+          "t_index": 25,
+          "timestep": 499
+        },
+        {
+          "frames": 4,
+          "identity_frames": 4,
+          "identity_hits": 0,
+          "net_region_change": 15.7888,
+          "outside_change": 0.0,
+          "region_change": 16.3368,
+          "resample_change": 0.548,
+          "strength": 0.757571,
+          "t_index": 30,
+          "timestep": 399
+        },
+        {
+          "frames": 4,
+          "identity_frames": 4,
+          "identity_hits": 0,
+          "net_region_change": 12.3975,
+          "outside_change": 0.0,
+          "region_change": 12.9455,
+          "resample_change": 0.548,
+          "strength": 0.638606,
+          "t_index": 35,
+          "timestep": 299
+        },
+        {
+          "frames": 4,
+          "identity_frames": 4,
+          "identity_hits": 0,
+          "net_region_change": 9.5972,
+          "outside_change": 0.0,
+          "region_change": 10.1452,
+          "resample_change": 0.548,
+          "strength": 0.494734,
+          "t_index": 40,
+          "timestep": 199
+        },
+        {
+          "frames": 4,
+          "identity_frames": 4,
+          "identity_hits": 0,
+          "net_region_change": 7.2526,
+          "outside_change": 0.0,
+          "region_change": 7.8006,
+          "resample_change": 0.548,
+          "strength": 0.323323,
+          "t_index": 45,
+          "timestep": 99
+        }
+      ],
+      "detail": {
+        "canvas_px": 512.0,
+        "gain": 1.386,
+        "region_px": 369.54,
+        "statement": "a region 370 px across in a 1920 px frame is diffused at 512 px under `crop`"
+      },
+      "diffusion_calls": 48,
+      "flicker": {
+        "frame_pixels": 2073600,
+        "mean_abs_diff": 14.787784,
+        "note": "mean absolute difference between consecutive outputs over the 114105 pixels per pair that were static in the source (within 2/255) and painted in both frames; 0-255 units, lower is steadier",
+        "pairs": 47,
+        "pairs_scored": 47,
+        "per_pair_abs_diff": [
+          11.725335,
+          15.92835,
+          15.862237,
+          25.50161,
+          22.589279,
+          18.6584,
+          18.726009,
+          24.395117,
+          21.655707,
+          22.329918,
+          16.811912,
+          19.68293,
+          17.652112,
+          16.060943,
+          15.642967,
+          14.259433,
+          10.904854,
+          11.619177,
+          13.410501,
+          13.356188,
+          12.065941,
+          12.819638,
+          11.391344,
+          15.783909,
+          12.439672,
+          14.055422,
+          20.526979,
+          17.378473,
+          15.508397,
+          11.228438,
+          13.301604,
+          14.647381,
+          12.975879,
+          16.590275,
+          13.909728,
+          12.951779,
+          15.388766,
+          16.825397,
+          12.391911,
+          11.439033,
+          9.160191,
+          9.392498,
+          7.455235,
+          11.012898,
+          7.616971,
+          8.852942,
+          11.142162
+        ],
+        "static_fraction": 0.055027,
+        "static_pixels": 114105,
+        "threshold": 2.0
+      },
+      "fps": 45.9798,
+      "frames": 48,
+      "identity": {
+        "achieved": false,
+        "asked_for": [
+          "dog",
+          "cat"
+        ],
+        "became": 9,
+        "conf": 0.25,
+        "detector": "yolo-world-s-640",
+        "frames_probed": 48,
+        "remained": 23,
+        "statement": "Asked for `dog` and `cat` at conf 0.25, yolo-world-s-640 read 9 of 48 rendered frames as `cat` and 23 as still `dog`. The identity change does not read as achieved."
+      },
+      "latency": {
+        "max_ms": 34.3397,
+        "mean_ms": 21.7636,
+        "median_ms": 20.8336,
+        "min_ms": 19.689,
+        "p95_ms": 34.0959,
+        "stdev_ms": 3.3277
+      },
+      "meets_budget": true,
+      "ms_per_frame": 21.7487,
+      "name": "crop-1920x1080",
+      "net_region_change": 23.3952,
+      "primitive": "crop",
+      "region_change": 24.0073,
+      "regions_per_frame": 1.0,
+      "resample_change": 0.6121,
+      "stages": {
+        "composite_ms": 4.8516,
+        "diffuse_ms": 16.7599,
+        "frame_path_ms": 21.7487,
+        "host_copy_ms": 1.346,
+        "ipc_put_ms": 0.0125,
+        "ipc_roundtrip_ms": 9.6571,
+        "preview_ms": 9.8178,
+        "resize_in_ms": 0.1247
+      },
+      "visible": true
+    }
+  ],
+  "case": {
+    "becomes": "cat",
+    "clip": "dog.mp4",
+    "concept": "dog",
+    "denoise": 0.92,
+    "denoise_ladder": [
+      20,
+      25,
+      30,
+      35,
+      40,
+      45
+    ],
+    "frames": 48,
+    "geometries": [
+      [
+        512,
+        512
+      ],
+      [
+        1280,
+        720
+      ],
+      [
+        1920,
+        1080
+      ]
+    ],
+    "kind": "identity",
+    "max_instances": 1,
+    "name": "capture-dog",
+    "note": "The identity case re-run at the new geometry (the issue's step 5). Crop lost this case at every rung of spec 8.2's ladder on 45-293 px crops out of a 1280 px frame; a 1080p capture changes that input.",
+    "primitives": [
+      "masked",
+      "crop"
+    ],
+    "probe_frames": 8,
+    "prompt": "a cat, feline face, whiskers, pointed ears, photograph",
+    "region": "full_box",
+    "start_frame": 0,
+    "sweep_frames": 4,
+    "warmup_frames": 3
+  },
+  "clip": {
+    "fps": 24.0,
+    "frames_used": 48,
+    "height": 540,
+    "name": "dog.mp4",
+    "sha256": "66d334a83a12344f39385878c7fbff7489748e3837292a7a1e636922af5b65c1",
+    "start_frame": 0,
+    "total_frames": 228,
+    "width": 960
+  },
+  "clock_normalization": {
+    "basis_mhz": 3150.0,
+    "basis_source": "clocks.max.sm",
+    "method": "ms_per_frame * time-weighted mean SM clock / basis clock",
+    "ms_per_frame": 6.5739,
+    "note": "Clocks were not locked (unlocked), so the raw figure carries this run's clock. This is a first-order estimate of the same work at 3150 MHz, not a measurement, and not a substitute for `nvidia-smi --lock-gpu-clocks` from an elevated shell.",
+    "regime": "unlocked",
+    "sampled_mean_sm_clock_mhz": 1243.8
+  },
+  "comparison_clip": "capture-dog-20260907-173054Z-triptych.mp4",
+  "comparison_still": "capture-dog-20260907-173054Z-triptych.jpg",
+  "cooldown": {
+    "cap_s": 120.0,
+    "enabled": true,
+    "final_temperature_c": 37.0,
+    "outcome": "reached",
+    "reached": true,
+    "samples": [
+      [
+        0.031000000000858563,
+        37.0
+      ]
+    ],
+    "threshold_c": 62.0,
+    "waited_s": 0.031000000000858563
+  },
+  "hardware": {
+    "clock_lock": {
+      "applied_clock_mhz": null,
+      "current_sm_clock_mhz": 210.0,
+      "evidence": "clocks_event_reasons.applications_clocks_setting=Not Active",
+      "max_sm_clock_mhz": 3150.0,
+      "state": "unlocked"
+    },
+    "cuda_version": "12.8",
+    "driver_version": "610.47",
+    "enforced_power_limit_w": 500.0,
+    "gpu_name": "NVIDIA GeForce RTX 4090",
+    "hostname": "DESKTOP-7OBJQKB",
+    "nvidia_smi_captured_utc": "2026-09-07T17:29:33Z",
+    "nvidia_smi_raw": "Mon Sep  7 19:29:33 2026       \n+-----------------------------------------------------------------------------------------+\n| NVIDIA-SMI 610.47                 KMD Version: 610.47        CUDA UMD Version: 13.3     |\n+-----------------------------------------+------------------------+----------------------+\n| GPU  Name                  Driver-Model | Bus-Id          Disp.A | Volatile Uncorr. ECC |\n| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |\n|                                         |                        |               MIG M. |\n|=========================================+========================+======================|\n|   0  NVIDIA GeForce RTX 4090      WDDM  |   00000000:01:00.0  On |                  Off |\n|  0%   35C    P8             27W /  500W |     945MiB /  24564MiB |      7%      Default |\n|                                         |                        |                  N/A |\n+-----------------------------------------+------------------------+----------------------+\n\n+-----------------------------------------------------------------------------------------+\n| Processes:                                                                              |\n|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |\n|        ID   ID                                                               Usage      |\n|=========================================================================================|\n|    0   N/A  N/A            1724    C+G   ...ntrolPanel\\SystemSettings.exe      N/A      |\n|    0   N/A  N/A            2816    C+G   C:\\Windows\\explorer.exe               N/A      |\n|    0   N/A  N/A            3648    C+G   ...5n1h2txyewy\\TextInputHost.exe      N/A      |\n|    0   N/A  N/A            3692    C+G   ...32-x64\\open-stage-control.exe      N/A      |\n|    0   N/A  N/A            4452    C+G   ...yb3d8bbwe\\WindowsTerminal.exe      N/A      |\n|    0   N/A  N/A           12072    C+G   ...vv_gamma_7.1-win-x64\\vvvv.exe      N/A      |\n|    0   N/A  N/A           12208    C+G   ...h_cw5n1h2txyewy\\SearchApp.exe      N/A      |\n|    0   N/A  N/A           12660    C+G   ...App_cw5n1h2txyewy\\LockApp.exe      N/A      |\n|    0   N/A  N/A           12752    C+G   ...ms\\t3code\\T3 Code (Alpha).exe      N/A      |\n|    0   N/A  N/A           12864    C+G   ...mmaLauncher\\GammaLauncher.exe      N/A      |\n|    0   N/A  N/A           13024    C+G   ...bs-studio\\bin\\64bit\\obs64.exe      N/A      |\n|    0   N/A  N/A           14768    C+G   ...6)\\Dropbox\\Client\\Dropbox.exe      N/A      |\n|    0   N/A  N/A           17148    C+G   ...xyewy\\ShellExperienceHost.exe      N/A      |\n|    0   N/A  N/A           19156    C+G   ...Chrome\\Application\\chrome.exe      N/A      |\n+-----------------------------------------------------------------------------------------+\n",
+    "power_limit_w": 500.0,
+    "torch_version": "2.7.0+cu128",
+    "total_vram_mib": 24564.0
+  },
+  "kind": "capture-geometry",
+  "occupancy": {
+    "clear": false,
+    "mean_utilization_pct": 16.0,
+    "outcome": "busy",
+    "samples": [
+      61.0,
+      1.0,
+      1.0,
+      1.0
+    ],
+    "threshold_pct": 10.0
+  },
+  "run": {
+    "canvas": 512,
+    "engine_scenario": "img2img-tensorrt-512x512-b1",
+    "finished_utc": "2026-09-07T17:30:54Z",
+    "gpu_samples": [
+      [
+        0.035112899999148794,
+        2730.0,
+        37.0
+      ],
+      [
+        0.5691998000002059,
+        645.0,
+        36.0
+      ],
+      [
+        1.1094671999999264,
+        1785.0,
+        36.0
+      ],
+      [
+        1.6466607999991538,
+        2730.0,
+        37.0
+      ],
+      [
+        2.1753291000004538,
+        2730.0,
+        37.0
+      ],
+      [
+        2.7045436999997037,
+        2730.0,
+        39.0
+      ],
+      [
+        3.2333295999997063,
+        2730.0,
+        42.0
+      ],
+      [
+        3.760426400000142,
+        2715.0,
+        48.0
+      ],
+      [
+        4.298163299999942,
+        2715.0,
+        48.0
+      ],
+      [
+        4.826987499998722,
+        2730.0,
+        38.0
+      ],
+      [
+        5.362792199999603,
+        2730.0,
+        40.0
+      ],
+      [
+        5.892064499999833,
+        1545.0,
+        37.0
+      ],
+      [
+        6.424925799999983,
+        1920.0,
+        39.0
+      ],
+      [
+        6.95468339999934,
+        2610.0,
+        41.0
+      ],
+      [
+        7.481925500000216,
+        2715.0,
+        48.0
+      ],
+      [
+        8.010943499999485,
+        2715.0,
+        49.0
+      ],
+      [
+        8.540321399999812,
+        2730.0,
+        39.0
+      ],
+      [
+        9.070411900000181,
+        2730.0,
+        41.0
+      ],
+      [
+        9.602934900000037,
+        2730.0,
+        38.0
+      ],
+      [
+        10.132200199999716,
+        1410.0,
+        38.0
+      ],
+      [
+        10.664305799999056,
+        1170.0,
+        38.0
+      ],
+      [
+        11.195220800000243,
+        1140.0,
+        38.0
+      ],
+      [
+        11.723526599998877,
+        1185.0,
+        40.0
+      ],
+      [
+        12.253929000000426,
+        1185.0,
+        38.0
+      ],
+      [
+        12.78283620000002,
+        1200.0,
+        38.0
+      ],
+      [
+        13.310437099999035,
+        2715.0,
+        46.0
+      ],
+      [
+        13.841037500000311,
+        2715.0,
+        48.0
+      ],
+      [
+        14.380878500000108,
+        2730.0,
+        39.0
+      ],
+      [
+        14.910466299999825,
+        2730.0,
+        39.0
+      ],
+      [
+        15.44320340000013,
+        675.0,
+        38.0
+      ],
+      [
+        15.971501099998932,
+        585.0,
+        37.0
+      ],
+      [
+        16.502390599998762,
+        1005.0,
+        38.0
+      ],
+      [
+        17.03340339999886,
+        1005.0,
+        37.0
+      ],
+      [
+        17.56316499999957,
+        1005.0,
+        37.0
+      ],
+      [
+        18.09227439999995,
+        1005.0,
+        37.0
+      ],
+      [
+        18.623467600000367,
+        270.0,
+        37.0
+      ],
+      [
+        19.150944699998945,
+        255.0,
+        37.0
+      ],
+      [
+        19.682755599998927,
+        210.0,
+        37.0
+      ],
+      [
+        20.211918299999525,
+        210.0,
+        37.0
+      ],
+      [
+        20.741592899999887,
+        300.0,
+        37.0
+      ],
+      [
+        21.27229830000033,
+        1005.0,
+        38.0
+      ],
+      [
+        21.80078929999945,
+        2325.0,
+        38.0
+      ],
+      [
+        22.330395199998748,
+        2325.0,
+        38.0
+      ],
+      [
+        22.860222799999974,
+        2325.0,
+        41.0
+      ],
+      [
+        23.38802029999897,
+        2715.0,
+        48.0
+      ],
+      [
+        23.92466020000029,
+        2730.0,
+        39.0
+      ],
+      [
+        24.456879299999855,
+        2730.0,
+        38.0
+      ],
+      [
+        24.986195399998905,
+        2730.0,
+        38.0
+      ],
+      [
+        25.51625520000016,
+        705.0,
+        38.0
+      ],
+      [
+        26.044920899999852,
+        600.0,
+        37.0
+      ],
+      [
+        26.572004599998763,
+        840.0,
+        37.0
+      ],
+      [
+        27.100941200000307,
+        840.0,
+        37.0
+      ],
+      [
+        27.633802299998933,
+        840.0,
+        37.0
+      ],
+      [
+        28.164873599998828,
+        840.0,
+        37.0
+      ],
+      [
+        28.69935699999951,
+        270.0,
+        36.0
+      ],
+      [
+        29.230483800000002,
+        255.0,
+        36.0
+      ],
+      [
+        29.759589199999027,
+        210.0,
+        36.0
+      ],
+      [
+        30.289536899999803,
+        210.0,
+        36.0
+      ],
+      [
+        30.81798879999951,
+        210.0,
+        36.0
+      ],
+      [
+        31.349369999999908,
+        270.0,
+        36.0
+      ],
+      [
+        31.87892069999907,
+        2610.0,
+        38.0
+      ],
+      [
+        32.411694599999464,
+        2610.0,
+        38.0
+      ],
+      [
+        32.94329399999879,
+        2610.0,
+        37.0
+      ],
+      [
+        33.473023900000044,
+        1275.0,
+        38.0
+      ],
+      [
+        34.00215179999941,
+        1185.0,
+        37.0
+      ],
+      [
+        34.53288090000024,
+        1050.0,
+        37.0
+      ],
+      [
+        35.06081819999963,
+        945.0,
+        36.0
+      ],
+      [
+        35.59005950000028,
+        2730.0,
+        43.0
+      ],
+      [
+        36.119006799999624,
+        2715.0,
+        44.0
+      ],
+      [
+        36.654327099999136,
+        2730.0,
+        38.0
+      ],
+      [
+        37.18784659999983,
+        2730.0,
+        37.0
+      ],
+      [
+        37.72429299999931,
+        2730.0,
+        37.0
+      ],
+      [
+        38.268079399998896,
+        2730.0,
+        37.0
+      ],
+      [
+        38.80184659999941,
+        585.0,
+        36.0
+      ],
+      [
+        39.344619699999384,
+        495.0,
+        36.0
+      ],
+      [
+        39.873190199999954,
+        390.0,
+        36.0
+      ],
+      [
+        40.40342380000038,
+        270.0,
+        36.0
+      ],
+      [
+        40.93278149999969,
+        255.0,
+        36.0
+      ],
+      [
+        41.464003899998715,
+        210.0,
+        36.0
+      ],
+      [
+        41.99428799999987,
+        210.0,
+        36.0
+      ],
+      [
+        42.52586159999919,
+        705.0,
+        36.0
+      ],
+      [
+        43.058142199999565,
+        795.0,
+        36.0
+      ],
+      [
+        43.59010529999978,
+        795.0,
+        35.0
+      ],
+      [
+        44.120947100000194,
+        795.0,
+        35.0
+      ],
+      [
+        44.64872999999898,
+        225.0,
+        35.0
+      ],
+      [
+        45.17832009999984,
+        210.0,
+        35.0
+      ],
+      [
+        45.70639200000005,
+        210.0,
+        35.0
+      ],
+      [
+        46.236137199999575,
+        210.0,
+        35.0
+      ],
+      [
+        46.766742499999964,
+        210.0,
+        35.0
+      ],
+      [
+        47.2983734999998,
+        210.0,
+        35.0
+      ],
+      [
+        47.82673189999878,
+        210.0,
+        35.0
+      ],
+      [
+        48.357352699998955,
+        210.0,
+        35.0
+      ],
+      [
+        48.8857895000001,
+        210.0,
+        35.0
+      ],
+      [
+        49.4166081000003,
+        210.0,
+        35.0
+      ],
+      [
+        49.94555589999982,
+        210.0,
+        35.0
+      ],
+      [
+        50.47669180000048,
+        210.0,
+        35.0
+      ],
+      [
+        51.010592099999485,
+        210.0,
+        35.0
+      ],
+      [
+        51.53819469999871,
+        210.0,
+        35.0
+      ],
+      [
+        52.066327399999864,
+        2610.0,
+        37.0
+      ],
+      [
+        52.598922799999855,
+        2610.0,
+        36.0
+      ],
+      [
+        53.127738499999396,
+        2610.0,
+        36.0
+      ],
+      [
+        53.657787799998914,
+        2610.0,
+        36.0
+      ],
+      [
+        54.186874799999714,
+        1200.0,
+        35.0
+      ],
+      [
+        54.719058399999994,
+        1095.0,
+        37.0
+      ],
+      [
+        55.256203499999174,
+        975.0,
+        37.0
+      ],
+      [
+        55.7839129999993,
+        915.0,
+        37.0
+      ],
+      [
+        56.31096179999986,
+        2730.0,
+        44.0
+      ],
+      [
+        56.84025180000026,
+        2730.0,
+        44.0
+      ],
+      [
+        57.377533900000344,
+        2730.0,
+        37.0
+      ],
+      [
+        57.910792599999695,
+        2730.0,
+        36.0
+      ],
+      [
+        58.44205409999995,
+        675.0,
+        36.0
+      ],
+      [
+        58.971083200000066,
+        525.0,
+        35.0
+      ],
+      [
+        59.50477519999913,
+        450.0,
+        35.0
+      ],
+      [
+        60.03518140000051,
+        360.0,
+        35.0
+      ],
+      [
+        60.56943159999901,
+        300.0,
+        35.0
+      ],
+      [
+        61.098928100000194,
+        255.0,
+        35.0
+      ],
+      [
+        61.62737809999999,
+        255.0,
+        34.0
+      ],
+      [
+        62.15722579999965,
+        210.0,
+        34.0
+      ],
+      [
+        62.68656530000044,
+        315.0,
+        35.0
+      ],
+      [
+        63.21571649999896,
+        675.0,
+        35.0
+      ],
+      [
+        63.747003599999516,
+        810.0,
+        34.0
+      ],
+      [
+        64.27909209999962,
+        810.0,
+        34.0
+      ],
+      [
+        64.80656439999984,
+        810.0,
+        34.0
+      ],
+      [
+        65.33983309999894,
+        240.0,
+        34.0
+      ],
+      [
+        65.8730502999988,
+        210.0,
+        34.0
+      ],
+      [
+        66.41022259999954,
+        210.0,
+        34.0
+      ],
+      [
+        66.9385031999991,
+        210.0,
+        34.0
+      ],
+      [
+        67.47127699999874,
+        210.0,
+        34.0
+      ],
+      [
+        68.00079149999874,
+        210.0,
+        34.0
+      ],
+      [
+        68.53125629999886,
+        210.0,
+        34.0
+      ],
+      [
+        69.0599471000005,
+        210.0,
+        34.0
+      ],
+      [
+        69.59389109999938,
+        210.0,
+        34.0
+      ],
+      [
+        70.1228530999997,
+        210.0,
+        34.0
+      ],
+      [
+        70.65238669999962,
+        210.0,
+        34.0
+      ],
+      [
+        71.18118239999967,
+        210.0,
+        34.0
+      ]
+    ],
+    "max_temperature_c": 49.0,
+    "mean_sm_clock_mhz": 1244.4,
+    "peak_vram_bytes": 12563841536,
+    "started_utc": "2026-09-07T17:29:42Z",
+    "warmup_frames": 3
+  },
+  "schema_version": 2
+}

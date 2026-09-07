@@ -19,6 +19,7 @@ sys.path.insert(0, str(ROOT))
 
 from bench.cli import (  # noqa: E402
     report_cadence,
+    report_capture,
     report_detectors,
     report_marginal,
     report_portability,
@@ -29,6 +30,7 @@ from bench.cli import (  # noqa: E402
 )
 from bench.paths import (  # noqa: E402
     CADENCE_RESULTS_DIR,
+    CAPTURE_RESULTS_DIR,
     DETECTOR_RESULTS_DIR,
     PRIMITIVE_RESULTS_DIR,
     RESULTS_DIR,
@@ -47,6 +49,7 @@ BLOCKS = {
     "MEASURED TABLE": (report_marginal, RESULTS_DIR),
     "DETECTOR TABLE": (report_detectors, DETECTOR_RESULTS_DIR),
     "PRIMITIVE DECISION": (report_primitives, PRIMITIVE_RESULTS_DIR),
+    "CAPTURE GEOMETRY": (report_capture, CAPTURE_RESULTS_DIR),
     "SELECTIVE PATH": (report_selective, SELECTIVE_RESULTS_DIR),
     "DEPLOY HARDWARE": (report_portability, SELECTIVE_RESULTS_DIR),
     "CADENCE SWEEP": (report_cadence, CADENCE_RESULTS_DIR),

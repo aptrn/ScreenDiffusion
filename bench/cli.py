@@ -15,6 +15,12 @@ from typing import Callable, Optional, Sequence, TextIO, Tuple, Union
 
 from bench import marginal
 from bench.cadence import format_cadence_report
+from bench.capture import (
+    CASES as CAPTURE_CASES,
+    CaptureCase,
+    format_capture_report,
+    load_capture_results,
+)
 from bench.clocks import ClockLock, regime_summary
 from bench.contention import (
     OccupancyRecord,
@@ -33,6 +39,7 @@ from bench.disk import DiskRecord, Usage, read_disk, require_free_space
 from bench.fingerprint import read_clock_lock
 from bench.paths import (
     CADENCE_RESULTS_SUBDIR,
+    CAPTURE_RESULTS_SUBDIR,
     DETECTOR_RESULTS_SUBDIR,
     PRIMITIVE_RESULTS_SUBDIR,
     RESULTS_DIR,
@@ -73,11 +80,12 @@ ENGINE_DIR_TEMPLATE = ("{model}--lcm_lora-{lcm}--tiny_vae-{tiny}--max_batch-{bat
                        "--min_batch-{batch}--res-{width}x{height}--lora-none--mode-{mode}")
 
 # What the one positional slot can name: a diffusion scenario, a detector, a
-# rendering-primitive case (issue #5), an end-to-end selective render (issue #8) or
-# a plan swap (issue #30). One slot for all five - a run measures one thing, the
-# names cannot collide, and someone holding a name should not have to know which
-# flag it belongs behind.
-Target = Union[ScenarioConfig, DetectorConfig, CaseConfig, SelectiveCase, SwapCase]
+# rendering-primitive case (issue #5), an end-to-end selective render (issue #8), a
+# plan swap (issue #30) or a capture-geometry comparison (issue #39). One slot for
+# all six - a run measures one thing, the names cannot collide, and someone holding
+# a name should not have to know which flag it belongs behind.
+Target = Union[ScenarioConfig, DetectorConfig, CaseConfig, SelectiveCase, SwapCase,
+              CaptureCase]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -89,11 +97,12 @@ def build_parser() -> argparse.ArgumentParser:
                "happen, there is no record.",
     )
     parser.add_argument("scenario", nargs="?",
-                        help="scenario, detector, primitive-case, selective-case or "
-                             "swap-case name; --list shows them all")
+                        help="scenario, detector, primitive-case, selective-case, "
+                             "swap-case or capture-case name; --list shows them all")
     parser.add_argument("--list", action="store_true",
                         help="list the scenarios, detectors, primitive cases, "
-                             "selective cases and swap cases, and exit")
+                             "selective cases, swap cases and capture cases, "
+                             "and exit")
     parser.add_argument("--marginal", action="store_true",
                         help="report the marginal cost per additional batch item from "
                              "the committed results, and exit")
@@ -113,6 +122,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="report the plan-swap block spec 8.9 carries - "
                              "acceptance criteria 1 and 3 - from the committed "
                              "swaps, and exit")
+    parser.add_argument("--capture-report", action="store_true",
+                        help="report the capture-geometry block spec 8.2 carries - "
+                             "crop against masked at K=1 - from the committed "
+                             "runs, and exit")
     parser.add_argument("--cadence-report", action="store_true",
                         help="report the detect_every_n sweep spec 8.8 carries, from "
                              "the committed arms, and exit")
@@ -250,9 +263,9 @@ def _swap_case(case: SwapCase, args: argparse.Namespace) -> SwapCase:
 def resolve_target(args: argparse.Namespace) -> Tuple[str, Target]:
     """The scenario, detector or case `args.scenario` names, with overrides applied.
 
-    One positional slot for all five registries. A run measures one thing, the
+    One positional slot for all six registries. A run measures one thing, the
     kinds of name cannot collide, and someone holding a name should not have to know
-    which of five flags it belongs behind.
+    which of six flags it belongs behind.
 
     An unmodified name resolves to the registry's own object, so a caller can tell a
     plain run from an overridden one by identity.
@@ -274,6 +287,9 @@ def resolve_target(args: argparse.Namespace) -> Tuple[str, Target]:
         return "selective", _selective_case(SELECTIVE_CASES[args.scenario], args)
     if args.scenario in SWAP_CASES:
         return "swap", _swap_case(SWAP_CASES[args.scenario], args)
+    if args.scenario in CAPTURE_CASES:
+        case = CAPTURE_CASES[args.scenario]
+        return "capture", (case.replace(frames=args.frames) if args.frames else case)
     raise SystemExit(
         f"bench: unknown scenario, detector or case {args.scenario!r}. "
         f"Run `python -m bench --list`."
@@ -447,6 +463,15 @@ def report_swap(results_dir: Path, out: TextIO = sys.stdout) -> None:
     out.write(format_swap_report(load_swap_results(results_dir)) + "\n")
 
 
+def report_capture(results_dir: Path, out: TextIO = sys.stdout) -> None:
+    """The capture-geometry block spec 8.2 carries (issue #39).
+
+    Crop against masked at K=1 at every capture geometry, the cost of the larger
+    capture broken out per stage, and the 30 FPS verdict per arm.
+    """
+    out.write(format_capture_report(load_capture_results(results_dir)) + "\n")
+
+
 def report_cadence(results_dir: Path, out: TextIO = sys.stdout,
                    baseline_dir: Path = SELECTIVE_RESULTS_DIR) -> None:
     """The `detect_every_n` sweep block spec 8.8 carries (issue #23).
@@ -495,6 +520,11 @@ def list_targets(out: TextIO = sys.stdout) -> None:
         out.write(f"{name}\tswap case\t{case.clip}\t{case.before.target} -> "
                   f"{case.after.target}\t{case.frames} frames, swap on "
                   f"{case.swap_frame}\tacceptance criteria 1 and 3\n")
+    for name, case in CAPTURE_CASES.items():
+        geometries = ", ".join(f"{w}x{h}" for w, h in case.geometries)
+        out.write(f"{name}\tcapture case\t{case.clip}\t{geometries}"
+                  f"\t{'/'.join(case.primitives)} at K={case.max_instances}"
+                  f"\tcrop against masked, per stage\n")
 
 
 def run_detector_target(args: argparse.Namespace, config: DetectorConfig) -> int:
@@ -610,6 +640,29 @@ def run_swap_target(args: argparse.Namespace, case: SwapCase) -> int:
     return 0
 
 
+def run_capture_target(args: argparse.Namespace, case: CaptureCase) -> int:
+    """Render one case at every capture geometry under both primitives (issue #39).
+
+    Rendered through the same cached 512x512 engine every other case is - the
+    canvas does not move, which is the whole premise - so it passes the same
+    engine-build guard, and the record lands in `bench/results/capture/`.
+    """
+    from bench.capture import ENGINE_SCENARIO
+    from bench.capture_runner import run_capture
+
+    engine_build_guard(SCENARIOS[ENGINE_SCENARIO], allow_build=args.allow_engine_build)
+    run_capture(
+        case,
+        cooldown=args.cooldown,
+        results_dir=args.results_dir / CAPTURE_RESULTS_SUBDIR,
+        threshold_c=args.cooldown_threshold,
+        cap_s=args.cooldown_cap,
+        poll_interval_s=args.cooldown_poll,
+        write_clips=args.write_clips,
+    )
+    return 0
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -634,6 +687,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 0
     if args.swap_report:
         report_swap(args.results_dir / SWAP_RESULTS_SUBDIR)
+        return 0
+    if args.capture_report:
+        report_capture(args.results_dir / CAPTURE_RESULTS_SUBDIR)
         return 0
     if args.cadence_report:
         report_cadence(args.results_dir / CADENCE_RESULTS_SUBDIR,
@@ -660,6 +716,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return run_selective_target(args, target)
     if kind == "swap":
         return run_swap_target(args, target)
+    if kind == "capture":
+        return run_capture_target(args, target)
 
     scenario = target
     disk = engine_build_guard(scenario, allow_build=args.allow_engine_build)
