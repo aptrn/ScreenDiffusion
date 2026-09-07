@@ -29,6 +29,7 @@ shape, and `bench.selective_runner` is the half that touches a GPU.
 from __future__ import annotations
 
 import dataclasses
+import statistics
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Sequence, Tuple, Union
@@ -39,6 +40,7 @@ from bench.cooldown import CooldownRecord
 from bench.detector_results import LatencySummary
 from bench.fingerprint import Fingerprint
 from bench.flicker import FlickerScore
+from bench.paths import CADENCE_RESULTS_SUBDIR, SELECTIVE_RESULTS_SUBDIR
 from bench.primitive_results import ClipRecord
 from bench.results import (
     GpuColumn,
@@ -51,6 +53,7 @@ from bench.results import (
     measured_on,
     normalised_cell,
     require_recordable,
+    sentence_case,
     table_row,
     table_separator,
     timestamp_from,
@@ -58,6 +61,11 @@ from bench.results import (
 )
 
 RECORD_KIND = "selective"
+
+# The wire key the plan's `global` block travels under - `render_plan.GLOBAL_KEY`.
+# Spelt here rather than imported at module scope because the shipped modules are
+# imported inside functions in this file, and a test holds the two to one value.
+GLOBAL_KEY = "global"
 
 # The one cached engine the path is rendered through - the same 512x512 batch-1
 # engine issue #5 compared both primitives on, so a millisecond here is comparable
@@ -103,12 +111,29 @@ class SelectiveCase:
     # K forced down for the round-robin probe, which replays every frame's tracks
     # through the shipped scheduler; the clip holds fewer people than the plan's K.
     coverage_slots: int = COVERAGE_PROBE_SLOTS
+    # The one plan field the cadence sweep (issue #23) moves. `None` is the shipped
+    # plan untouched, which is what the baseline runs measured.
+    detect_every_n: Optional[int] = None
 
     def plan(self):
-        """The hardcoded priority-case plan, from the shipped producer."""
-        from render_plan import priority_case_plan
+        """The hardcoded priority-case plan, from the shipped producer.
 
-        return priority_case_plan()
+        With a cadence override, the same plan re-validated with one field changed:
+        `RenderPlan.to_dict` is exactly what `validate_plan` accepts back, so the
+        sweep's arms go through the same door the worker's plans do and a cadence
+        outside 1..30 is clamped and recorded rather than rendered.
+        """
+        from render_plan import INITIAL_PLAN_VERSION, priority_case_plan, validate_plan
+
+        plan = priority_case_plan()
+        if self.detect_every_n is None:
+            return plan
+        raw = plan.to_dict()
+        raw[GLOBAL_KEY]["detect_every_n"] = self.detect_every_n
+        result = validate_plan(raw, previous_version=INITIAL_PLAN_VERSION)
+        if result.plan is None:  # unreachable: only a validated plan is edited here
+            raise AssertionError(f"the cadence override did not validate: {result.reason}")
+        return result.plan
 
     def replace(self, **changes) -> "SelectiveCase":
         return dataclasses.replace(self, **changes)
@@ -126,6 +151,27 @@ CASES: Dict[str, SelectiveCase] = {
              "leave every other pixel exactly as captured.",
     ),
 }
+
+
+def is_cadence_arm(case: SelectiveCase) -> bool:
+    """Is this a run of the cadence sweep rather than a baseline? (issue #23)
+
+    The one predicate the two routing decisions below share, so a run cannot end
+    up in the sweep's directory under the baselines' heading or the other way
+    round.
+    """
+    return case.detect_every_n is not None
+
+
+def results_subdir(case: SelectiveCase) -> str:
+    """Which results directory a run of `case` belongs in.
+
+    One rule in one place: a cadence-swept arm never lands beside the baselines,
+    because the selective directory is reduced to the newest run per (case, GPU)
+    and an arm at another cadence would take that row over.
+    """
+    return (CADENCE_RESULTS_SUBDIR if is_cadence_arm(case)
+            else SELECTIVE_RESULTS_SUBDIR)
 
 
 def plan_record(plan) -> dict:
@@ -343,6 +389,150 @@ def stall_check(frames_in: int, frames_out: int, worst_offer_ms: float,
     )
 
 
+# --- how stale the boxes a frame renders are ---------------------------------
+
+
+@dataclass(frozen=True)
+class StalenessSummary:
+    """What `detect_every_n` costs, in the only currency it is paid in.
+
+    Issue #23 step 3. Raising the cadence is the cheap lever on the frame budget:
+    it trades no image quality at all, unlike a smaller engine, and it buys back
+    detector milliseconds in exact proportion. What it spends is *freshness*, and
+    freshness has three readings rather than one, so all three are recorded.
+
+    - `mean_age_frames` / `worst_age_frames` - how old the boxes a frame renders
+      are, counted from the capture the detect ran on. This is the cadence plus
+      however long the detect took, which is why it is measured rather than
+      derived from N.
+    - `mean_refresh_iou` / `mean_refresh_shift_px` - how far an object had moved by
+      the time the tracker heard about it again. A box that is old and still right
+      costs nothing; the shift is what a viewer sees as the mask lagging the
+      subject.
+    - `distinct_track_ids` against `max_concurrent_tracks` - whether identity
+      survived. Spec 8.5 pins per-object seeds to track ids, so an object that
+      comes back under a new id has paid the cadence in identity rather than in
+      milliseconds, and no millisecond figure would show it.
+    """
+
+    detect_every_n: int
+    frames: int
+    ticks: int
+    frames_without_tracks: int
+    mean_age_frames: float
+    worst_age_frames: int
+    mean_age_ms: Optional[float]
+    refreshes: int
+    mean_refresh_iou: float
+    worst_refresh_iou: float
+    mean_refresh_shift_px: float
+    worst_refresh_shift_px: float
+    distinct_track_ids: int
+    max_concurrent_tracks: int
+    statement: str
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+def _first_per_tick(snapshots: Sequence) -> List:
+    """One snapshot per detector tick, in order - the refreshes the run actually had.
+
+    The frame loop reads the same `Tracks` on every frame between two detects, so
+    iterating frames would count one refresh once per frame it was read on and
+    weight a slow detect as several.
+    """
+    seen = set()
+    ordered = []
+    for snapshot in snapshots:
+        if snapshot.ticks and snapshot.ticks not in seen:
+            seen.add(snapshot.ticks)
+            ordered.append(snapshot)
+    return ordered
+
+
+def _centre_shift_px(before, after) -> float:
+    """How far a box's centre moved, in pixels. The lag a viewer sees as the mask
+    trailing the subject."""
+    dx = ((after.x0 + after.x1) - (before.x0 + before.x1)) / 2.0
+    dy = ((after.y0 + after.y1) - (before.y0 + before.y1)) / 2.0
+    return (dx * dx + dy * dy) ** 0.5
+
+
+def _refresh_movement(ticks: Sequence) -> Tuple[List[float], List[float]]:
+    """Per surviving track, `(iou, centre shift)` across each pair of consecutive ticks.
+
+    Takes the per-tick snapshots `_first_per_tick` returns, not the per-frame ones.
+    """
+    from detection import iou
+
+    ious: List[float] = []
+    shifts: List[float] = []
+    for before, after in zip(ticks, ticks[1:]):
+        later = {track.track_id: track.box for track in after.tracks}
+        for track in before.tracks:
+            box = later.get(track.track_id)
+            if box is None:
+                continue
+            ious.append(iou(track.box, box))
+            shifts.append(_centre_shift_px(track.box, box))
+    return ious, shifts
+
+
+def staleness_summary(snapshots: Sequence, detect_every_n: int,
+                      ms_per_frame: Optional[float] = None) -> StalenessSummary:
+    """How stale the tracks were, over one run's own per-frame snapshots.
+
+    `snapshots[i]` is the `Tracks` frame `i` rendered under, which is what the
+    frame loop actually read - so this measures the cadence as the loop experienced
+    it, detect latency included, rather than the cadence as a plan field.
+    """
+    ages = [index - snapshot.frame_index
+            for index, snapshot in enumerate(snapshots) if snapshot.ticks]
+    ticks = _first_per_tick(snapshots)
+    ious, shifts = _refresh_movement(ticks)
+    ids = {track.track_id for snapshot in snapshots for track in snapshot.tracks}
+    concurrent = max((snapshot.count for snapshot in snapshots), default=0)
+    mean_age = round(statistics.fmean(ages), 4) if ages else 0.0
+    summary = StalenessSummary(
+        detect_every_n=detect_every_n, frames=len(snapshots), ticks=len(ticks),
+        frames_without_tracks=sum(1 for snapshot in snapshots if not snapshot.ticks),
+        mean_age_frames=mean_age, worst_age_frames=max(ages) if ages else 0,
+        mean_age_ms=(None if ms_per_frame is None
+                     else round(mean_age * ms_per_frame, 4)),
+        refreshes=len(ious),
+        mean_refresh_iou=round(statistics.fmean(ious), 4) if ious else 0.0,
+        worst_refresh_iou=round(min(ious), 4) if ious else 0.0,
+        mean_refresh_shift_px=round(statistics.fmean(shifts), 4) if shifts else 0.0,
+        worst_refresh_shift_px=round(max(shifts), 4) if shifts else 0.0,
+        distinct_track_ids=len(ids), max_concurrent_tracks=concurrent,
+        statement="",
+    )
+    return dataclasses.replace(summary, statement=_staleness_statement(summary))
+
+
+def _staleness_statement(summary: StalenessSummary) -> str:
+    """What the numbers say, in the words the sweep table's rows are read with."""
+    if not summary.ticks:
+        return (f"no detect ran in {summary.frames} frames, so there is no "
+                f"staleness to report at detect_every_n {summary.detect_every_n}")
+    age_ms = ("" if summary.mean_age_ms is None
+              else f", {summary.mean_age_ms:.0f} ms")
+    if summary.refreshes:
+        movement = (f"between refreshes a track's box kept "
+                    f"{summary.mean_refresh_iou:.2f} IoU (worst "
+                    f"{summary.worst_refresh_iou:.2f}) and its centre moved "
+                    f"{summary.mean_refresh_shift_px:.1f} px (worst "
+                    f"{summary.worst_refresh_shift_px:.1f})")
+    else:
+        movement = "no track survived a refresh to be compared"
+    return (f"at detect_every_n {summary.detect_every_n} a frame rendered boxes "
+            f"{summary.mean_age_frames:.1f} frames old on average (worst "
+            f"{summary.worst_age_frames}{age_ms}); {movement}; "
+            f"{summary.max_concurrent_tracks} concurrent objects held "
+            f"{summary.distinct_track_ids} identities over {summary.ticks} detects")
+
+
 # --- the record --------------------------------------------------------------
 
 
@@ -421,6 +611,7 @@ class SelectiveResult:
     stall: StallCheck
     cooldown: CooldownRecord
     hardware: Fingerprint
+    staleness: Optional[StalenessSummary] = None
     clock_normalization: Optional[ClockNormalization] = None
     comparison_clip: str = ""
     comparison_still: str = ""
@@ -440,6 +631,8 @@ class SelectiveResult:
             "clip": self.clip.to_dict(),
             "run": self.run.to_dict(),
             "regions": self.regions.to_dict(),
+            "staleness": (None if self.staleness is None
+                          else self.staleness.to_dict()),
             "flicker": self.flicker.to_dict(),
             "gate": {
                 "passed": self.gate_passed,
@@ -532,13 +725,49 @@ def selective_readme_row(result: dict, filename: str) -> str:
     ])
 
 
+CADENCE_README_INTRO = (
+    "Written by `uv run python -m bench <case> --detect-every-n N`, never by hand -\n"
+    "issue #23, spec 8.8. One row is one arm of the cadence sweep: the same\n"
+    "shipped path over the same clip under the same plan, with\n"
+    "`global.detect_every_n` the only field that moved. So no pixel the diffusion\n"
+    "produces differs between arms - what a higher cadence spends is the freshness\n"
+    "of the boxes, which the record's `staleness` block measures and\n"
+    "`python -m bench --cadence-report` tabulates.\n\n"
+    "These rows are deliberately not in `../selective/`: that directory is reduced\n"
+    "to the newest run per (case, GPU) for spec 8.8 and 7.4, and an arm at another\n"
+    "cadence sitting there would quietly become the figure those sections quote.\n"
+)
+CADENCE_README_TITLE = "# Detector cadence sweep results"
+CADENCE_README_PREAMBLE = (
+    f"{CADENCE_README_TITLE}\n\n{CADENCE_README_INTRO}\n"
+    f"{SELECTIVE_README_HEADER}\n{SELECTIVE_README_SEPARATOR}\n"
+)
+
+
+def readme_preamble(case: SelectiveCase) -> str:
+    """Which table a run of `case` is appended to, heading and all.
+
+    The other half of `results_subdir`, decided by the same `is_cadence_arm`
+    predicate: the two directories keep the same columns, so the row builder is
+    shared, but they exist for different reasons, so the paragraph above the table
+    is not.
+    """
+    return (CADENCE_README_PREAMBLE if is_cadence_arm(case)
+            else SELECTIVE_README_PREAMBLE)
+
+
 def append_selective_readme_row(result: ResultLike, readme_path: Path,
-                                filename: str) -> None:
-    """Append this run's row, creating the table if this is the first run."""
+                                filename: str,
+                                preamble: str = SELECTIVE_README_PREAMBLE) -> None:
+    """Append this run's row, creating the table if this is the first run.
+
+    `preamble` is `readme_preamble(case)` for a run. A parameter rather than
+    something read back off the record, because a record does not know which of
+    the two tables it is about to join.
+    """
     data = _as_dict(result)
     require_recordable(data)
-    append_row(selective_readme_row(data, filename), readme_path,
-               SELECTIVE_README_PREAMBLE)
+    append_row(selective_readme_row(data, filename), readme_path, preamble)
 
 
 # --- the report the spec carries ---------------------------------------------
@@ -595,7 +824,7 @@ def _gate_lines(result: dict) -> List[str]:
         statement = gate[name]["statement"]
         lines.append(f"- **{GATE_TITLES[name]}** - "
                      f"{'yes' if gate[name]['passed'] else 'NO'}. "
-                     f"{statement[:1].upper()}{statement[1:]}.")
+                     f"{sentence_case(statement)}.")
     return lines
 
 

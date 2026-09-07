@@ -63,6 +63,7 @@ from bench.scenarios import SCENARIOS
 from bench.selective import (
     ENGINE_SCENARIO,
     SELECTIVE_README_NAME,
+    SELECTIVE_README_PREAMBLE,
     RegionSummary,
     SelectiveCase,
     SelectiveResult,
@@ -73,6 +74,7 @@ from bench.selective import (
     coverage_check,
     plan_record,
     stall_check,
+    staleness_summary,
     write_selective_result,
 )
 
@@ -184,6 +186,7 @@ def run_selective(
     engines_root: Optional[Path] = None,
     models_dir: Optional[Path] = None,
     write_clips: bool = True,
+    readme_preamble: str = SELECTIVE_README_PREAMBLE,
     log: Callable[[str], None] = print,
 ) -> SelectiveResult:
     """Drive the shipped selective path over one committed clip; write the result."""
@@ -357,6 +360,8 @@ def run_selective(
                         total_frames=meta["total_frames"],
                         start_frame=case.start_frame, frames_used=len(frames)),
         run=run, regions=_region_summary(selections, plan, compositor.feather_px),
+        staleness=staleness_summary(snapshots, detect_every_n,
+                                    ms_per_frame=run.ms_per_frame),
         flicker=flicker_score(sources, outputs, masks),
         background=background, change=change, coverage=coverage, stall=stall,
         cooldown=cooldown_record, hardware=fingerprint,
@@ -369,11 +374,12 @@ def run_selective(
         f"amortised, {run.fps:.1f} FPS), flicker {result.flicker.mean_abs_diff}")
     for check in (background, change, coverage, stall):
         log(f"gate: {'pass' if check.passed else 'FAIL'} - {check.statement}")
+    log(f"staleness: {result.staleness.statement}")
 
     written = write_selective_result(result, results_dir=results_dir,
                                      timestamp=timestamp)
     append_selective_readme_row(result, results_dir / SELECTIVE_README_NAME,
-                                filename=written.name)
+                                filename=written.name, preamble=readme_preamble)
     log(f"{case.name} -> {written.name}")
     return result
 

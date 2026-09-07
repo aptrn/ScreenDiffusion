@@ -353,6 +353,16 @@ class GpuColumn:
         return [*cells[:self.index], value, *cells[self.index:]]
 
 
+def sentence_case(statement: str) -> str:
+    """A statement built to sit mid-sentence, capitalised to open one instead.
+
+    The `statement` field every summary dataclass carries is written lower-case so
+    a report can quote it inside a sentence; a report that opens a paragraph with
+    one needs the other form, and both readings come from the one stored string.
+    """
+    return statement[:1].upper() + statement[1:]
+
+
 def format_number(value: Optional[float], digits: int = 1) -> str:
     """One table cell: a number at `digits` places, or `-` when there is none.
 

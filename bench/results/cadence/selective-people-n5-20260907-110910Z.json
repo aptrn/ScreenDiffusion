@@ -1,0 +1,265 @@
+{
+  "case": {
+    "canvas": 512,
+    "clip": "people.mp4",
+    "coverage_slots": 2,
+    "detect_every_n": 5,
+    "frames": 48,
+    "name": "selective-people-n5",
+    "note": "The M1 finish line: the shipped selective path end to end on the priority case - restyle the lower half of every person, gently, and leave every other pixel exactly as captured.",
+    "start_frame": 0,
+    "warmup_frames": 3
+  },
+  "clip": {
+    "fps": 25.0,
+    "frames_used": 48,
+    "height": 720,
+    "name": "people.mp4",
+    "sha256": "c509b3699045b605d62e66abf534ce096078b983a0b666e04039b1168dc7b54d",
+    "start_frame": 0,
+    "total_frames": 377,
+    "width": 1280
+  },
+  "clock_normalization": {
+    "basis_mhz": 3150.0,
+    "basis_source": "clocks.max.sm",
+    "method": "ms_per_frame * time-weighted mean SM clock / basis clock",
+    "ms_per_frame": 20.5777,
+    "note": "Clocks were not locked (unlocked), so the raw figure carries this run's clock. This is a first-order estimate of the same work at 3150 MHz, not a measurement, and not a substitute for `nvidia-smi --lock-gpu-clocks` from an elevated shell.",
+    "regime": "unlocked",
+    "sampled_mean_sm_clock_mhz": 2715.0
+  },
+  "comparison_clip": "selective-people-n5-20260907-110910Z-comparison.mp4",
+  "comparison_still": "selective-people-n5-20260907-110910Z-comparison.jpg",
+  "cooldown": {
+    "cap_s": 120.0,
+    "enabled": true,
+    "final_temperature_c": 44.0,
+    "outcome": "reached",
+    "reached": true,
+    "samples": [
+      [
+        0.031000000017229468,
+        44.0
+      ]
+    ],
+    "threshold_c": 62.0,
+    "waited_s": 0.031000000017229468
+  },
+  "flicker": {
+    "frame_pixels": 262144,
+    "mean_abs_diff": 1.488277,
+    "note": "mean absolute difference between consecutive outputs over the 78113 pixels per pair that were static in the source (within 2/255) and painted in both frames; 0-255 units, lower is steadier",
+    "pairs": 47,
+    "pairs_scored": 47,
+    "per_pair_abs_diff": [
+      1.348947,
+      1.457411,
+      1.387012,
+      1.651299,
+      1.472601,
+      1.486538,
+      1.645246,
+      1.77454,
+      1.760036,
+      1.689503,
+      1.498066,
+      1.361637,
+      1.392298,
+      1.482576,
+      1.343306,
+      1.495257,
+      1.235613,
+      1.382692,
+      1.406506,
+      1.344027,
+      1.442105,
+      1.581267,
+      1.683887,
+      1.694011,
+      1.41895,
+      1.490015,
+      1.490682,
+      1.360446,
+      1.469609,
+      1.343749,
+      1.559653,
+      1.54816,
+      1.536536,
+      1.334792,
+      1.263372,
+      1.531003,
+      1.375981,
+      1.240814,
+      1.318856,
+      1.649657,
+      1.445736,
+      1.46504,
+      1.432991,
+      1.451761,
+      1.679105,
+      1.722401,
+      1.803346
+    ],
+    "static_fraction": 0.297976,
+    "static_pixels": 78113,
+    "threshold": 2.0
+  },
+  "gate": {
+    "background": {
+      "background_pixels": 164676,
+      "frames": 48,
+      "identical_frames": 48,
+      "passed": true,
+      "statement": "48/48 frames left every pixel outside the rendered regions exactly as captured (164676 background pixels on the frame with the most painted)",
+      "worst_pixels_changed": 0
+    },
+    "change": {
+      "capture_change": 0.0,
+      "net_change": 11.7576,
+      "passed": true,
+      "region_change": 11.7576,
+      "statement": "the rendered regions changed by 11.8/255 against the capture - 11.8 net of the 0.00/255 the capture's own round trip costs - against a 8/255 threshold",
+      "threshold": 8.0
+    },
+    "coverage": {
+      "bound_frames": 3,
+      "frames": 48,
+      "max_tracks": 6,
+      "passed": true,
+      "slots": 2,
+      "statement": "with 6 tracks over 2 slots no track waited more than 2 frames to be rendered, against a ceil(N/K) bound of 3",
+      "worst_gap_frames": 2
+    },
+    "passed": true,
+    "stall": {
+      "frames_in": 48,
+      "frames_out": 48,
+      "max_offer_ms": 5.0,
+      "passed": true,
+      "passthrough_frames": 0,
+      "statement": "48/48 frames produced an output; the worst frame spent 0.014 ms offering the capture to the detector (budget 5 ms), and 0 frames had nothing to restyle and passed the capture through",
+      "worst_offer_ms": 0.014
+    }
+  },
+  "hardware": {
+    "clock_lock": {
+      "applied_clock_mhz": null,
+      "current_sm_clock_mhz": 210.0,
+      "evidence": "clocks_event_reasons.applications_clocks_setting=Not Active",
+      "max_sm_clock_mhz": 3150.0,
+      "state": "unlocked"
+    },
+    "cuda_version": "12.8",
+    "driver_version": "610.47",
+    "enforced_power_limit_w": 500.0,
+    "gpu_name": "NVIDIA GeForce RTX 4090",
+    "hostname": "DESKTOP-7OBJQKB",
+    "nvidia_smi_captured_utc": "2026-09-07T11:08:57Z",
+    "nvidia_smi_raw": "Mon Sep  7 13:08:57 2026       \n+-----------------------------------------------------------------------------------------+\n| NVIDIA-SMI 610.47                 KMD Version: 610.47        CUDA UMD Version: 13.3     |\n+-----------------------------------------+------------------------+----------------------+\n| GPU  Name                  Driver-Model | Bus-Id          Disp.A | Volatile Uncorr. ECC |\n| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |\n|                                         |                        |               MIG M. |\n|=========================================+========================+======================|\n|   0  NVIDIA GeForce RTX 4090      WDDM  |   00000000:01:00.0  On |                  Off |\n|  0%   42C    P5             42W /  500W |     640MiB /  24564MiB |      3%      Default |\n|                                         |                        |                  N/A |\n+-----------------------------------------+------------------------+----------------------+\n\n+-----------------------------------------------------------------------------------------+\n| Processes:                                                                              |\n|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |\n|        ID   ID                                                               Usage      |\n|=========================================================================================|\n|    0   N/A  N/A            1432    C+G   ...y\\StartMenuExperienceHost.exe      N/A      |\n|    0   N/A  N/A            2336    C+G   ...6)\\Dropbox\\Client\\Dropbox.exe      N/A      |\n|    0   N/A  N/A           14916    C+G   C:\\Windows\\explorer.exe               N/A      |\n|    0   N/A  N/A           20048    C+G   ...ms\\t3code\\T3 Code (Alpha).exe      N/A      |\n|    0   N/A  N/A           20256    C+G   ...h_cw5n1h2txyewy\\SearchApp.exe      N/A      |\n|    0   N/A  N/A           20448    C+G   ...ntrolPanel\\SystemSettings.exe      N/A      |\n|    0   N/A  N/A           23024    C+G   ...xyewy\\ShellExperienceHost.exe      N/A      |\n|    0   N/A  N/A           27052    C+G   ...yb3d8bbwe\\WindowsTerminal.exe      N/A      |\n|    0   N/A  N/A           27612    C+G   ...5n1h2txyewy\\TextInputHost.exe      N/A      |\n|    0   N/A  N/A           29188    C+G   ...Chrome\\Application\\chrome.exe      N/A      |\n+-----------------------------------------------------------------------------------------+\n",
+    "power_limit_w": 500.0,
+    "torch_version": "2.7.0+cu128",
+    "total_vram_mib": 24564.0
+  },
+  "kind": "selective",
+  "plan": {
+    "concept": "person",
+    "denoise": 0.49,
+    "detect_every_n": 5,
+    "max_instances": 6,
+    "mode": "selective",
+    "plan_version": 1,
+    "prompt": "trousers soaked through with a dark wet stain, damp fabric, wet denim, photograph",
+    "region": "lower_half",
+    "t_index": 40
+  },
+  "regions": {
+    "deferred_total": 0,
+    "feather_px": 6,
+    "max_side_px": 152,
+    "min_region_px": 16,
+    "min_side_px": 20,
+    "regions_per_frame": 5.1875,
+    "regions_rendered": 249,
+    "skipped_small_total": 0,
+    "slots": 6,
+    "tracks_per_frame": 5.1875
+  },
+  "run": {
+    "amortised_detect_ms": 4.2767,
+    "composite": {
+      "max_ms": 4.0909,
+      "mean_ms": 2.6759,
+      "median_ms": 2.6377,
+      "min_ms": 2.4931,
+      "p95_ms": 2.8284,
+      "stdev_ms": 0.2255
+    },
+    "detect": {
+      "max_ms": 28.0529,
+      "mean_ms": 21.3836,
+      "median_ms": 21.1637,
+      "min_ms": 7.8605,
+      "p95_ms": 28.0529,
+      "stdev_ms": 5.0058
+    },
+    "detect_every_n": 5,
+    "detector": "yolo-world-s-640",
+    "detector_ticks": 11,
+    "diffusion_calls": 48,
+    "engine_scenario": "img2img-tensorrt-512x512-b1",
+    "finished_utc": "2026-09-07T11:09:10Z",
+    "fps": 35.5222,
+    "frames": 48,
+    "gpu_samples": [
+      [
+        0.032889199967030436,
+        2715.0,
+        44.0
+      ],
+      [
+        0.5601120999781415,
+        2715.0,
+        50.0
+      ],
+      [
+        1.0876798999961466,
+        2715.0,
+        49.0
+      ]
+    ],
+    "max_temperature_c": 50.0,
+    "mean_sm_clock_mhz": 2715.0,
+    "ms_per_frame": 23.8747,
+    "ms_per_frame_with_detection": 28.1514,
+    "peak_vram_bytes": 3922819072,
+    "render": {
+      "max_ms": 37.8213,
+      "mean_ms": 23.8747,
+      "median_ms": 23.1302,
+      "min_ms": 22.2474,
+      "p95_ms": 27.3032,
+      "stdev_ms": 2.4741
+    },
+    "started_utc": "2026-09-07T11:09:08Z",
+    "warmup_frames": 3
+  },
+  "schema_version": 2,
+  "staleness": {
+    "detect_every_n": 5,
+    "distinct_track_ids": 6,
+    "frames": 48,
+    "frames_without_tracks": 0,
+    "max_concurrent_tracks": 6,
+    "mean_age_frames": 2.875,
+    "mean_age_ms": 68.6398,
+    "mean_refresh_iou": 0.976,
+    "mean_refresh_shift_px": 1.2057,
+    "refreshes": 50,
+    "statement": "at detect_every_n 5 a frame rendered boxes 2.9 frames old on average (worst 5, 69 ms); between refreshes a track's box kept 0.98 IoU (worst 0.77) and its centre moved 1.2 px (worst 18.0); 6 concurrent objects held 6 identities over 11 detects",
+    "ticks": 11,
+    "worst_age_frames": 5,
+    "worst_refresh_iou": 0.7661,
+    "worst_refresh_shift_px": 18.0069
+  }
+}

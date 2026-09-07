@@ -95,11 +95,28 @@ artefact and are **tracked**. Its record carries the four Gate checks as numbers
 with thresholds — background bit-identity, visible change net of a control,
 the `ceil(N/K)` round-robin bound, and whether the loop ever stalled — and
 `--selective-report` regenerates the block in spec 8.8, held to a byte match by
-a test.
+a test. It also records how stale the boxes a frame renders got (`staleness`):
+their age in frames, how far a track moved between two refreshes, and whether
+identity survived.
 
-All three generated blocks (`--detector-report`, `--primitive-report`,
-`--selective-report`) keep the newest run **per (thing measured, GPU)**, not per
-name. A 4090 run therefore adds a row beside the 3080's instead of erasing it,
+`--detect-every-n N` runs that same case at one detector cadence instead of the
+plan's — one arm of issue #23's sweep. The arm is named `<case>-nN` and writes to
+`bench/results/cadence/`, **never beside the baselines**: the selective directory
+is reduced to the newest run per (case, GPU) for specs 8.8 and 7.4, so an arm at
+another cadence sitting there would quietly become the row those sections quote.
+`--cadence-report` regenerates the sweep block in 8.8 and is the only report that
+reads two directories — the arms, plus issue #24's baselines, from which it takes
+the statement of whether there was a gap to close at all rather than re-deriving
+one. It recommends the **freshest** cadence that fits the frame budget with 10%
+headroom, disqualifies any arm that broke background bit-identity, and says
+whether the recommendation is outside the run-to-run spread of the repeats.
+Measured on a 4090: `detect_every_n: 5`, 28.15 ms/frame with detection against
+33.33, at no cost in image quality. The shipped default is still 3 — spec 8.8
+says why.
+
+All four case-table blocks (`--detector-report`, `--primitive-report`,
+`--selective-report`, `--cadence-report`) keep the newest run **per (thing
+measured, GPU)**, not per name. A 4090 run therefore adds a row beside the 3080's instead of erasing it,
 which is what keeps spec 7.4's portability table checkable. When rows span GPUs
 the table grows a `GPU` column, the preamble names every machine, and the
 per-machine verdicts — the recommendation, the primitive decision, the selective
@@ -116,7 +133,7 @@ of them is the wrong answer in a quotable shape. The 30 FPS verdict it prints is
 judged on `ms/frame with detection`, carries the region count and the clock
 regime, and says whether every committed run on the card landed on the same side
 of the target — a verdict inside the run-to-run spread is labelled one.
-`scripts/regen_spec_blocks.py` pastes all five generated blocks back into the
+`scripts/regen_spec_blocks.py` pastes all six generated blocks back into the
 spec, so a regeneration is never a hand-copy that drops a digit.
 
 The clips in `bench/clips/` are committed and so are their box tracks
@@ -324,7 +341,10 @@ sends no plan at all, at start or ever, so an empty field cannot overwrite it.
   the shipped path the detect thread and the UNet share the SMs and a detect
   measures ~59 ms (fastest in the same run: 15.7 ms). Contention, not the clock.
   Anything that budgets detection from 8.1's figure is budgeting the wrong number
-  - use `bench/results/selective/`, or raise `global.detect_every_n`.
+  - use `bench/results/selective/`, or raise `global.detect_every_n`. The
+  contention is itself a function of the cadence: measured across issue #23's
+  sweep, one detect costs ~23 ms at `detect_every_n: 2` and ~20 ms at 8, so
+  raising the cadence saves more than 1/N.
 - **A feather that bleeds outside its region breaks the whole criterion.** The
   selective path's promise is that non-target pixels are the captured bytes, so
   the alpha ramp climbs inwards from the region's own edge and is exactly 0 one
