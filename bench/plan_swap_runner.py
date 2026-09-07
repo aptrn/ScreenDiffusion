@@ -88,14 +88,16 @@ def engine_identity(stream) -> Tuple[str, str]:
 
 
 def apply_plan(stream, detection, plan, t_index_list: Sequence[int],
-               log: Callable[[str], None] = print) -> List[int]:
+               log: Callable[[str], None] = print, noise=None,
+               compositor=None) -> List[int]:
     """What the worker's frame loop does when the plan it bound changed.
 
-    The same three calls in the same order: the engine takes the new prompt, the
+    The same calls in the same order: the engine takes the new prompt, the
     detector thread takes the new vocabulary (and pays the re-warm off the frame
-    path), and the plan's denoise reaches the engine as a *schedule value*. Only
-    the values move, never the step count, which is why this is a runtime update
-    and not an engine rebuild - the claim criterion 3's second half checks.
+    path), the two temporal-stability levers take theirs (issue #32), and the
+    plan's denoise reaches the engine as a *schedule value*. Only the values move,
+    never the step count, which is why this is a runtime update and not an engine
+    rebuild - the claim criterion 3's second half checks.
     """
     from render_plan import t_index_for_denoise
 
@@ -104,6 +106,10 @@ def apply_plan(stream, detection, plan, t_index_list: Sequence[int],
     except Exception as error:  # as in the worker: the loop keeps rendering
         log(f"prompt not applied: {error}")
     detection.follow(plan)
+    if noise is not None:
+        noise.follow(plan)
+    if compositor is not None:
+        compositor.set_output_ema(plan.settings.output_ema)
     honoured = plan.honoured_target
     current = list(t_index_list)
     if honoured is not None and len(current) == 1:
@@ -152,11 +158,13 @@ def run_swap(
     import numpy as np
     import torch
 
-    from compositor import Compositor, painted_mask
+    from compositor import painted_mask
+    from device_compositor import DeviceCompositor
     from detection import is_detect_frame
     from detector_worker import BackgroundDetector, frame_to_array
     from region_scheduler import RegionScheduler
     from render_plan import ActivePlan, t_index_for_denoise
+    from seeding import NoiseField
 
     # First, so a machine that cannot be fingerprinted fails before it spends
     # minutes loading an engine for a result that could never be written.
@@ -200,7 +208,11 @@ def run_swap(
     detection.start()
 
     scheduler = RegionScheduler()
-    compositor = Compositor()
+    # The shipped C7, as `bench.selective_runner` uses: since issue #31 a masked
+    # frame is blended on the device, and `render_frame` asks the compositor it is
+    # given for that blend.
+    compositor = DeviceCompositor(output_ema=before_plan.settings.output_ema)
+    noise = NoiseField(policy=before_plan.effective_seed_policy)
     tensors = [capture_tensor(frame, device=stream.device, dtype=stream.dtype)
                for frame in frames]
     sources = [frame_to_array(tensor) for tensor in tensors]
@@ -244,7 +256,7 @@ def run_swap(
             frame_plan = active_plan.begin_frame()
             if frame_plan.changed:
                 t_index_list = apply_plan(stream, detection, frame_plan.plan,
-                                          t_index_list, log)
+                                          t_index_list, log, noise, compositor)
             if is_detect_frame(index, detect_every_n):
                 detection.offer(tensor, index)
             tracks = detection.tracks
@@ -254,7 +266,7 @@ def run_swap(
             selection = scheduler.select(tracks, frame_plan.plan, canvas, canvas)
             render = compositor.frame(selection, canvas, canvas)
             output, frame_ms, _ = render_frame(stream, tensor, compositor, render,
-                                               sources[index])
+                                               sources[index], noise, selection)
             finished_at.append(time.perf_counter())
             outputs.append(output)
             per_frame_ms.append(frame_ms)

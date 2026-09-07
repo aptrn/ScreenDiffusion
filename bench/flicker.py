@@ -35,7 +35,7 @@ sequence that never moves where the source did not, and the metric reads low-is
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import List, Optional, Sequence
+from typing import Callable, List, Optional, Sequence
 
 import numpy as np
 
@@ -103,6 +103,74 @@ def _validate(sources: Sequence, outputs: Sequence) -> None:
         raise ValueError(f"every frame must have the same shape; got {sorted(shapes)}")
 
 
+@dataclass(frozen=True)
+class _Scored:
+    """What both metrics compute, before either says what it means.
+
+    Flicker and responsiveness differ in exactly one place - which side of the
+    static threshold a pixel has to fall on - so the walk over pairs, the painted
+    intersection, the skipped-pair rule and the rounding are shared, and the two
+    public functions are the two sentences said about the result.
+    """
+
+    mean_abs_diff: Optional[float]
+    pairs: int
+    pairs_scored: int
+    selected_pixels: int
+    frame_pixels: int
+    selected_fraction: float
+    per_pair_abs_diff: List[float]
+
+    @classmethod
+    def nothing(cls, pairs: int, frame_pixels: int) -> "_Scored":
+        """No honest number: too few frames, or no pair with a selected pixel."""
+        return cls(mean_abs_diff=None, pairs=pairs, pairs_scored=0,
+                   selected_pixels=0, frame_pixels=frame_pixels,
+                   selected_fraction=0.0, per_pair_abs_diff=[])
+
+
+PairMask = Callable[[object, object], np.ndarray]
+
+
+def _score(sources: Sequence, outputs: Sequence, painted: Optional[Sequence],
+           select: PairMask) -> _Scored:
+    """`select(before, after)` picks the source pixels this metric is about."""
+    _validate(sources, outputs)
+    frame_pixels = 0
+    if sources:
+        height, width = np.asarray(sources[0]).shape[:2]
+        frame_pixels = int(height * width)
+    if len(sources) < 2:
+        return _Scored.nothing(pairs=0, frame_pixels=frame_pixels)
+
+    per_pair: List[float] = []
+    selected_total = 0
+    for index in range(1, len(sources)):
+        mask = select(sources[index - 1], sources[index])
+        if painted is not None:
+            mask = mask & np.asarray(painted[index - 1], dtype=bool) \
+                        & np.asarray(painted[index], dtype=bool)
+        selected_total += int(mask.sum())
+        if not mask.any():
+            continue
+        per_pair.append(_pair_abs_diff(outputs[index - 1], outputs[index], mask))
+
+    pairs = len(sources) - 1
+    selected_mean = selected_total / pairs
+    if not per_pair:
+        return _Scored.nothing(pairs=pairs, frame_pixels=frame_pixels)
+    return _Scored(
+        mean_abs_diff=round(float(np.mean(per_pair)), 6),
+        pairs=pairs,
+        pairs_scored=len(per_pair),
+        selected_pixels=int(round(selected_mean)),
+        frame_pixels=frame_pixels,
+        selected_fraction=(round(selected_mean / frame_pixels, 6)
+                           if frame_pixels else 0.0),
+        per_pair_abs_diff=[round(float(value), 6) for value in per_pair],
+    )
+
+
 def flicker_score(
     sources: Sequence,
     outputs: Sequence,
@@ -118,52 +186,85 @@ def flicker_score(
 
     Pairs with no such pixel are counted and skipped rather than scored zero.
     """
-    _validate(sources, outputs)
-    frame_pixels = 0
-    if sources:
-        height, width = np.asarray(sources[0]).shape[:2]
-        frame_pixels = int(height * width)
-    if len(sources) < 2:
-        return FlickerScore(
-            mean_abs_diff=None, pairs=0, pairs_scored=0, static_pixels=0,
-            frame_pixels=frame_pixels, static_fraction=0.0, threshold=threshold,
-            per_pair_abs_diff=[],
-            note="a flicker metric needs at least two frames to compare",
-        )
-
-    per_pair: List[float] = []
-    static_total = 0
-    for index in range(1, len(sources)):
-        mask = static_pair_mask(sources[index - 1], sources[index], threshold)
-        if painted is not None:
-            mask = mask & np.asarray(painted[index - 1], dtype=bool) \
-                        & np.asarray(painted[index], dtype=bool)
-        static_total += int(mask.sum())
-        if not mask.any():
-            continue
-        per_pair.append(_pair_abs_diff(outputs[index - 1], outputs[index], mask))
-
-    pairs = len(sources) - 1
-    static_mean = static_total / pairs
-    if not per_pair:
-        return FlickerScore(
-            mean_abs_diff=None, pairs=pairs, pairs_scored=0, static_pixels=0,
-            frame_pixels=frame_pixels, static_fraction=0.0, threshold=threshold,
-            per_pair_abs_diff=[],
-            note="no pixel was both static in the source and painted in both frames "
-                 "of any pair, so there is nothing to score",
-        )
+    scored = _score(sources, outputs, painted,
+                    lambda before, after: static_pair_mask(before, after, threshold))
+    if scored.mean_abs_diff is None:
+        note = ("a flicker metric needs at least two frames to compare"
+                if scored.pairs == 0 else
+                "no pixel was both static in the source and painted in both frames "
+                "of any pair, so there is nothing to score")
+    else:
+        note = (f"mean absolute difference between consecutive outputs over the "
+                f"{scored.selected_pixels} pixels per pair that were static in the "
+                f"source (within {threshold:g}/255) and painted in both frames; "
+                f"0-255 units, lower is steadier")
     return FlickerScore(
-        mean_abs_diff=round(float(np.mean(per_pair)), 6),
-        pairs=pairs,
-        pairs_scored=len(per_pair),
-        static_pixels=int(round(static_mean)),
-        frame_pixels=frame_pixels,
-        static_fraction=round(static_mean / frame_pixels, 6) if frame_pixels else 0.0,
-        threshold=threshold,
-        per_pair_abs_diff=[round(float(value), 6) for value in per_pair],
-        note=f"mean absolute difference between consecutive outputs over the "
-             f"{static_mean:.0f} pixels per pair that were static in the source "
-             f"(within {threshold:g}/255) and painted in both frames; 0-255 units, "
-             f"lower is steadier",
+        mean_abs_diff=scored.mean_abs_diff, pairs=scored.pairs,
+        pairs_scored=scored.pairs_scored, static_pixels=scored.selected_pixels,
+        frame_pixels=scored.frame_pixels, static_fraction=scored.selected_fraction,
+        threshold=threshold, per_pair_abs_diff=scored.per_pair_abs_diff, note=note,
+    )
+
+
+# --- the other half of the trade (issue #32, spec 8.5) -----------------------
+
+
+@dataclass(frozen=True)
+class ResponseScore:
+    """How much the output moves where the *source* moved. Flicker's mirror image.
+
+    Issue #32's second trap: a lower flicker number is not automatically better. An
+    output EMA suppresses boiling by averaging consecutive renders, and an EMA
+    strong enough to kill boiling also averages away the restyle's response to
+    motion - a subject walking across the frame drags a smear behind them. Both
+    numbers come from the same pairs and the same painted mask; the only difference
+    is which side of the static threshold the pixel fell on.
+
+    So flicker reads low-is-steadier and this reads **high-is-more-responsive**, and
+    a recommendation that moves one has to say what it did to the other.
+    """
+
+    mean_abs_diff: Optional[float]
+    pairs: int
+    pairs_scored: int
+    moving_pixels: int
+    frame_pixels: int
+    moving_fraction: float
+    threshold: float
+    per_pair_abs_diff: List[float]
+    note: str
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+def response_score(
+    sources: Sequence,
+    outputs: Sequence,
+    painted: Optional[Sequence] = None,
+    threshold: float = STATIC_THRESHOLD,
+) -> ResponseScore:
+    """Score `outputs` for responsiveness against the `sources` they came from.
+
+    The same definition as `flicker_score` with the static test inverted: the mean
+    absolute difference between consecutive outputs over the pixels that *moved* in
+    the source and were painted in both frames of the pair. Same threshold, so the
+    two partition the painted pixels of a pair between them and neither can be
+    improved by moving the line.
+    """
+    scored = _score(sources, outputs, painted,
+                    lambda before, after: ~static_pair_mask(before, after, threshold))
+    if scored.mean_abs_diff is None:
+        note = ("no pixel both moved in the source and was painted in both frames "
+                "of any pair, so there is nothing to score")
+    else:
+        note = (f"mean absolute difference between consecutive outputs over the "
+                f"{scored.selected_pixels} pixels per pair that moved in the source "
+                f"(by more than {threshold:g}/255) and were painted in both frames; "
+                f"0-255 units, higher is more responsive")
+    return ResponseScore(
+        mean_abs_diff=scored.mean_abs_diff, pairs=scored.pairs,
+        pairs_scored=scored.pairs_scored, moving_pixels=scored.selected_pixels,
+        frame_pixels=scored.frame_pixels, moving_fraction=scored.selected_fraction,
+        threshold=threshold, per_pair_abs_diff=scored.per_pair_abs_diff, note=note,
     )

@@ -100,7 +100,9 @@ def run(stream, detector, frames, plan):
     """The shipped path over the clip: sources, outputs, masks and per-frame tracks."""
     from bench.selective_runner import capture_tensor, render_frame
     from detector_worker import frame_to_array
+    from seeding import NoiseField
 
+    noise = NoiseField(policy=plan.effective_seed_policy)
     tracker = Tracker()
     scheduler = RegionScheduler()
     compositor = DeviceCompositor()
@@ -115,7 +117,8 @@ def run(stream, detector, frames, plan):
                             frame_index=index, ticks=len(snapshots) + 1)
         selection = scheduler.select(tracks, plan, CANVAS, CANVAS)
         render = compositor.frame(selection, CANVAS, CANVAS)
-        output, _, _ = render_frame(stream, tensor, compositor, render, source)
+        output, _, _ = render_frame(stream, tensor, compositor, render,
+                                    source, noise, selection)
         sources.append(source)
         outputs.append(output)
         masks.append(painted_mask(render.alpha) if render.alpha is not None
@@ -185,6 +188,7 @@ def test_a_frame_with_nothing_detected_comes_out_as_the_capture(stream, frames):
     and still produces a frame - byte for byte the capture."""
     from bench.selective_runner import capture_tensor, render_frame
     from detector_worker import frame_to_array
+    from seeding import NoiseField
 
     absent = plan_from_fields("giraffe", "a charcoal drawing").plan
     selection = RegionScheduler().select(Tracks(), absent, CANVAS, CANVAS)
@@ -194,7 +198,9 @@ def test_a_frame_with_nothing_detected_comes_out_as_the_capture(stream, frames):
 
     tensor = capture_tensor(frames[0], device=stream.device, dtype=stream.dtype)
     source = frame_to_array(tensor)
-    output, _, _ = render_frame(stream, tensor, compositor, render, source)
+    output, _, _ = render_frame(stream, tensor, compositor, render, source,
+                                NoiseField(policy=absent.effective_seed_policy),
+                                selection)
     assert np.array_equal(output, source)
 
 

@@ -24,6 +24,7 @@ from bench.cli import (  # noqa: E402
     report_portability,
     report_primitives,
     report_selective,
+    report_stability,
     report_swap,
 )
 from bench.paths import (  # noqa: E402
@@ -32,6 +33,7 @@ from bench.paths import (  # noqa: E402
     PRIMITIVE_RESULTS_DIR,
     RESULTS_DIR,
     SELECTIVE_RESULTS_DIR,
+    STABILITY_RESULTS_DIR,
     SWAP_RESULTS_DIR,
 )
 
@@ -48,6 +50,7 @@ BLOCKS = {
     "SELECTIVE PATH": (report_selective, SELECTIVE_RESULTS_DIR),
     "DEPLOY HARDWARE": (report_portability, SELECTIVE_RESULTS_DIR),
     "CADENCE SWEEP": (report_cadence, CADENCE_RESULTS_DIR),
+    "STABILITY SWEEP": (report_stability, STABILITY_RESULTS_DIR),
     "PLAN SWAP": (report_swap, SWAP_RESULTS_DIR),
 }
 

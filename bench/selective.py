@@ -39,8 +39,12 @@ from bench.clocks import ClockNormalization
 from bench.cooldown import CooldownRecord
 from bench.detector_results import LatencySummary
 from bench.fingerprint import Fingerprint
-from bench.flicker import FlickerScore
-from bench.paths import CADENCE_RESULTS_SUBDIR, SELECTIVE_RESULTS_SUBDIR
+from bench.flicker import FlickerScore, ResponseScore
+from bench.paths import (
+    CADENCE_RESULTS_SUBDIR,
+    SELECTIVE_RESULTS_SUBDIR,
+    STABILITY_RESULTS_SUBDIR,
+)
 from bench.primitive_results import ClipRecord
 from bench.results import (
     GpuColumn,
@@ -121,25 +125,40 @@ class SelectiveCase:
     # The one plan field the cadence sweep (issue #23) moves. `None` is the shipped
     # plan untouched, which is what the baseline runs measured.
     detect_every_n: Optional[int] = None
+    # The two the temporal-stability sweep (issue #32) moves - spec 8.5's unbuilt
+    # levers. `None` again means the shipped plan, so every committed baseline is
+    # still a run of it.
+    seed_policy: Optional[str] = None
+    output_ema: Optional[float] = None
 
     def plan(self):
         """The hardcoded priority-case plan, from the shipped producer.
 
-        With a cadence override, the same plan re-validated with one field changed:
-        `RenderPlan.to_dict` is exactly what `validate_plan` accepts back, so the
-        sweep's arms go through the same door the worker's plans do and a cadence
-        outside 1..30 is clamped and recorded rather than rendered.
+        With an override, the same plan re-validated with one field changed:
+        `RenderPlan.to_dict` is exactly what `validate_plan` accepts back, so a
+        sweep's arms go through the same door the worker's plans do and a value
+        outside its range is clamped and recorded rather than rendered. An override
+        that asks for the value the plan already carries is not a change, and the
+        plan is returned untouched - so an arm at the shipped setting records the
+        same plan the baselines do, version and all.
         """
         from render_plan import INITIAL_PLAN_VERSION, priority_case_plan, validate_plan
 
         plan = priority_case_plan()
-        if self.detect_every_n is None:
-            return plan
+        shipped = plan.to_dict()
         raw = plan.to_dict()
-        raw[GLOBAL_KEY]["detect_every_n"] = self.detect_every_n
+        if self.detect_every_n is not None:
+            raw[GLOBAL_KEY]["detect_every_n"] = self.detect_every_n
+        if self.output_ema is not None:
+            raw[GLOBAL_KEY]["output_ema"] = self.output_ema
+        if self.seed_policy is not None:
+            for target in raw["targets"]:
+                target["seed_policy"] = self.seed_policy
+        if raw == shipped:
+            return plan
         result = validate_plan(raw, previous_version=INITIAL_PLAN_VERSION)
         if result.plan is None:  # unreachable: only a validated plan is edited here
-            raise AssertionError(f"the cadence override did not validate: {result.reason}")
+            raise AssertionError(f"the override did not validate: {result.reason}")
         return result.plan
 
     def replace(self, **changes) -> "SelectiveCase":
@@ -170,15 +189,38 @@ def is_cadence_arm(case: SelectiveCase) -> bool:
     return case.detect_every_n is not None
 
 
+def is_stability_arm(case: SelectiveCase) -> bool:
+    """Is this an arm of the temporal-stability sweep? (issue #32)
+
+    The same predicate as `is_cadence_arm` for the other pair of swept fields, and
+    it exists for the same reason: an arm rendered under a seed policy or an EMA
+    the baselines were not rendered under must not become the row spec 8.8 quotes.
+    """
+    return case.seed_policy is not None or case.output_ema is not None
+
+
+def ema_suffix(coefficient: float) -> str:
+    """An output EMA as a filename-safe arm suffix: 0.5 -> `ema50`.
+
+    Hundredths rather than the float's own text, because the coefficient lands in a
+    filename and a `.` there reads as an extension to half the tools that will see
+    it. The record carries the number itself; this only has to be unambiguous.
+    """
+    return f"ema{int(round(float(coefficient) * 100)):02d}"
+
+
 def results_subdir(case: SelectiveCase) -> str:
     """Which results directory a run of `case` belongs in.
 
-    One rule in one place: a cadence-swept arm never lands beside the baselines,
-    because the selective directory is reduced to the newest run per (case, GPU)
-    and an arm at another cadence would take that row over.
+    One rule in one place: a swept arm never lands beside the baselines, because
+    the selective directory is reduced to the newest run per (case, GPU) and an arm
+    measured at another setting would take that row over.
     """
-    return (CADENCE_RESULTS_SUBDIR if is_cadence_arm(case)
-            else SELECTIVE_RESULTS_SUBDIR)
+    if is_cadence_arm(case):
+        return CADENCE_RESULTS_SUBDIR
+    if is_stability_arm(case):
+        return STABILITY_RESULTS_SUBDIR
+    return SELECTIVE_RESULTS_SUBDIR
 
 
 def plan_record(plan) -> dict:
@@ -196,6 +238,10 @@ def plan_record(plan) -> dict:
         "t_index": t_index_for_denoise(plan.effective_denoise),
         "detect_every_n": plan.settings.detect_every_n,
         "max_instances": None if target is None else target.max_instances,
+        # The two temporal-stability levers (issue #32). Read off the plan the run
+        # actually rendered, like every other field here, so a clamp shows.
+        "seed_policy": plan.effective_seed_policy,
+        "output_ema": plan.settings.output_ema,
     }
 
 
@@ -623,6 +669,10 @@ class SelectiveResult:
     cooldown: CooldownRecord
     hardware: Fingerprint
     staleness: Optional[StalenessSummary] = None
+    # Flicker's mirror: what the output did where the source *moved* (issue #32).
+    # Optional because every run committed before that issue has no such figure,
+    # and an absent one is "not measured" rather than "inert".
+    response: Optional[ResponseScore] = None
     clock_normalization: Optional[ClockNormalization] = None
     comparison_clip: str = ""
     comparison_still: str = ""
@@ -645,6 +695,7 @@ class SelectiveResult:
             "staleness": (None if self.staleness is None
                           else self.staleness.to_dict()),
             "flicker": self.flicker.to_dict(),
+            "response": None if self.response is None else self.response.to_dict(),
             "gate": {
                 "passed": self.gate_passed,
                 "background": self.background.to_dict(),
@@ -755,16 +806,39 @@ CADENCE_README_PREAMBLE = (
 )
 
 
+STABILITY_README_INTRO = (
+    "Written by `uv run python -m bench <case> --seed-policy P --output-ema E`,\n"
+    "never by hand - issue #32, spec 8.5. One row is one arm of the temporal-\n"
+    "stability sweep: the same shipped path over the same clip under the same\n"
+    "plan, with the seed policy and the output EMA the only fields that moved.\n\n"
+    "`flicker` is what an arm was run to move, and it is only half the reading -\n"
+    "`python -m bench --stability-report` puts it beside the responsiveness\n"
+    "figure and the visible-change figure net of a control, because an arm that\n"
+    "lowers flicker by rendering less is disqualified rather than recommended.\n\n"
+    "These rows are deliberately not in `../selective/`: that directory is\n"
+    "reduced to the newest run per (case, GPU) for spec 8.8 and 7.4, and an arm\n"
+    "at another setting sitting there would quietly become the figure those\n"
+    "sections quote.\n"
+)
+STABILITY_README_TITLE = "# Temporal stability sweep results"
+STABILITY_README_PREAMBLE = (
+    f"{STABILITY_README_TITLE}\n\n{STABILITY_README_INTRO}\n"
+    f"{SELECTIVE_README_HEADER}\n{SELECTIVE_README_SEPARATOR}\n"
+)
+
+
 def readme_preamble(case: SelectiveCase) -> str:
     """Which table a run of `case` is appended to, heading and all.
 
-    The other half of `results_subdir`, decided by the same `is_cadence_arm`
-    predicate: the two directories keep the same columns, so the row builder is
-    shared, but they exist for different reasons, so the paragraph above the table
-    is not.
+    The other half of `results_subdir`, decided by the same predicates: the three
+    directories keep the same columns, so the row builder is shared, but they exist
+    for different reasons, so the paragraph above the table is not.
     """
-    return (CADENCE_README_PREAMBLE if is_cadence_arm(case)
-            else SELECTIVE_README_PREAMBLE)
+    if is_cadence_arm(case):
+        return CADENCE_README_PREAMBLE
+    if is_stability_arm(case):
+        return STABILITY_README_PREAMBLE
+    return SELECTIVE_README_PREAMBLE
 
 
 def append_selective_readme_row(result: ResultLike, readme_path: Path,

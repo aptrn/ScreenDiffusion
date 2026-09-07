@@ -80,8 +80,13 @@ def test_the_offer_is_behind_the_plans_cadence():
 
 
 def test_a_new_plan_reaches_the_detector_exactly_once():
-    """`follow` is the cold path: it re-encodes a vocabulary and re-warms."""
-    assert len(_calls_named(WORKER, "follow")) == 1
+    """`follow` is the cold path: it re-encodes a vocabulary and re-warms.
+
+    Counted on the receiver rather than on the bare name: the noise field follows
+    a plan change too (issue #32), and it is not this one.
+    """
+    followed = [ast.unparse(call.func) for call in _calls_named(WORKER, "follow")]
+    assert followed.count("detection.follow") == 1
 
 
 def test_the_detection_readout_goes_on_the_existing_fps_channel():
