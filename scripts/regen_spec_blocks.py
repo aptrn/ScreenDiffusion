@@ -12,6 +12,7 @@ from __future__ import annotations
 import io
 import sys
 from pathlib import Path
+from typing import Callable, Optional, Sequence, TextIO, Tuple
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -32,6 +33,9 @@ from bench.paths import (  # noqa: E402
 
 SPEC = ROOT / "docs/prompt-orchestrator-spec.md"
 
+# One generated block: where its results live, and how to format them.
+Report = Callable[[Path, TextIO], None]
+
 # anchor name -> (report function, results directory)
 BLOCKS = {
     "MEASURED TABLE": (report_marginal, RESULTS_DIR),
@@ -42,13 +46,25 @@ BLOCKS = {
 }
 
 
-def rendered(report, results_dir: Path) -> str:
+def rendered(report: Report, results_dir: Path) -> str:
     buffer = io.StringIO()
     report(results_dir, out=buffer)
     return buffer.getvalue().strip()
 
 
-def main(argv=None) -> int:
+def padding(block: str) -> Tuple[str, str]:
+    """The newlines a block already carries at each end, one newline at minimum.
+
+    Kept as it was found: the spec's older blocks are written with a blank line
+    either side, and reflowing them here would put four unrelated sections in the
+    diff of a regeneration that touched one.
+    """
+    lead = block[:len(block) - len(block.lstrip("\n"))]
+    trail = block[len(block.rstrip("\n")):]
+    return lead or "\n", trail or "\n"
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     text = SPEC.read_text(encoding="utf-8")
     stale = []
@@ -59,11 +75,7 @@ def main(argv=None) -> int:
             continue
         head, rest = text.split(begin, 1)
         current, tail = rest.split(end, 1)
-        # Keep whatever padding the block already had between its anchors: the
-        # spec's older blocks are written with a blank line either side, and
-        # reflowing them here would put four unrelated sections in the diff.
-        lead = current[:len(current) - len(current.lstrip("\n"))] or "\n"
-        trail = current[len(current.rstrip("\n")):] or "\n"
+        lead, trail = padding(current)
         replacement = f"{begin}{lead}{rendered(report, results_dir)}{trail}{end}"
         if replacement != f"{begin}{current}{end}":
             stale.append(name)

@@ -29,7 +29,7 @@ from bench.portability import (
     portability_rows,
     split_by_role,
 )
-from test_bench_results import a_fingerprint
+from test_bench_results import a_fingerprint, a_lock
 
 LAPTOP = "NVIDIA GeForce RTX 3080 Laptop GPU"
 DEPLOY = "NVIDIA GeForce RTX 4090"
@@ -42,9 +42,8 @@ def a_selective_result(gpu_name=LAPTOP, finished="2026-09-06T20:25:15Z",
                        background_passed=True, coverage_bound=3, coverage_worst=2,
                        clock_state="unlocked"):
     """One selective record, cut down to the fields the portability report reads."""
-    fingerprint = a_fingerprint().to_dict()
-    fingerprint["gpu_name"] = gpu_name
-    fingerprint["clock_lock"] = dict(fingerprint["clock_lock"], state=clock_state)
+    fingerprint = a_fingerprint(gpu_name=gpu_name,
+                                clock_lock=a_lock(state=clock_state)).to_dict()
     return {
         "schema_version": 2,
         "kind": "selective",
@@ -200,8 +199,9 @@ def test_the_verdict_carries_the_clock_regime_it_was_measured_under():
 
 
 def deploy_runs(*with_detection):
+    """One committed run on the deploy card per frame cost, an hour apart."""
     return {f"run-{index}.json": a_selective_result(
-        DEPLOY, f"2026-09-07T1{index}:00:00Z", with_detection=cost)
+        DEPLOY, f"2026-09-07T{10 + index:02d}:00:00Z", with_detection=cost)
         for index, cost in enumerate(with_detection)}
 
 

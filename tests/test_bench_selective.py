@@ -9,6 +9,8 @@ The coverage probe is the one worth reading twice. It replays a run's own per-fr
 the shipped rotation policy and not an imitation of it.
 """
 
+import copy
+
 import numpy as np
 import pytest
 
@@ -256,10 +258,11 @@ def test_an_empty_results_directory_reports_that_rather_than_a_blank_table():
 # --- one row per machine (issue #24) ----------------------------------------
 
 
+DEPLOY_GPU = "NVIDIA GeForce RTX 4090"
+
+
 def on_gpu(record, gpu_name, finished):
     """`record` as the same case measured on another card."""
-    import copy
-
     other = copy.deepcopy(record)
     other["hardware"]["gpu_name"] = gpu_name
     other["run"]["finished_utc"] = finished
@@ -273,33 +276,28 @@ def test_a_second_machine_adds_a_row_rather_than_replacing_one(record):
     laptop baseline from the spec the moment it was committed.
     """
     results = {"laptop.json": record,
-               "deploy.json": on_gpu(record, "NVIDIA GeForce RTX 4090",
-                                     "2026-09-07T10:00:00Z")}
+               "deploy.json": on_gpu(record, DEPLOY_GPU, "2026-09-07T10:00:00Z")}
     assert set(latest_per_case_and_gpu(results)) == {"laptop.json", "deploy.json"}
 
 
 def test_two_runs_on_one_machine_are_still_one_row(record):
-    results = {"old.json": on_gpu(record, "NVIDIA GeForce RTX 4090",
-                                  "2026-09-07T09:00:00Z"),
-               "new.json": on_gpu(record, "NVIDIA GeForce RTX 4090",
-                                  "2026-09-07T10:00:00Z")}
+    results = {"old.json": on_gpu(record, DEPLOY_GPU, "2026-09-07T09:00:00Z"),
+               "new.json": on_gpu(record, DEPLOY_GPU, "2026-09-07T10:00:00Z")}
     assert set(latest_per_case_and_gpu(results)) == {"new.json"}
 
 
 def test_the_report_names_the_gpu_in_every_row(record):
     report = format_selective_report({
         "laptop.json": record,
-        "deploy.json": on_gpu(record, "NVIDIA GeForce RTX 4090",
-                              "2026-09-07T10:00:00Z")})
+        "deploy.json": on_gpu(record, DEPLOY_GPU, "2026-09-07T10:00:00Z")})
     assert "| GPU |" in report
     assert report.count("| selective-people |") == 2
-    assert "NVIDIA GeForce RTX 4090" in report
+    assert DEPLOY_GPU in report
 
 
 def test_the_gate_lines_belong_to_the_newest_run_and_say_which_machine(record):
     """A Gate line is one run's, so the block has to name whose it is."""
     report = format_selective_report({
         "laptop.json": record,
-        "deploy.json": on_gpu(record, "NVIDIA GeForce RTX 4090",
-                              "2026-09-07T10:00:00Z")})
-    assert "The Gate, measured on NVIDIA GeForce RTX 4090:" in report
+        "deploy.json": on_gpu(record, DEPLOY_GPU, "2026-09-07T10:00:00Z")})
+    assert f"The Gate, measured on {DEPLOY_GPU}:" in report

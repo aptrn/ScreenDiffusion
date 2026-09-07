@@ -14,12 +14,14 @@ GPU-free: `bench.selective` reads JSON and formats it.
 
 import io
 from pathlib import Path
+from typing import List
 
 import pytest
 from sourceloader import ROOT
 
 from bench.cli import report_selective
 from bench.paths import SELECTIVE_RESULTS_DIR
+from bench.portability import is_deploy_gpu
 from bench.results import require_recordable
 from bench.selective import (
     CASES,
@@ -45,22 +47,22 @@ def computed_block() -> str:
     return buffer.getvalue().strip()
 
 
-def committed() -> dict:
-    """One run per case *and machine*, keyed `case@GPU` (issue #24).
+def committed() -> List[dict]:
+    """One run per case *and machine*, in a stable order (issue #24).
 
-    Keyed by both because the same case now has a run on the deploy card as well as
-    on the dev laptop, and the Gate is asserted on every one of them rather than on
+    Per machine because the same case now has a run on the deploy card as well as on
+    the dev laptop, and the Gate is asserted on every one of them rather than on
     whichever happened to be newest.
     """
     latest = latest_per_case_and_gpu(load_selective_results(SELECTIVE_RESULTS_DIR))
-    return {f"{result['case']['name']}@{result['hardware']['gpu_name']}": result
-            for result in latest.values()}
+    return sorted(latest.values(),
+                  key=lambda result: (result["case"]["name"],
+                                      result["hardware"]["gpu_name"]))
 
 
-def runs_of(case: str = PRIORITY_CASE) -> list:
+def runs_of(case: str = PRIORITY_CASE) -> List[dict]:
     """Every machine's newest run of `case`."""
-    return [result for key, result in sorted(committed().items())
-            if key.split("@", 1)[0] == case]
+    return [result for result in committed() if result["case"]["name"] == case]
 
 
 def newest(case: str = PRIORITY_CASE) -> dict:
@@ -91,13 +93,11 @@ def test_every_committed_run_could_have_reached_disk():
 
 
 def test_the_priority_case_has_a_committed_run():
-    assert {key.split("@", 1)[0] for key in committed()} == set(CASES)
+    assert {result["case"]["name"] for result in committed()} == set(CASES)
 
 
 def test_the_case_was_measured_on_deploy_hardware_too():
     """Issue #24's Gate: a `selective-people` result from a 3090 Ti or a 4090."""
-    from bench.portability import is_deploy_gpu
-
     assert any(is_deploy_gpu(result["hardware"]["gpu_name"])
                for result in runs_of()), (
         "spec 7.4's absolute rows need a run on the hardware this deploys to")

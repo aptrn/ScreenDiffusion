@@ -29,7 +29,11 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from bench.results import format_number, latest_per
+from bench.results import BYTES_PER_MIB, format_number, latest_per
+
+# How one figure is read off one record. The side-by-side table and the evidence
+# cells share these, so a measure is read the same way wherever it appears.
+Reader = Callable[[dict], Optional[float]]
 
 # Acceptance criterion 2 (spec 11): the frame rate v1 has to reach, and what it
 # leaves for one frame.
@@ -48,38 +52,11 @@ REGIONS_TOLERANCE = 0.05
 # run-to-run noise carried, and one that moves more did not.
 AGREEMENT_TOLERANCE = 0.05
 
-BYTES_PER_MIB = 1024 * 1024
-
 
 def is_deploy_gpu(gpu_name: str) -> bool:
     """Is this one of the cards v1 deploys to?"""
     name = (gpu_name or "").lower()
     return any(marker in name for marker in DEPLOY_GPU_MARKERS)
-
-
-def latest_per_gpu(results: Mapping[str, dict]) -> Dict[str, dict]:
-    """One run per GPU: the most recently finished on each machine.
-
-    Keyed by GPU rather than by case, which is what `bench.selective` keys by. Two
-    runs on one card are two honest records and both stay on disk; the comparison
-    wants the newest of each, or it compares a first attempt against a settled one.
-    """
-    return latest_per(results, lambda result: result["hardware"]["gpu_name"])
-
-
-def _finished(result: dict) -> str:
-    return str(result["run"]["finished_utc"])
-
-
-def split_by_role(results: Mapping[str, dict]) -> Tuple[List[dict], List[dict]]:
-    """`(dev, deploy)` - one run per GPU, newest first within each role.
-
-    The split is read off the fingerprint, so a record cannot be filed under a
-    machine it was not measured on.
-    """
-    runs = sorted(latest_per_gpu(results).values(), key=_finished, reverse=True)
-    return ([run for run in runs if not is_deploy_gpu(run["hardware"]["gpu_name"])],
-            [run for run in runs if is_deploy_gpu(run["hardware"]["gpu_name"])])
 
 
 # --- reading one record ------------------------------------------------------
@@ -89,6 +66,10 @@ def gpu_of(result: dict) -> str:
     return result["hardware"]["gpu_name"]
 
 
+def _finished(result: dict) -> str:
+    return str(result["run"]["finished_utc"])
+
+
 def regions_per_frame(result: dict) -> float:
     return float(result["regions"]["regions_per_frame"])
 
@@ -96,6 +77,30 @@ def regions_per_frame(result: dict) -> float:
 def calls_per_frame(result: dict) -> float:
     run = result["run"]
     return run["diffusion_calls"] / max(1, run["frames"])
+
+
+def ms_per_frame(result: dict) -> float:
+    return float(result["run"]["ms_per_frame"])
+
+
+def ms_per_frame_with_detection(result: dict) -> float:
+    return float(result["run"]["ms_per_frame_with_detection"])
+
+
+def fps(result: dict) -> float:
+    return float(result["run"]["fps"])
+
+
+def flicker(result: dict) -> float:
+    return float(result["flicker"]["mean_abs_diff"])
+
+
+def peak_vram_mib(result: dict) -> float:
+    return result["run"]["peak_vram_bytes"] / BYTES_PER_MIB
+
+
+def mean_sm_clock_mhz(result: dict) -> Optional[float]:
+    return result["run"].get("mean_sm_clock_mhz")
 
 
 def clock_regime(result: dict) -> str:
@@ -112,17 +117,29 @@ def _nested_ms(result: dict, key: str) -> Optional[float]:
     return None if block is None else float(block["mean_ms"])
 
 
+def detect_ms(result: dict) -> Optional[float]:
+    """What one detect cost, beside the diffusion rather than behind it."""
+    return _nested_ms(result, "detect")
+
+
+def composite_ms(result: dict) -> Optional[float]:
+    return _nested_ms(result, "composite")
+
+
 def clock_held_fraction(result: dict) -> Optional[float]:
     """Mean SM clock under load as a fraction of the card's own maximum.
 
     The laptop's answer and a desktop's are the throttling difference the issue
     asks to be recorded rather than normalised away.
     """
-    mean = result["run"].get("mean_sm_clock_mhz")
+    mean = mean_sm_clock_mhz(result)
     ceiling = result["hardware"]["clock_lock"].get("max_sm_clock_mhz")
     if not mean or not ceiling:
         return None
     return float(mean) / float(ceiling)
+
+
+# --- comparing two figures ---------------------------------------------------
 
 
 def _agree(left: Optional[float], right: Optional[float],
@@ -146,6 +163,30 @@ def _ratio(left: Optional[float], right: Optional[float]) -> Optional[float]:
     return left / right
 
 
+# --- which machine is which --------------------------------------------------
+
+
+def latest_per_gpu(results: Mapping[str, dict]) -> Dict[str, dict]:
+    """One run per GPU: the most recently finished on each machine.
+
+    Keyed by GPU rather than by case, which is what `bench.selective` keys by. Two
+    runs on one card are two honest records and both stay on disk; the comparison
+    wants the newest of each, or it compares a first attempt against a settled one.
+    """
+    return latest_per(results, gpu_of)
+
+
+def split_by_role(results: Mapping[str, dict]) -> Tuple[List[dict], List[dict]]:
+    """`(dev, deploy)` - one run per GPU, newest first within each role.
+
+    The split is read off the fingerprint, so a record cannot be filed under a
+    machine it was not measured on.
+    """
+    runs = sorted(latest_per_gpu(results).values(), key=_finished, reverse=True)
+    return ([run for run in runs if not is_deploy_gpu(gpu_of(run))],
+            [run for run in runs if is_deploy_gpu(gpu_of(run))])
+
+
 # --- the third trap ----------------------------------------------------------
 
 
@@ -166,19 +207,20 @@ class Comparability:
 def comparability(baseline: dict, deploy: dict,
                   tolerance: float = REGIONS_TOLERANCE) -> Comparability:
     """Same clip, same plan, same amount of frame rendered - or no comparison."""
-    left, right = regions_per_frame(baseline), regions_per_frame(deploy)
-    comparable = bool(_agree(left, right, tolerance))
-    statement = (
-        f"{gpu_of(baseline)} rendered {left:.2f} regions/frame and "
-        f"{gpu_of(deploy)} rendered {right:.2f}, "
-        + ("the same selection to within "
-           f"{tolerance * 100:.0f}%" if comparable else
-           f"further apart than the {tolerance * 100:.0f}% that makes a "
-           f"millisecond figure a hardware figure")
-    )
-    return Comparability(baseline_regions=round(left, 4),
-                         deploy_regions=round(right, 4), tolerance=tolerance,
-                         comparable=comparable, statement=statement)
+    dev_regions = regions_per_frame(baseline)
+    deploy_regions = regions_per_frame(deploy)
+    comparable = bool(_agree(dev_regions, deploy_regions, tolerance))
+    if comparable:
+        judgement = f"the same selection to within {tolerance * 100:.0f}%"
+    else:
+        judgement = (f"further apart than the {tolerance * 100:.0f}% that makes a "
+                     f"millisecond figure a hardware figure")
+    statement = (f"{gpu_of(baseline)} rendered {dev_regions:.2f} regions/frame and "
+                 f"{gpu_of(deploy)} rendered {deploy_regions:.2f}, {judgement}")
+    return Comparability(baseline_regions=round(dev_regions, 4),
+                         deploy_regions=round(deploy_regions, 4),
+                         tolerance=tolerance, comparable=comparable,
+                         statement=statement)
 
 
 # --- acceptance criterion 2 --------------------------------------------------
@@ -209,24 +251,27 @@ class Spread:
 def fps_spread(results: Mapping[str, dict], gpu_name: str,
                target_fps: float = TARGET_FPS) -> Spread:
     """The FPS every committed run on `gpu_name` reached - all of them, not the newest."""
-    rates = sorted(float(result["run"]["fps"]) for result in results.values()
+    rates = sorted(fps(result) for result in results.values()
                    if gpu_of(result) == gpu_name)
     if not rates:
         return Spread(gpu=gpu_name, runs=0, lowest_fps=0.0, highest_fps=0.0,
                       target_fps=target_fps, decisive=False,
                       statement=f"no committed run on {gpu_name}")
-    decisive = (rates[0] >= target_fps) == (rates[-1] >= target_fps)
-    side = ("clear of" if rates[0] >= target_fps else "short of") \
-        if decisive else "either side of"
+    slowest, fastest = rates[0], rates[-1]
+    decisive = (slowest >= target_fps) == (fastest >= target_fps)
+    if decisive:
+        side = "clear of" if slowest >= target_fps else "short of"
+        caveat = ""
+    else:
+        side = "either side of"
+        caveat = " - the verdict is inside the run-to-run spread, not outside it"
     statement = (
         f"{len(rates)} committed run{'' if len(rates) == 1 else 's'} on {gpu_name} "
-        f"span {rates[0]:.1f}-{rates[-1]:.1f} FPS, {side} the "
-        f"{target_fps:.0f} FPS target"
-        + ("" if decisive else
-           " - the verdict is inside the run-to-run spread, not outside it")
+        f"span {slowest:.1f}-{fastest:.1f} FPS, {side} the "
+        f"{target_fps:.0f} FPS target{caveat}"
     )
-    return Spread(gpu=gpu_name, runs=len(rates), lowest_fps=round(rates[0], 4),
-                  highest_fps=round(rates[-1], 4), target_fps=target_fps,
+    return Spread(gpu=gpu_name, runs=len(rates), lowest_fps=round(slowest, 4),
+                  highest_fps=round(fastest, 4), target_fps=target_fps,
                   decisive=decisive, statement=statement)
 
 
@@ -258,23 +303,21 @@ def criterion_verdict(result: dict,
     frame costs - the detector shares the SMs with the UNet - and quoting the
     cheaper figure is how a budget goes missing.
     """
-    run = result["run"]
     budget = 1000.0 / target_fps
-    cost = float(run["ms_per_frame_with_detection"])
+    cost = ms_per_frame_with_detection(result)
     regions = regions_per_frame(result)
     over = cost / budget if budget else 0.0
     met = cost <= budget
     margin = (f"{budget - cost:.2f} ms to spare" if met
               else f"{over:.2f}x the budget")
     statement = (
-        f"{run['fps']:.1f} FPS at {regions:.2f} regions/frame on {gpu_of(result)} - "
+        f"{fps(result):.1f} FPS at {regions:.2f} regions/frame on {gpu_of(result)} - "
         f"{cost:.2f} ms per frame with detection amortised against the "
         f"{budget:.2f} ms a {target_fps:.0f} FPS budget allows, {margin}; "
         f"clocks {clock_regime(result)}"
     )
     return CriterionVerdict(
-        gpu=gpu_of(result), fps=float(run["fps"]),
-        ms_per_frame=float(run["ms_per_frame"]),
+        gpu=gpu_of(result), fps=fps(result), ms_per_frame=ms_per_frame(result),
         ms_per_frame_with_detection=cost, regions_per_frame=round(regions, 4),
         target_fps=target_fps, budget_ms=budget, over_budget_x=round(over, 4),
         met=met, clock_regime=clock_regime(result), statement=statement,
@@ -300,7 +343,7 @@ class PortabilityRow:
         return asdict(self)
 
 
-def _pair(baseline: dict, deploy: dict, value, digits: int = 2,
+def _pair(baseline: dict, deploy: dict, value: Reader, digits: int = 2,
           unit: str = "") -> str:
     """`<dev figure> dev -> <deploy figure> deploy`, the evidence shape every row uses."""
     suffix = f" {unit}" if unit else ""
@@ -310,64 +353,61 @@ def _pair(baseline: dict, deploy: dict, value, digits: int = 2,
 
 def portability_rows(baseline: dict, deploy: dict) -> List[PortabilityRow]:
     """Spec 7.4's table, computed. Each `carried` is a comparison, not a claim."""
-    both_identical = (baseline["gate"]["background"]["passed"]
-                      and deploy["gate"]["background"]["passed"])
-    background = (f"{baseline['gate']['background']['identical_frames']}/"
-                  f"{baseline['gate']['background']['frames']} frames dev -> "
-                  f"{deploy['gate']['background']['identical_frames']}/"
-                  f"{deploy['gate']['background']['frames']} frames deploy")
-    coverage = (f"worst gap {baseline['gate']['coverage']['worst_gap_frames']} of "
-                f"{baseline['gate']['coverage']['bound_frames']} allowed dev -> "
-                f"{deploy['gate']['coverage']['worst_gap_frames']} of "
-                f"{deploy['gate']['coverage']['bound_frames']} deploy")
-    held = clock_held_fraction(baseline), clock_held_fraction(deploy)
+    dev_background, deploy_background = (baseline["gate"]["background"],
+                                         deploy["gate"]["background"])
+    background = (f"{dev_background['identical_frames']}/"
+                  f"{dev_background['frames']} frames dev -> "
+                  f"{deploy_background['identical_frames']}/"
+                  f"{deploy_background['frames']} frames deploy")
+    dev_coverage, deploy_coverage = (baseline["gate"]["coverage"],
+                                     deploy["gate"]["coverage"])
+    coverage = (f"worst gap {dev_coverage['worst_gap_frames']} of "
+                f"{dev_coverage['bound_frames']} allowed dev -> "
+                f"{deploy_coverage['worst_gap_frames']} of "
+                f"{deploy_coverage['bound_frames']} deploy")
+    dev_held, deploy_held = clock_held_fraction(baseline), clock_held_fraction(deploy)
+    # Both halves of the selection, or the row has not carried: the same regions
+    # rendered in a different number of calls is a different render.
+    selection = (_agree(regions_per_frame(baseline), regions_per_frame(deploy),
+                        REGIONS_TOLERANCE)
+                 and _agree(calls_per_frame(baseline), calls_per_frame(deploy)))
+
+    def compared(conclusion: str, read: Reader, digits: int = 2,
+                 unit: str = "") -> PortabilityRow:
+        """One row off a single reader: the same figure decides it and evidences it."""
+        return PortabilityRow(conclusion, _agree(read(baseline), read(deploy)),
+                              _pair(baseline, deploy, read, digits, unit))
+
     return [
         PortabilityRow(
             "Non-target pixels stay bit-identical to the capture",
-            both_identical, background),
+            dev_background["passed"] and deploy_background["passed"], background),
         PortabilityRow(
             "How much of the frame the scheduler picks: regions and calls per frame",
-            _agree(regions_per_frame(baseline), regions_per_frame(deploy),
-                   REGIONS_TOLERANCE)
-            and _agree(calls_per_frame(baseline), calls_per_frame(deploy)),
+            selection,
             f"{_pair(baseline, deploy, regions_per_frame)} regions/frame, "
             f"{_pair(baseline, deploy, calls_per_frame)} calls/frame"),
         PortabilityRow(
             "The ceil(N/K) round-robin bound",
-            baseline["gate"]["coverage"]["passed"]
-            and deploy["gate"]["coverage"]["passed"], coverage),
-        PortabilityRow(
-            "Flicker over pixels static in the source",
-            _agree(baseline["flicker"]["mean_abs_diff"],
-                   deploy["flicker"]["mean_abs_diff"]),
-            _pair(baseline, deploy, lambda r: r["flicker"]["mean_abs_diff"])),
-        PortabilityRow(
-            "Absolute ms/frame on the frame path",
-            _agree(baseline["run"]["ms_per_frame"], deploy["run"]["ms_per_frame"]),
-            _pair(baseline, deploy, lambda r: r["run"]["ms_per_frame"], unit="ms")),
+            dev_coverage["passed"] and deploy_coverage["passed"], coverage),
+        compared("Flicker over pixels static in the source", flicker),
+        compared("Absolute ms/frame on the frame path", ms_per_frame, unit="ms"),
+        # Not a `compared` row: the question is whether the two runs land on the
+        # same side of the criterion, which two figures 2x apart can still do.
         PortabilityRow(
             f"Whether the {TARGET_FPS:.0f} FPS criterion is met",
             criterion_verdict(baseline).met == criterion_verdict(deploy).met,
-            _pair(baseline, deploy, lambda r: r["run"]["fps"], digits=1,
-                  unit="FPS")),
-        PortabilityRow(
-            "What one detect costs beside the diffusion",
-            _agree(_nested_ms(baseline, "detect"), _nested_ms(deploy, "detect")),
-            _pair(baseline, deploy, lambda r: _nested_ms(r, "detect"), unit="ms")),
-        PortabilityRow(
-            "Peak VRAM the path allocates",
-            _agree(baseline["run"]["peak_vram_bytes"],
-                   deploy["run"]["peak_vram_bytes"]),
-            _pair(baseline, deploy,
-                  lambda r: r["run"]["peak_vram_bytes"] / BYTES_PER_MIB, digits=0,
-                  unit="MiB")),
+            _pair(baseline, deploy, fps, digits=1, unit="FPS")),
+        compared("What one detect costs beside the diffusion", detect_ms, unit="ms"),
+        compared("Peak VRAM the path allocates", peak_vram_mib, digits=0,
+                 unit="MiB"),
         PortabilityRow(
             "The clock the card holds under load, against its own maximum",
-            _agree(*held),
-            "-" if None in held else
-            f"{held[0] * 100:.0f}% of maximum dev "
+            _agree(dev_held, deploy_held),
+            "-" if dev_held is None or deploy_held is None else
+            f"{dev_held * 100:.0f}% of maximum dev "
             f"({power_limit_w(baseline):.0f} W limit) -> "
-            f"{held[1] * 100:.0f}% deploy ({power_limit_w(deploy):.0f} W)"),
+            f"{deploy_held * 100:.0f}% deploy ({power_limit_w(deploy):.0f} W)"),
     ]
 
 
@@ -377,41 +417,49 @@ def portability_rows(baseline: dict, deploy: dict) -> List[PortabilityRow]:
 # What the side-by-side table prints, in order: the label, how to read it off a
 # record, and how many places it is worth to. One list rather than a list of keys
 # and a dict of readers, so a row cannot be labelled here and read somewhere else.
-MEASURES: Tuple[Tuple[str, Callable[[dict], Optional[float]], int], ...] = (
+MEASURES: Tuple[Tuple[str, Reader, int], ...] = (
     ("regions/frame", regions_per_frame, 2),
     ("diffusion calls/frame", calls_per_frame, 2),
-    ("ms/frame, frame path", lambda r: r["run"]["ms_per_frame"], 2),
-    ("ms/frame, with detection",
-     lambda r: r["run"]["ms_per_frame_with_detection"], 2),
-    ("FPS", lambda r: r["run"]["fps"], 1),
-    ("ms/detect", lambda r: _nested_ms(r, "detect"), 2),
-    ("composite ms/frame", lambda r: _nested_ms(r, "composite"), 2),
-    ("flicker (static px)", lambda r: r["flicker"]["mean_abs_diff"], 2),
-    ("peak VRAM (MiB)", lambda r: r["run"]["peak_vram_bytes"] / BYTES_PER_MIB, 0),
-    ("mean SM clock (MHz)", lambda r: r["run"].get("mean_sm_clock_mhz"), 0),
+    ("ms/frame, frame path", ms_per_frame, 2),
+    ("ms/frame, with detection", ms_per_frame_with_detection, 2),
+    ("FPS", fps, 1),
+    ("ms/detect", detect_ms, 2),
+    ("composite ms/frame", composite_ms, 2),
+    ("flicker (static px)", flicker, 2),
+    ("peak VRAM (MiB)", peak_vram_mib, 0),
+    ("mean SM clock (MHz)", mean_sm_clock_mhz, 0),
 )
 
 
+def _table(header: str, cells: Sequence[Sequence[str]]) -> str:
+    """One Markdown table: header, separator, rows.
+
+    The separator is derived from the header, so a column added to the header cannot
+    leave a separator of the wrong width behind - which renders the whole table as
+    plain text. A function rather than the module-level `HEADER`/`SEPARATOR` pair the
+    other report tables use, because this block's header names the two GPUs and so is
+    only known once there are two records to name.
+    """
+    separator = "|" + "---|" * (header.count("|") - 1)
+    return "\n".join([header, separator]
+                     + ["| " + " | ".join(row) + " |" for row in cells])
+
+
 def _measure_table(baseline: dict, deploy: dict) -> str:
-    header = (f"| measure | {gpu_of(baseline)} (dev) | "
-              f"{gpu_of(deploy)} (deploy) | deploy / dev |")
-    lines = [header, "|" + "---|" * (header.count("|") - 1)]
+    rows = []
     for label, read, digits in MEASURES:
         left, right = read(baseline), read(deploy)
         ratio = _ratio(right, left)
-        lines.append("| " + " | ".join([
-            label, format_number(left, digits), format_number(right, digits),
-            "-" if ratio is None else f"{ratio:.2f}x",
-        ]) + " |")
-    return "\n".join(lines)
+        rows.append([label, format_number(left, digits),
+                     format_number(right, digits),
+                     "-" if ratio is None else f"{ratio:.2f}x"])
+    return _table(f"| measure | {gpu_of(baseline)} (dev) | "
+                  f"{gpu_of(deploy)} (deploy) | deploy / dev |", rows)
 
 
 def _rows_table(rows: Sequence[PortabilityRow]) -> str:
-    header = "| Conclusion | Carried? | Evidence |"
-    lines = [header, "|" + "---|" * (header.count("|") - 1)]
-    lines += [f"| {row.conclusion} | {row.verdict} | {row.evidence} |"
-              for row in rows]
-    return "\n".join(lines)
+    return _table("| Conclusion | Carried? | Evidence |",
+                  [[row.conclusion, row.verdict, row.evidence] for row in rows])
 
 
 def _preamble(baseline: dict, deploy: dict) -> str:
@@ -438,31 +486,31 @@ def format_portability_report(results: Mapping[str, dict],
     notices. An incomparable pair prints no table at all - a table is the part
     someone quotes, and one built across two region counts would be quoted wrongly.
     """
-    dev, deploy = split_by_role(results)
-    if not deploy:
+    dev_runs, deploy_runs = split_by_role(results)
+    if not deploy_runs:
         return ("no deploy-hardware run committed yet: spec 7.4's absolute rows are "
                 "still unanswered (issue #24)")
-    if not dev:
+    if not dev_runs:
         return ("no dev-hardware baseline to compare the deploy run against: "
                 "spec 7.4's table is a comparison, not a single number")
 
-    baseline, card = dev[0], deploy[0]
-    check = comparability(baseline, card)
+    baseline, deploy = dev_runs[0], deploy_runs[0]
+    check = comparability(baseline, deploy)
     if not check.comparable:
-        return (f"{_preamble(baseline, card)}\n\nThe two runs are **not comparable**, "
-                f"so no table is drawn: {check.statement}. Region count drives cost; "
-                f"re-run both arms at one region count.")
+        return (f"{_preamble(baseline, deploy)}\n\nThe two runs are **not "
+                f"comparable**, so no table is drawn: {check.statement}. Region "
+                f"count drives cost; re-run both arms at one region count.")
 
-    verdict = criterion_verdict(card, target_fps)
-    spread = fps_spread(results, gpu_of(card), target_fps)
+    verdict = criterion_verdict(deploy, target_fps)
+    spread = fps_spread(results, gpu_of(deploy), target_fps)
     return "\n\n".join([
-        _preamble(baseline, card),
-        _measure_table(baseline, card),
+        _preamble(baseline, deploy),
+        _measure_table(baseline, deploy),
         f"**Acceptance criterion 2 ({target_fps:.0f} FPS): "
         f"{'MET' if verdict.met else 'NOT MET'}"
         f"{'' if spread.decisive else ', but not decisively'}.** "
         f"{verdict.statement}. {spread.statement}.",
         "What carried across the move, measured:",
-        _rows_table(portability_rows(baseline, card)),
+        _rows_table(portability_rows(baseline, deploy)),
         f"Comparable because {check.statement}.",
     ])

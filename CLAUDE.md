@@ -222,9 +222,9 @@ how the whole path is driven until a GUI field exists to drive it.
   moved (0.68x where the frame path went to 0.45x) and is now a larger share of the
   frame than it was on the laptop.
 - **Engines are per GPU architecture, and must be rebuilt, never copied.** An Ampere
-  build will not load on Ada. A second machine needs its own `models/` (5.4 GB
-  download; `huggingface-cli download stabilityai/sd-turbo --local-dir
-  $SD_MODELS_DIR/sd-turbo-fp16 --exclude sd_turbo.safetensors
+  build will not load on Ada. A second machine needs its own `models/` (2.5 GB once
+  the fp32 duplicates are excluded; `huggingface-cli download stabilityai/sd-turbo
+  --local-dir $SD_MODELS_DIR/sd-turbo-fp16 --exclude sd_turbo.safetensors
   unet/diffusion_pytorch_model.safetensors vae/diffusion_pytorch_model.safetensors
   text_encoder/model.safetensors`), its own detector weights under
   `$SD_MODELS_DIR/detectors`, and its own `engines/` (~15 min for the 512² b1 build
