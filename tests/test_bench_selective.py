@@ -30,7 +30,7 @@ from bench.selective import (
     change_check,
     coverage_check,
     format_selective_report,
-    latest_per_case_and_gpu,
+    latest_per_case,
     plan_record,
     selective_readme_row,
     RegionSummary,
@@ -171,17 +171,19 @@ def test_an_offer_that_blocked_the_frame_path_fails():
 # --- the record and the report ----------------------------------------------
 
 
-@pytest.fixture
-def record() -> dict:
+def a_selective_result(**overrides) -> SelectiveResult:
     """A whole record, built out of the record's own dataclasses.
 
     Not a dict written out by hand: a fixture that spelt the shape itself would
     keep passing after a field was renamed, and the README row and the report are
     exactly what read those field names.
+
+    A function as well as a fixture because the cross-machine report tests
+    (issue #25) need two of these under two different fingerprints.
     """
     frames = [np.zeros((8, 8, 3), dtype=np.uint8) for _ in range(3)]
     plan = priority_case_plan()
-    result = SelectiveResult(
+    fields = dict(
         case=CASES[PRIORITY_CASE],
         plan=plan_record(plan),
         clip=ClipRecord(name="people.mp4", sha256="abc", width=1280, height=720,
@@ -216,7 +218,13 @@ def record() -> dict:
         comparison_clip="selective-people-x-comparison.mp4",
         comparison_still="selective-people-x-comparison.jpg",
     )
-    return result.to_dict()
+    fields.update(overrides)
+    return SelectiveResult(**fields)
+
+
+@pytest.fixture
+def record() -> dict:
+    return a_selective_result().to_dict()
 
 
 def test_a_record_carries_a_machine_and_a_clock_regime(record):
@@ -277,13 +285,13 @@ def test_a_second_machine_adds_a_row_rather_than_replacing_one(record):
     """
     results = {"laptop.json": record,
                "deploy.json": on_gpu(record, DEPLOY_GPU, "2026-09-07T10:00:00Z")}
-    assert set(latest_per_case_and_gpu(results)) == {"laptop.json", "deploy.json"}
+    assert set(latest_per_case(results)) == {"laptop.json", "deploy.json"}
 
 
 def test_two_runs_on_one_machine_are_still_one_row(record):
     results = {"old.json": on_gpu(record, DEPLOY_GPU, "2026-09-07T09:00:00Z"),
                "new.json": on_gpu(record, DEPLOY_GPU, "2026-09-07T10:00:00Z")}
-    assert set(latest_per_case_and_gpu(results)) == {"new.json"}
+    assert set(latest_per_case(results)) == {"new.json"}
 
 
 def test_the_report_names_the_gpu_in_every_row(record):

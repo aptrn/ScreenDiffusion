@@ -97,8 +97,16 @@ the `ceil(N/K)` round-robin bound, and whether the loop ever stalled — and
 `--selective-report` regenerates the block in spec 8.8, held to a byte match by
 a test.
 
-A selective run is kept **per case and per GPU**, not per case: the same case on
-two cards is two answers, and the deploy run must not delete the dev baseline.
+All three generated blocks (`--detector-report`, `--primitive-report`,
+`--selective-report`) keep the newest run **per (thing measured, GPU)**, not per
+name. A 4090 run therefore adds a row beside the 3080's instead of erasing it,
+which is what keeps spec 7.4's portability table checkable. When rows span GPUs
+the table grows a `GPU` column, the preamble names every machine, and the
+per-machine verdicts — the recommendation, the primitive decision, the selective
+Gate lines — are stated once per machine; with one machine the block renders
+byte-identically to before, so the byte-match tests do not churn. `gpu_of` in
+`bench/results.py` is the one reading of which machine a record came from.
+
 `--portability-report` is the second question asked of those same records — not
 "does the path work" but "which of its numbers survived the move to the hardware
 this ships on" — and regenerates the block in spec 7.4, byte-matched by a test
@@ -145,13 +153,18 @@ range and says so in `notes`, drops unknown fields, and *rejects* — with a rea
 words — a value outside a fixed vocabulary, a number that is not a number, a
 duplicate target id, or a concept the active detector cannot serve. It assigns
 `plan_version` as `previous + 1`, so versions are monotonic in the worker rather than
-in whatever sent one. `plan_from_fields(target, style)` is the GUI's producer; there
-is no LLM in this path and none is coming in v1. The plan crosses the queue as a
-plain dict (`set_plan`); the worker validates it and holds it in an `ActivePlan`,
-whose `begin_frame()` is the frame loop's single read — a plan arriving mid-frame
-lands on the next frame. Only the *first* target's `prompt` and `denoise` reach the
-engine, because issue #5 chose the full-frame masked primitive and that is one
-embedding per frame; the rest are carried and the validator says when they differ.
+in whatever sent one. `plan_from_fields(target, style)` is the GUI's producer - the
+**Target** and **Style** fields beside the prompt boxes, debounced by
+`PLAN_DEBOUNCE_MS` because a target edit re-encodes the detector's vocabulary; a
+blank target is `global`, a blank style falls back to the prompt box, and a plan the
+GUI's own validator refuses is never sent, its reason going to the status area
+instead. There is no LLM in this path and none is coming in v1. The plan crosses the
+queue as a plain dict (`set_plan`); the worker validates it and holds it in an
+`ActivePlan`, whose `begin_frame()` is the frame loop's single read — a plan
+arriving mid-frame lands on the next frame. Only the *first* target's `prompt` and
+`denoise` reach the engine, because issue #5 chose the full-frame masked primitive
+and that is one embedding per frame; the rest are carried and the validator says
+when they differ.
 
 `detection.py` is the **tracker** — spec §5.1 C4 and §8.5. Stdlib only, like
 `render_plan.py`. `Tracker.update` takes one detector tick and returns tracks with
@@ -194,7 +207,8 @@ measured ladder by a test. Only the schedule *values* move, so a plan change is 
 runtime update and never an engine rebuild; a plan with no target leaves the
 t_index slider alone. `SD_DEMO_PLAN=1` starts the worker on
 `priority_case_plan()` — restyle the lower half of every person, gently — which is
-how the whole path is driven until a GUI field exists to drive it.
+the headless way to drive the whole path. It survives the GUI fields: a blank target
+sends no plan at all, at start or ever, so an empty field cannot overwrite it.
 
 ## Gotchas
 

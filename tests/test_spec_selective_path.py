@@ -26,7 +26,7 @@ from bench.results import require_recordable
 from bench.selective import (
     CASES,
     PRIORITY_CASE,
-    latest_per_case_and_gpu,
+    latest_per_case,
     load_selective_results,
 )
 
@@ -54,7 +54,7 @@ def committed() -> List[dict]:
     the dev laptop, and the Gate is asserted on every one of them rather than on
     whichever happened to be newest.
     """
-    latest = latest_per_case_and_gpu(load_selective_results(SELECTIVE_RESULTS_DIR))
+    latest = latest_per_case(load_selective_results(SELECTIVE_RESULTS_DIR))
     return sorted(latest.values(),
                   key=lambda result: (result["case"]["name"],
                                       result["hardware"]["gpu_name"]))
