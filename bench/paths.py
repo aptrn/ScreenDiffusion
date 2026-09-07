@@ -42,6 +42,11 @@ SELECTIVE_RESULTS_DIR = RESULTS_DIR / SELECTIVE_RESULTS_SUBDIR
 # become the row spec 8.8 and 7.4 quote.
 CADENCE_RESULTS_SUBDIR = "cadence"
 CADENCE_RESULTS_DIR = RESULTS_DIR / CADENCE_RESULTS_SUBDIR
+# The temporal-stability sweep (issue #32) is the selective record shape again,
+# with `seed_policy` and `global.output_ema` swept instead of the cadence - so it
+# needs its own directory for exactly the reason the cadence arms do.
+STABILITY_RESULTS_SUBDIR = "stability"
+STABILITY_RESULTS_DIR = RESULTS_DIR / STABILITY_RESULTS_SUBDIR
 # Plan swaps (issue #30) are a third record shape again - two plans, an interval
 # series and the two acceptance criteria they answer - so they get their own
 # directory rather than sitting where the selective reports reduce and quote.

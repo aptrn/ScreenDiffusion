@@ -26,7 +26,7 @@ any CUDA device in a second.
 import numpy as np
 import pytest
 
-from compositor import composite, feather_alpha
+from compositor import Compositor, composite, feather_alpha
 from detection import Box
 from device_compositor import DeviceCompositor, capture_frames, rendered_frames
 from detector_worker import frame_to_array
@@ -175,6 +175,50 @@ def test_the_alpha_is_uploaded_once_while_the_boxes_hold_still(torch):
     assert compositor._weights is first
     compositor.blend_device(capture, rendered, ALPHAS["overlapping"])
     assert compositor._weights is not first
+
+
+# --- the output EMA, on either device (issue #32) ----------------------------
+
+
+@pytest.mark.parametrize("coefficient", (0.0, 0.25, 0.5, 0.75, 0.9))
+def test_the_device_ema_and_the_numpy_ema_agree_byte_for_byte(torch, coefficient):
+    """The EMA is the second thing on this path that produces pixels, so it gets
+    the same guarantee the blend does: identical bytes, not a tolerance."""
+    sequence = frames(21, count=5)
+    host = Compositor(output_ema=coefficient)
+    device = DeviceCompositor(output_ema=coefficient)
+    for frame in sequence:
+        smoothed = device.smooth_device(
+            torch.from_numpy(frame.copy()).to(device="cuda"))
+        assert np.array_equal(smoothed.cpu().numpy(), host.smooth(frame))
+
+
+def test_a_smoothed_frame_still_leaves_the_background_bit_identical(torch):
+    """The issue's first trap, on the shipped path: an EMA on the *render* cannot
+    reach outside the mask, because the blend it feeds still copies the captured
+    byte wherever alpha is zero."""
+    alpha = ALPHAS["feathered"]
+    compositor = DeviceCompositor(output_ema=0.75)
+    outside = alpha == 0.0
+    for seed in range(30, 34):
+        capture = _on_device(torch, frames(seed)[0])
+        output = compositor.blend_device(
+            capture, _on_device(torch, frames(seed + 100)[0]), alpha)[0]
+        assert np.array_equal(output[outside], frame_to_array(capture)[outside])
+
+
+def test_a_smoothed_frame_still_costs_one_device_to_host_copy(torch, monkeypatch):
+    copies = []
+    original = torch.Tensor.cpu
+    monkeypatch.setattr(torch.Tensor, "cpu",
+                        lambda self, *a, **k: (copies.append(tuple(self.shape)),
+                                               original(self, *a, **k))[1])
+    compositor = DeviceCompositor(output_ema=0.5)
+    for seed in (40, 41):
+        compositor.blend_device(_on_device(torch, frames(seed)[0]),
+                                _on_device(torch, frames(seed + 1)[0]),
+                                ALPHAS["feathered"])
+    assert len(copies) == 2, f"{len(copies)} device-to-host copies: {copies}"
 
 
 # --- how a frame reaches the two calls above ---------------------------------

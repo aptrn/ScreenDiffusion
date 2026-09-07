@@ -94,6 +94,21 @@ def rendered_frames(rendered):
     return _as_bhwc(rendered).float().mul(255.0).round().to(torch.uint8)
 
 
+def ema_blend_device(previous, current, coefficient: float):
+    """`compositor.ema_blend`'s body, on tensors. uint8 in, uint8 out.
+
+    The same interpolation written the same way round and the same round half to
+    even, for the same reason the blend below is: this is held to the host
+    implementation byte for byte, and an equivalent-looking expression is a hope
+    rather than a guarantee.
+    """
+    import torch
+
+    below = current.to(torch.float32)
+    above = previous.to(torch.float32)
+    return (below + (above - below) * float(coefficient)).round().to(torch.uint8)
+
+
 def composite_device(source, rendered, weights, bounds: Bounds):
     """`rendered` blended onto `source` through `weights`. uint8 in, uint8 out.
 
@@ -125,14 +140,42 @@ class DeviceCompositor(Compositor):
     a region-sized float map across PCIe for a map already sitting in VRAM.
     """
 
-    def __init__(self, feather_px: int = DEFAULT_FEATHER_PX) -> None:
-        super().__init__(feather_px)
+    def __init__(self, feather_px: int = DEFAULT_FEATHER_PX,
+                 output_ema: float = 0.0) -> None:
+        super().__init__(feather_px, output_ema)
         # The host array itself, not a hash of it: identity is only a safe key
         # while the object it identifies is held.
         self._alpha: Optional[np.ndarray] = None
         self._bounds: Optional[Bounds] = None
         self._weights = None
         self._device = None
+        # The EMA's state stays where the frames it averages are. Its own
+        # attribute rather than the base class's, because one holds a host array
+        # and the other a device tensor, and a compositor asked for both blends
+        # should not have them share a slot.
+        self._previous_device = None
+
+    def reset_ema(self) -> None:
+        """Both histories - the device path's, and the host one it is checked against."""
+        super().reset_ema()
+        self._previous_device = None
+
+    def smooth_device(self, rendered):
+        """`smooth`, on the device: this frame's render averaged with the ones
+        before it, in uint8, before the mask decides what reaches the screen.
+
+        Held to `Compositor.smooth` byte for byte by
+        `tests/test_gpu_device_compositor.py`, so the merge gate's tier goes on
+        being where the EMA's rules are asserted.
+        """
+        previous = self._previous_device
+        if (self.output_ema <= 0.0 or previous is None
+                or previous.shape != rendered.shape):
+            self._previous_device = rendered
+            return rendered
+        smoothed = ema_blend_device(previous, rendered, self.output_ema)
+        self._previous_device = smoothed
+        return smoothed
 
     def blend_device(self, capture, rendered, alpha: np.ndarray) -> List[np.ndarray]:
         """This frame's blend, on the device; the finished frames, on the host.
@@ -148,8 +191,8 @@ class DeviceCompositor(Compositor):
         if bounds is None:
             # An alpha of nothing: the capture, exactly as `composite` returns it.
             return _to_host(source)
-        return _to_host(composite_device(source, rendered_frames(rendered),
-                                         weights, bounds))
+        smoothed = self.smooth_device(rendered_frames(rendered))
+        return _to_host(composite_device(source, smoothed, weights, bounds))
 
     def _alpha_on(self, alpha: np.ndarray, device):
         """The alpha's non-zero rectangle as a device tensor, uploaded once.

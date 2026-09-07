@@ -131,8 +131,28 @@ criterion, worst interval across a swap 37.85 ms against 32.03 in the same run's
 steady state, **0 rebuilds**. A stutter is judged against that steady state plus
 one frame budget, never against 33.33 ms alone.
 
-All five case-table blocks (`--detector-report`, `--primitive-report`,
-`--selective-report`, `--cadence-report`, `--swap-report`) keep the newest run
+The same slot also takes a **temporal-stability arm** (issue #32, spec 8.5):
+`--seed-policy {per_track,fixed,random}` and `--output-ema E` sweep the two
+levers §8.5 named and nothing had built. The arm is named
+`<case>-<policy>-ema<NN>` and writes to `bench/results/stability/` — its own
+directory, for the reason the cadence arms have one. Every arm carries a
+**responsiveness** figure beside its flicker: the same metric over the pixels
+that *moved* in the source rather than the ones that stood still, because an EMA
+that kills boiling also kills the restyle's response to motion and one number
+alone would recommend the strongest smear measured. `--stability-report`
+regenerates the block in spec 8.5. It disqualifies an arm whose region stopped
+changing visibly (an EMA that lowers flicker by rendering less) or whose
+background stopped being bit-identical, and it recommends the steadiest arm that
+keeps 90% of the control arm's response. Measured on a 4090: **neither lever
+ships**. `random` scores 8.72 against `fixed`'s 1.49, so the metric plainly sees
+noise; `per_track` scores **1.74 — worse** than fixed; and the EMA trades
+steadiness for response roughly one for one (0.25 → −14% flicker, −13%
+response). 1.49/255 is the floor this path renders at, not a figure waiting to
+be improved.
+
+All six case-table blocks (`--detector-report`, `--primitive-report`,
+`--selective-report`, `--cadence-report`, `--swap-report`, `--stability-report`)
+keep the newest run
 **per (thing measured, GPU)**, not per name. A 4090 run therefore adds a row beside the 3080's instead of erasing it,
 which is what keeps spec 7.4's portability table checkable. When rows span GPUs
 the table grows a `GPU` column, the preamble names every machine, and the
@@ -144,13 +164,13 @@ byte-identically to before, so the byte-match tests do not churn. `gpu_of` in
 `--portability-report` is the second question asked of those same records — not
 "does the path work" but "which of its numbers survived the move to the hardware
 this ships on" — and regenerates the block in spec 7.4, byte-matched by a test
-like the other five. It refuses to draw a table at all when the two runs rendered
+like the other six. It refuses to draw a table at all when the two runs rendered
 different regions/frame, because region count drives cost and a table across two
 of them is the wrong answer in a quotable shape. The 30 FPS verdict it prints is
 judged on `ms/frame with detection`, carries the region count and the clock
 regime, and says whether every committed run on the card landed on the same side
 of the target — a verdict inside the run-to-run spread is labelled one.
-`scripts/regen_spec_blocks.py` pastes all seven generated blocks back into the
+`scripts/regen_spec_blocks.py` pastes all eight generated blocks back into the
 spec, so a regeneration is never a hand-copy that drops a digit.
 
 The clips in `bench/clips/` are committed and so are their box tracks
@@ -234,6 +254,30 @@ region's edge, so outside the regions the output is the captured pixel byte for
 byte. That is asserted, not asserted-ish: `bench/results/selective/` holds a run
 where 48/48 frames were bit-identical outside the mask.
 
+`seeding.py` is the plan's **`seed_policy`**, applied to the engine's latent noise
+(issue #32, spec 8.5). Stdlib in the GUI process's sense — torch is imported inside
+the methods that write a tensor. Three things it settles. StreamDiffusion draws
+`init_noise` once at `prepare()` and reuses it for every frame, so the shipped path's
+noise is already **fixed and canvas-pinned**, and `fixed` is a name for what the app
+has always done rather than a new setting — which is why `DEFAULT_SEED_POLICY` is
+`fixed`. `per_track` cannot mean one call per track under the full-frame masked
+primitive; what it means here is one field composed of per-track patches, each track's
+realisation drawn from its id and *rolled to its current centre* so the noise follows
+the object. And `random` — a fresh field per frame — does not ship: it is the control
+that says the flicker metric can see the noise at all. Writing the field is a runtime
+write of a plain tensor `add_noise` reads in Python, so a seed change cannot cost a
+TensorRT rebuild; a GPU test holds that. `NoiseField` is held across frames beside the
+scheduler's cursor and the compositor's alpha cache, and under `fixed` it costs the
+frame path not one tensor operation.
+
+The compositor also holds the **output EMA** (issue #32): `global.output_ema` pulls
+each rendered canvas back towards the previous one, `current + (previous - current) *
+ema`, *before* the mask. That ordering is the whole safety argument - an EMA on the
+composited frame would make a background pixel a function of history, and this one
+cannot, because the blend it feeds still copies the captured byte wherever alpha is 0.
+The history ends where a frame rendered nothing and at an engine rebuild. It defaults
+to 0.0 and spec 8.5 says why it stays there.
+
 `device_compositor.py` is that blend **on the GPU** (issue #31). `DeviceCompositor`
 *is* a `Compositor` - it inherits the actions, the feather, the alpha cache and the
 numpy blend, so every rule the GPU-free tier holds the reference implementation to
@@ -253,7 +297,9 @@ which picks the schedule index whose noise amplitude is nearest — the amplitud
 are computed from SD-Turbo's own beta schedule in stdlib and pinned to issue #5's
 measured ladder by a test. Only the schedule *values* move, so a plan change is a
 runtime update and never an engine rebuild; a plan with no target leaves the
-t_index slider alone. `SD_DEMO_PLAN=1` starts the worker on
+t_index slider alone. `seed_policy` and `global.output_ema` reach the frame loop the same way and are
+runtime writes too - `seeding.NoiseField` and the compositor - so no stability
+setting can cost an engine rebuild. `SD_DEMO_PLAN=1` starts the worker on
 `priority_case_plan()` — restyle the lower half of every person, gently — which is
 the headless way to drive the whole path. It survives the GUI fields: a blank target
 sends no plan at all, at start or ever, so an empty field cannot overwrite it.
@@ -387,6 +433,22 @@ sends no plan at all, at start or ever, so an empty field cannot overwrite it.
   30 FPS; anything that makes it dearer wants re-measuring. A *target* swap is the
   other way round: it costs the frame path nothing and costs the output ~10 frames
   of unstyled capture while the detector re-encodes and re-detects.
+- **`per_track` seeding makes flicker *worse*, and that is measured, not a bug.**
+  Flicker is scored where the *source* stood still, and the shipped noise field is
+  pinned to the canvas, so a static pixel already gets the same noise on every
+  frame. Pinning the field to a track instead makes it translate, so the static
+  background *inside* a moving person's box starts boiling: 1.74 against `fixed`'s
+  1.49 on a run-to-run spread of 0.0004 (spec 8.5). The lever does what its name
+  says and the name was aimed at the wrong thing. Do not "fix" it by reverting the
+  default to `per_track` - a plan field nothing reads describing behaviour nothing
+  produces is what issue #32 found and removed.
+- **The output EMA buys steadiness at about one-for-one in responsiveness.** 0.25
+  takes 14% off flicker and 13% off the output's response to the source's own
+  motion; 0.75 takes 58% and 46%. It is not cheating - the net change inside the
+  regions is 11.7-11.9/255 at every setting - it is simply priced. At a starting
+  flicker of 1.49/255 there is nothing worth buying, which is why the default is
+  0.0. That verdict is about *this* denoise on *this* case: a stronger `denoise`
+  boils more, and the answer could change.
 - **A feather that bleeds outside its region breaks the whole criterion.** The
   selective path's promise is that non-target pixels are the captured bytes, so
   the alpha ramp climbs inwards from the region's own edge and is exactly 0 one

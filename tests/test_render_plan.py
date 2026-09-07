@@ -20,6 +20,7 @@ from render_plan import (
     DEFAULT_DETECT_EVERY_N,
     DEFAULT_FPS_TARGET,
     DEFAULT_MAX_INSTANCES,
+    DEFAULT_OUTPUT_EMA,
     DEFAULT_PRIORITY,
     DEFAULT_REGION,
     DEFAULT_SEED_POLICY,
@@ -32,6 +33,7 @@ from render_plan import (
     MAX_CONCEPT_CHARS,
     MAX_INSTANCES_RANGE,
     MODES,
+    OUTPUT_EMA_RANGE,
     PASSTHROUGH,
     PRIORITY_RANGE,
     REGIONS,
@@ -71,6 +73,7 @@ def test_a_minimal_plan_gets_a_default_for_every_field():
     assert plan.background.action == PASSTHROUGH
     assert plan.settings.fps_target == DEFAULT_FPS_TARGET
     assert plan.settings.detect_every_n == DEFAULT_DETECT_EVERY_N
+    assert plan.settings.output_ema == DEFAULT_OUTPUT_EMA
 
     target = plan.targets[0]
     assert target.id == "t0"
@@ -156,6 +159,8 @@ def test_out_of_range_target_numbers_are_clamped(field, value, expected):
         ("fps_target", 5000, FPS_TARGET_RANGE[1]),
         ("detect_every_n", 0, DETECT_EVERY_N_RANGE[0]),
         ("detect_every_n", 900, DETECT_EVERY_N_RANGE[1]),
+        ("output_ema", -0.5, OUTPUT_EMA_RANGE[0]),
+        ("output_ema", 1.0, OUTPUT_EMA_RANGE[1]),
     ],
 )
 def test_out_of_range_global_settings_are_clamped(field, value, expected):
@@ -555,3 +560,27 @@ def test_the_latest_submitted_version_is_what_the_next_plan_counts_from():
     active = ActivePlan(one_plan(1))
     active.submit(one_plan(2))
     assert active.latest.plan_version == 2
+
+
+# --- the output EMA (issue #32) ---------------------------------------------
+
+
+def test_the_output_ema_is_off_by_default():
+    """A stability lever nobody measured yet is not something a plan opts out of."""
+    assert DEFAULT_OUTPUT_EMA == 0.0
+    assert ok({}).settings.output_ema == 0.0
+
+
+def test_the_output_ema_is_clamped_below_one():
+    """At 1.0 the output is the previous output for ever - a frozen frame, not a
+    steadier one - so the range stops short of it and the clamp is recorded."""
+    assert OUTPUT_EMA_RANGE[1] < 1.0
+    result = validate_plan({"global": {"output_ema": 1.0}})
+    assert result.plan.settings.output_ema == OUTPUT_EMA_RANGE[1]
+    assert any("output_ema" in note for note in result.notes)
+
+
+def test_an_output_ema_that_is_not_a_number_is_refused():
+    result = validate_plan({"global": {"output_ema": "smooth"}})
+    assert not result.ok
+    assert "output_ema" in result.reason

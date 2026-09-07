@@ -1,4 +1,4 @@
-import importlib.util, os, sys
+﻿import importlib.util, os, sys
 from pathlib import Path
 import tempfile, time, queue, random, threading, pathlib, subprocess, shutil, re
 from collections import deque
@@ -43,6 +43,10 @@ from detector_worker import BackgroundDetector, UltralyticsDetector, frame_to_ar
 from region_scheduler import RegionScheduler
 from compositor import MASKED
 from device_compositor import DeviceCompositor
+# Temporal stability (issue #32, spec 8.5): the plan's `seed_policy` applied to the
+# engine's latent noise. Stdlib here too - torch lives inside the methods that write
+# a tensor, so the GUI process pays nothing for this import either.
+from seeding import NoiseField
 
 APP_ROOT = (Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent)
 INTERNAL_DIR = APP_ROOT / "_internal"
@@ -961,6 +965,12 @@ def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Qu
         # builds neither and copies nothing.
         scheduler = RegionScheduler()
         compositor = DeviceCompositor()
+        # The plan's `seed_policy`, applied to the engine's noise field before the
+        # call that reads it (issue #32). It holds one noise realisation per live
+        # track, so the field an object renders under follows the object rather
+        # than the screen; under `fixed` - the default, and what this app has
+        # always done - it writes nothing at all.
+        noise = NoiseField(base_seed=seed)
         if demo_plan_requested():
             # Step 4: the priority case, hardcoded, so the whole path can be driven
             # before a widget exists to drive it. Submitted rather than installed,
@@ -989,6 +999,10 @@ def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Qu
                             import_torch.cuda.empty_cache()
 
                             stream = _build_stream(current_t_index_list)
+                            # A new engine is a new noise field and a render that
+                            # has nothing to do with the last one's.
+                            noise.reset()
+                            compositor.reset_ema()
                             _status("Engine swap complete!")
                         else:
                             # Same step count (slider was dragged). Update values instantly!
@@ -1023,6 +1037,12 @@ def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Qu
                     # on the detector's thread, so the frame after a prompt edit
                     # does not pay the ~108 ms `set_classes` costs (spec 8.1).
                     detection.follow(frame_plan.plan)
+                    # The two temporal-stability levers (issue #32, spec 8.5).
+                    # Both are runtime writes - the noise is a plain tensor
+                    # `add_noise` reads in Python and the EMA is the
+                    # compositor's - so neither can cost a TensorRT rebuild.
+                    noise.follow(frame_plan.plan)
+                    compositor.set_output_ema(frame_plan.plan.settings.output_ema)
                     # The plan's denoise, as a value on the live schedule. Only the
                     # values move, never the step *count*, so this is a runtime
                     # update and not an engine rebuild. A plan with no target
@@ -1085,6 +1105,7 @@ def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Qu
                         # the render where it was made, the blend runs beside it,
                         # and the frame makes one host copy - of uint8, after the
                         # mask, instead of float, before it.
+                        noise.apply(stream, selection)
                         rendered = stream.img2img(batch, output_type="pt")
                         images = [Image.fromarray(frame) for frame
                                   in compositor.blend_device(batch, rendered,
@@ -1097,6 +1118,11 @@ def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Qu
                     # A selective plan that found nothing to restyle. There is no
                     # pixel anyone asked to change, so the frame costs no diffusion
                     # call - and the loop still produces a frame.
+                    #
+                    # It also ends the output EMA's history: the next render is on
+                    # the other side of a gap, and averaging across one blends a
+                    # frame with one from before the object left the screen.
+                    compositor.reset_ema()
                     images = [Image.fromarray(frame_to_array(batch))]
 
                 for im in images:

@@ -11,12 +11,21 @@ edge and is exactly zero one pixel outside it, so a soft seam costs the region a
 pixels of strength and costs the background nothing. A ramp centred on the boundary
 would look the same and would fail the gate (the issue's third trap).
 
+It also holds the **output EMA** (issue #32, spec 8.5): `global.output_ema` pulls
+each render back towards the one before it. That runs on the *rendered canvas*,
+before the blend, and the ordering is the whole safety argument - an EMA on the
+composited frame would make a background pixel a function of history, and this one
+cannot, because the blend it feeds still copies the captured byte wherever alpha is
+zero. What history reaches the screen is exactly what the mask lets through.
+
 numpy, and nothing heavier. The blend is array arithmetic; it runs on the frame path
 in the worker and is held whole by the merge gate's GPU-free tier. It is deliberately
 *not* torch: the frame loop already has the capture on the host as an array for the
 detector, and a compositor that needed a CUDA device could not be tested where the
-rest of this path is tested. Moving it onto the GPU is an M2 question, and the
-interface here - an alpha map and a blend - is the same either way.
+rest of this path is tested. Moving it onto the GPU was an M2 question and issue #31
+answered it in `device_compositor.py` - and the interface really was the same either
+way, an alpha map and a blend, so what is here is still the reference the device path
+is held to byte for byte.
 """
 
 from __future__ import annotations
@@ -116,6 +125,19 @@ def alpha_bounds(alpha: np.ndarray) -> Optional[Tuple[int, int, int, int]]:
     return int(columns[0]), int(rows[0]), int(columns[-1]) + 1, int(rows[-1]) + 1
 
 
+def ema_blend(previous, current, coefficient: float) -> np.ndarray:
+    """`current` pulled `coefficient` of the way back towards `previous`. uint8 both.
+
+    Written as `current + (previous - current) * coefficient` for the reason
+    `composite` is written the other way up: the endpoints are exact in floating
+    point, so a coefficient of 0 is the render byte for byte rather than the render
+    rounded twice.
+    """
+    below = np.asarray(current, dtype=np.float32)
+    above = np.asarray(previous, dtype=np.float32)
+    return np.rint(below + (above - below) * float(coefficient)).astype(np.uint8)
+
+
 def composite(source, rendered, alpha: np.ndarray) -> np.ndarray:
     """`rendered` blended onto `source` through `alpha`. uint8 in, uint8 out.
 
@@ -147,10 +169,50 @@ class Compositor:
     canvas-sized float array for a map they already had.
     """
 
-    def __init__(self, feather_px: int = DEFAULT_FEATHER_PX) -> None:
+    def __init__(self, feather_px: int = DEFAULT_FEATHER_PX,
+                 output_ema: float = 0.0) -> None:
         self.feather_px = feather_px
+        self.output_ema = float(output_ema)
         self._key: Optional[tuple] = None
         self._render: Optional[FrameRender] = None
+        self._previous_render: Optional[np.ndarray] = None
+
+    # --- the output EMA (issue #32, spec 8.5) -------------------------------
+    #
+    # Applied to the *rendered canvas*, before the blend, and that is what keeps
+    # the issue's first trap shut: an EMA on the composited frame would make a
+    # background pixel a function of history, and this one cannot, because the
+    # blend it feeds still copies the captured byte wherever alpha is zero. What
+    # history reaches the screen is exactly what the mask lets through.
+
+    def set_output_ema(self, coefficient: float) -> None:
+        """Take the plan's coefficient. The history is kept: a plan edit is not a
+        scene change, and dropping the previous render would put a step in the
+        output at the moment the user was looking at it."""
+        self.output_ema = float(coefficient)
+
+    def reset_ema(self) -> None:
+        """Forget the previous render - after a frame that rendered nothing, or an
+        engine swap. Averaging across such a gap blends two unrelated frames."""
+        self._previous_render = None
+
+    def smooth(self, rendered):
+        """This frame's render, averaged with the ones before it. uint8 in and out.
+
+        The state is the EMA's own output rather than the last raw render, so the
+        coefficient names a time constant over the whole sequence and not a
+        two-frame mean. Off, and on the first frame after a reset, the render is
+        returned as it stands - starting from the capture or from grey would make
+        every restyle a fade-in.
+        """
+        previous = self._previous_render
+        if (self.output_ema <= 0.0 or previous is None
+                or previous.shape != np.asarray(rendered).shape):
+            self._previous_render = rendered
+            return rendered
+        smoothed = ema_blend(previous, rendered, self.output_ema)
+        self._previous_render = smoothed
+        return smoothed
 
     def frame(self, selection: Selection, width: int, height: int) -> FrameRender:
         """What to do with this frame, under the plan the selection was made for.

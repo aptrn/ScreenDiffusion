@@ -112,3 +112,33 @@ def test_the_numpy_blend_is_still_reachable_on_it():
 
 def test_the_two_places_a_blend_can_run_are_named_once():
     assert (HOST, DEVICE) == ("host", "device")
+
+
+# --- the output EMA it inherits (issue #32) ---------------------------------
+
+
+def test_the_ema_rules_are_the_base_class_s_rules():
+    """`smooth` is inherited, so the coefficient, the reset and the exact
+    arithmetic the merge gate holds are held about the shipped object too."""
+    compositor = DeviceCompositor(output_ema=0.75)
+    first = np.full((H, W, 3), 200, dtype=np.uint8)
+    second = np.full((H, W, 3), 100, dtype=np.uint8)
+    compositor.smooth(first)
+    assert np.array_equal(compositor.smooth(second),
+                          np.full((H, W, 3), 175, dtype=np.uint8))
+
+
+def test_a_reset_drops_both_histories():
+    """The device path and the host one hold their own previous frame; a frame that
+    rendered nothing has to end both, or the next `smooth_device` averages across
+    the gap the host path just refused to."""
+    compositor = DeviceCompositor(output_ema=0.5)
+    compositor.smooth(np.zeros((H, W, 3), dtype=np.uint8))
+    compositor._previous_device = "a device tensor"
+    compositor.reset_ema()
+    assert compositor._previous_render is None
+    assert compositor._previous_device is None
+
+
+def test_the_ema_is_off_by_default_on_the_device_compositor_too():
+    assert DeviceCompositor().output_ema == 0.0

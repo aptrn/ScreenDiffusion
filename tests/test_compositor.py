@@ -225,3 +225,97 @@ def test_moving_a_box_rebuilds_the_alpha_map():
 def test_every_mode_in_the_vocabulary_produces_a_frame(mode):
     render = Compositor().frame(selection_of(REGION, mode=mode), W, H)
     assert render.action in (FULL_FRAME, MASKED, PASSTHROUGH)
+
+
+# --- the output EMA (issue #32, spec 8.5) ------------------------------------
+#
+# The EMA smooths the *rendered canvas*, not the composited frame, and that is the
+# whole answer to the issue's first trap: the blend is unchanged, so a pixel outside
+# every region is still the captured byte copied rather than a function of history.
+# What is smoothed is only what the mask lets through.
+
+
+def test_the_ema_is_off_by_default_and_returns_the_render_itself():
+    compositor = Compositor()
+    rendered = frame(3)
+    assert compositor.smooth(rendered) is rendered
+
+
+def test_the_first_smoothed_frame_is_the_render_itself():
+    """There is no previous render to average with, and starting from the capture
+    or from grey would make the first restyled frame a fade-in."""
+    compositor = Compositor(output_ema=0.8)
+    rendered = frame(3)
+    assert np.array_equal(compositor.smooth(rendered), rendered)
+
+
+def test_the_second_smoothed_frame_lies_between_the_two():
+    compositor = Compositor(output_ema=0.5)
+    first, second = frame(3), frame(4)
+    compositor.smooth(first)
+    smoothed = compositor.smooth(second)
+    between = ((smoothed >= np.minimum(first, second))
+               & (smoothed <= np.maximum(first, second)))
+    assert between.all()
+
+
+def test_the_ema_keeps_the_coefficient_s_share_of_the_previous_render():
+    """`previous * ema + current * (1 - ema)`, written the way the blend is so the
+    endpoints are exact: at ema 0 it is the render, at the ceiling it is nearly the
+    previous one."""
+    compositor = Compositor(output_ema=0.75)
+    first = np.full((H, W, 3), 200, dtype=np.uint8)
+    second = np.full((H, W, 3), 100, dtype=np.uint8)
+    compositor.smooth(first)
+    assert np.array_equal(compositor.smooth(second),
+                          np.full((H, W, 3), 175, dtype=np.uint8))
+
+
+def test_the_smoothed_frame_is_what_the_next_one_averages_with():
+    """The state is the EMA's own output, not the last raw render - otherwise it is
+    a two-frame mean however long the sequence and however high the coefficient."""
+    compositor = Compositor(output_ema=0.5)
+    compositor.smooth(np.full((H, W, 3), 0, dtype=np.uint8))
+    compositor.smooth(np.full((H, W, 3), 100, dtype=np.uint8))
+    assert np.array_equal(compositor.smooth(np.full((H, W, 3), 100, dtype=np.uint8)),
+                          np.full((H, W, 3), 75, dtype=np.uint8))
+
+
+def test_a_frame_that_rendered_nothing_resets_the_ema():
+    """A passthrough frame has no render, and averaging across the gap would blend a
+    frame with one from before an object left the screen."""
+    compositor = Compositor(output_ema=0.5)
+    compositor.smooth(np.full((H, W, 3), 0, dtype=np.uint8))
+    compositor.reset_ema()
+    fresh = np.full((H, W, 3), 100, dtype=np.uint8)
+    assert np.array_equal(compositor.smooth(fresh), fresh)
+
+
+def test_changing_the_coefficient_does_not_throw_the_history_away():
+    """A plan edit is not a scene change: the previous render is still the previous
+    render, and dropping it would put a visible step in the output."""
+    compositor = Compositor(output_ema=0.5)
+    compositor.smooth(np.full((H, W, 3), 200, dtype=np.uint8))
+    compositor.set_output_ema(0.0)
+    assert compositor._previous_render is not None
+
+
+def test_a_render_of_a_different_shape_starts_the_ema_again():
+    """The canvas can only change with an engine rebuild, and averaging across one
+    is an exception rather than a resize."""
+    compositor = Compositor(output_ema=0.5)
+    compositor.smooth(frame(3))
+    other = np.zeros((H * 2, W, 3), dtype=np.uint8)
+    assert np.array_equal(compositor.smooth(other), other)
+
+
+def test_the_ema_never_touches_the_composite_outside_the_regions():
+    """The Gate's third item, end to end: two smoothed renders composited through a
+    mask still leave every pixel outside it exactly as captured."""
+    compositor = Compositor(output_ema=0.8)
+    render = compositor.frame(selection_of(REGION), W, H)
+    source, first, second = frame(1), frame(2), frame(3)
+    compositor.smooth(first)
+    output = compositor.blend(source, compositor.smooth(second), render.alpha)
+    outside = ~painted_mask(render.alpha)
+    assert np.array_equal(output[outside], source[outside])

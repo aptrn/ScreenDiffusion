@@ -36,7 +36,7 @@ from bench.cooldown import DEFAULT_CAP_S, DEFAULT_POLL_INTERVAL_S, DEFAULT_THRES
 from bench.detector_results import LatencySummary
 from bench.detectors import DETECTORS, PRIMARY_DETECTOR, weights_path
 from bench.fingerprint import capture_fingerprint, utc_now
-from bench.flicker import flicker_score
+from bench.flicker import flicker_score, response_score
 from bench.paths import SELECTIVE_RESULTS_DIR, resolve_models_dir
 from bench.primitive_results import ClipRecord
 from bench.primitives import clip_path
@@ -114,12 +114,15 @@ def open_detector(models_root: Path, concepts: Sequence[str],
     return detector
 
 
-def render_frame(stream, tensor, compositor, render, source):
-    """One frame of the shipped path: diffuse, then composite through the mask.
+def render_frame(stream, tensor, compositor, render, source, noise, selection):
+    """One frame of the shipped path: seed, diffuse, then composite through the mask.
 
     Returns the output frame and the milliseconds the frame path spent, split into
     the whole call and the composite alone - the composite is the part issue #8
     added to the loop, and it has to be readable next to the diffusion it rides on.
+
+    `noise` is the frame's `seeding.NoiseField` and `selection` is what it pins a
+    field to; under the default `fixed` policy it writes nothing at all.
 
     Since issue #31 the masked frame is blended **on the device**: the engine is
     asked for `output_type="pt"`, so the render never comes home, and the frame's
@@ -136,9 +139,15 @@ def render_frame(stream, tensor, compositor, render, source):
     started = time.perf_counter()
     composite_ms = 0.0
     if not render.diffuses:
-        # Nothing to restyle: the capture itself, which is what the worker emits.
+        # Nothing to restyle: the capture itself, which is what the worker emits -
+        # and the end of the EMA's history, for the reason the worker ends it.
+        compositor.reset_ema()
         output = source
     elif render.action == MASKED:
+        # The plan's seed policy, written into the engine's noise before the call
+        # that reads it (issue #32). Inside the timed region because it is inside
+        # the worker's frame loop: whatever it costs, the frame pays it.
+        noise.apply(stream, selection)
         rendered = stream.img2img(tensor, output_type="pt")
         torch.cuda.synchronize()
         composite_started = time.perf_counter()
@@ -210,6 +219,7 @@ def run_selective(
     from detector_worker import BackgroundDetector, frame_to_array
     from region_scheduler import RegionScheduler
     from render_plan import t_index_for_denoise
+    from seeding import NoiseField
 
     # First, so a machine that cannot be fingerprinted fails before it spends
     # minutes loading an engine for a result that could never be written.
@@ -238,7 +248,8 @@ def run_selective(
     timestep, strength = set_denoise(stream, t_index)
     log(f"plan: {concepts} / {plan.honoured_target.region} / denoise "
         f"{plan.effective_denoise} -> t_index {t_index} (timestep {timestep}, "
-        f"strength {strength:.3f})")
+        f"strength {strength:.3f}), seed {plan.effective_seed_policy}, "
+        f"output_ema {plan.settings.output_ema}")
 
     models_root = resolve_models_dir() if models_dir is None else Path(models_dir)
     live = open_detector(models_root, concepts, log)
@@ -250,8 +261,10 @@ def run_selective(
     scheduler = RegionScheduler()
     # The shipped compositor, blend and all: since issue #31 the frame loop's C7 is
     # the device one, so measuring the host one here would measure a path the app
-    # no longer takes.
-    compositor = DeviceCompositor()
+    # no longer takes. Its output EMA is the plan's, like every other setting here
+    # (issue #32) - an arm of the stability sweep is a plan, not a harness flag.
+    compositor = DeviceCompositor(output_ema=plan.settings.output_ema)
+    noise = NoiseField(policy=plan.effective_seed_policy)
     tensors = [capture_tensor(frame, device=stream.device, dtype=stream.dtype)
                for frame in frames]
     # What the frame loop composites onto: the capture as the detector's own
@@ -303,8 +316,8 @@ def run_selective(
                 detector_ms.append(tracks.detector_ms)
             selection = scheduler.select(tracks, plan, canvas, canvas)
             render = compositor.frame(selection, canvas, canvas)
-            output, frame_ms, blend_ms = render_frame(stream, tensor, compositor,
-                                                      render, sources[index])
+            output, frame_ms, blend_ms = render_frame(
+                stream, tensor, compositor, render, sources[index], noise, selection)
             outputs.append(output)
             per_frame_ms.append(frame_ms)
             if render.diffuses:
@@ -379,6 +392,7 @@ def run_selective(
         staleness=staleness_summary(snapshots, detect_every_n,
                                     ms_per_frame=run.ms_per_frame),
         flicker=flicker_score(sources, outputs, masks),
+        response=response_score(sources, outputs, masks),
         background=background, change=change, coverage=coverage, stall=stall,
         cooldown=cooldown_record, hardware=fingerprint,
         clock_normalization=clock_normalization(
@@ -387,7 +401,8 @@ def run_selective(
         comparison_clip=comparison, comparison_still=still,
     )
     log(f"{run.ms_per_frame:.2f} ms/frame ({with_detection:.2f} with detection "
-        f"amortised, {run.fps:.1f} FPS), flicker {result.flicker.mean_abs_diff}")
+        f"amortised, {run.fps:.1f} FPS), flicker {result.flicker.mean_abs_diff}, "
+        f"response {result.response.mean_abs_diff}")
     for check in (background, change, coverage, stall):
         log(f"gate: {'pass' if check.passed else 'FAIL'} - {check.statement}")
     log(f"staleness: {result.staleness.statement}")
