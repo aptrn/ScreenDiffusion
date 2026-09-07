@@ -22,20 +22,26 @@ from bench.cli import (  # noqa: E402
     report_capture,
     report_detectors,
     report_marginal,
+    report_models,
     report_portability,
     report_primitives,
     report_selective,
     report_stability,
+    report_steps,
+    report_styles,
     report_swap,
 )
 from bench.paths import (  # noqa: E402
     CADENCE_RESULTS_DIR,
     CAPTURE_RESULTS_DIR,
     DETECTOR_RESULTS_DIR,
+    MODEL_RESULTS_DIR,
     PRIMITIVE_RESULTS_DIR,
     RESULTS_DIR,
     SELECTIVE_RESULTS_DIR,
     STABILITY_RESULTS_DIR,
+    STEPS_RESULTS_DIR,
+    STYLE_RESULTS_DIR,
     SWAP_RESULTS_DIR,
 )
 
@@ -55,6 +61,9 @@ BLOCKS = {
     "CADENCE SWEEP": (report_cadence, CADENCE_RESULTS_DIR),
     "STABILITY SWEEP": (report_stability, STABILITY_RESULTS_DIR),
     "PLAN SWAP": (report_swap, SWAP_RESULTS_DIR),
+    "STEP COUNT": (report_steps, STEPS_RESULTS_DIR),
+    "BASE MODEL": (report_models, MODEL_RESULTS_DIR),
+    "STYLE LORAS": (report_styles, STYLE_RESULTS_DIR),
 }
 
 

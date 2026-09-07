@@ -312,6 +312,50 @@ def table_separator(header: str) -> str:
     return "|" + "---|" * (header.count("|") - 1)
 
 
+def insert_cell(cells: Sequence[str], value: str, index: int) -> List[str]:
+    """`cells` with `value` put at `index` - one row of an optional column.
+
+    Shared by `GpuColumn` and `OptionalColumn` so a heading and its cells cannot
+    be inserted by two rules that disagree about where the column sits.
+    """
+    return [*cells[:index], value, *cells[index:]]
+
+
+@dataclass(frozen=True)
+class OptionalColumn:
+    """A column a table grows only when its rows disagree about the value.
+
+    The rule `GpuColumn` applies to the machine, for any other dimension that is
+    usually constant and occasionally is not - the base model, in issue #38's
+    step-count table. Off, the table renders exactly as it did, which is what
+    keeps a byte-matched spec block from churning the first time a second value
+    is measured; on, no row implies a value it was not measured at.
+    """
+
+    heading: str
+    value_of: Callable[[Mapping], str]
+    shown: bool
+    index: int = 1
+
+    @classmethod
+    def when_varied(cls, results: Sequence[dict], heading: str,
+                    value_of: Callable[[Mapping], str],
+                    index: int = 1) -> "OptionalColumn":
+        values = {value_of(result) for result in results}
+        return cls(heading=heading, value_of=value_of, shown=len(values) > 1,
+                   index=index)
+
+    def header(self, header: str) -> str:
+        if not self.shown:
+            return header
+        return " | ".join(insert_cell(header.split(" | "), self.heading, self.index))
+
+    def cells(self, cells: Sequence[str], result: Mapping) -> List[str]:
+        if not self.shown:
+            return list(cells)
+        return insert_cell(cells, self.value_of(result), self.index)
+
+
 GPU_COLUMN = "GPU"
 
 
@@ -350,7 +394,7 @@ class GpuColumn:
         return table_row(self._inserted(cells, gpu_of(result)))
 
     def _inserted(self, cells: Sequence[str], value: str) -> List[str]:
-        return [*cells[:self.index], value, *cells[self.index:]]
+        return insert_cell(cells, value, self.index)
 
 
 def sentence_case(statement: str) -> str:

@@ -13,9 +13,14 @@ from __future__ import annotations
 
 import dataclasses
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 DEFAULT_MODEL = "sd-turbo-fp16"
+# The second base model this repo measures (issue #38). SD-Turbo is SD 2.1-based
+# and can load no SD 1.5 LoRA, which is the whole reason to price 1.5: the style
+# ecosystem is 1.5's. It is not a turbo model, so it needs LCM-LoRA and about four
+# steps - `bench.models` is where that pairing is written down.
+SD15_MODEL = "sd-v1-5-fp16"
 # One step at t=35, which is what the app builds by default.
 DEFAULT_T_INDEX_LIST: Tuple[int, ...] = (35,)
 DEFAULT_PROMPT = "a photograph of a city street, cinematic lighting"
@@ -42,6 +47,14 @@ class ScenarioConfig:
     batch_size: int = 1
     t_index_list: List[int] = field(default_factory=lambda: list(DEFAULT_T_INDEX_LIST))
     model: str = DEFAULT_MODEL
+    # A local LCM-LoRA file, when the base model needs one and one is staged. None
+    # leaves the wrapper on its own default repo id, which needs the network.
+    lcm_lora_id: Optional[str] = None
+    # A style LoRA by *name* in `bench.models.STYLE_LORAS`, not by path: the path
+    # is a machine's, and a scenario is serialised whole into a result that has to
+    # still say what was measured on another one.
+    style_lora: Optional[str] = None
+    lora_scale: float = 1.0
     prompt: str = DEFAULT_PROMPT
     seed: int = 2
     mode: str = "img2img"
@@ -88,4 +101,23 @@ def _registry() -> Dict[str, ScenarioConfig]:
     return scenarios
 
 
+def base_model_name(acceleration: str, base: str) -> str:
+    """The 512x512 batch-1 cell of one base model - `...-b1-sd15` (issue #38).
+
+    Only that cell, because a second base model is a second axis and the point of
+    the sweep is the model rather than the batch curve, which spec 7.2 already has
+    for SD-Turbo.
+    """
+    return f"{scenario_name(acceleration, 512, 512, 1)}-{base}"
+
+
 SCENARIOS: Dict[str, ScenarioConfig] = _registry()
+
+# The SD 1.5 cells, one per accelerator. `use_lcm_lora` is on because 1.5 is not a
+# turbo model and the wrapper only fuses LCM-LoRA when the base is not one; the
+# step count is not baked in here, because `--steps` is what moves it and issue
+# #38's step 1 is what says which count is the working one.
+for _acceleration in ACCELERATIONS:
+    _name = base_model_name(_acceleration, "sd15")
+    SCENARIOS[_name] = ScenarioConfig(name=_name, acceleration=_acceleration,
+                                      model=SD15_MODEL, use_lcm_lora=True)

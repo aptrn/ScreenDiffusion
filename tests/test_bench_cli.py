@@ -527,3 +527,92 @@ def test_without_the_flag_the_gate_does_not_even_sample():
         raise AssertionError("sampled without --require-idle-gpu")
 
     assert idle_gpu_guard(False, measure=measure) is None
+
+
+# --- the step-count sweep (issue #38) ----------------------------------------
+
+def test_a_scenario_can_be_asked_for_one_step_count():
+    """`--steps` moves the count and nothing else: the opening index is the
+    scenario's, and the extra steps are spent after it."""
+    base = SCENARIOS["img2img-none-512x512-b1"]
+    kind, scenario = resolve_target(
+        build_parser().parse_args(["img2img-none-512x512-b1", "--steps", "4"]))
+    assert kind == "scenario"
+    assert scenario.steps == 4
+    assert scenario.t_index_list[0] == base.t_index_list[0]
+    assert scenario.name == "img2img-none-512x512-b1-s4"
+
+
+def test_the_one_step_control_is_an_arm_too_and_lands_with_the_arms():
+    """`bench --marginal` reads every JSON in `bench/results/` as a batch cell, so
+    even the control has to be written under `steps/` - and it has to be measured
+    on this machine, because the committed batch-1 cell is a laptop's."""
+    from bench.paths import RESULTS_DIR, STEPS_RESULTS_SUBDIR
+    from bench.cli import scenario_results_dir
+
+    _, arm = resolve_target(
+        build_parser().parse_args(["img2img-none-512x512-b1", "--steps", "1"]))
+    plain = SCENARIOS["img2img-none-512x512-b1"]
+    assert scenario_results_dir(arm, RESULTS_DIR) == RESULTS_DIR / STEPS_RESULTS_SUBDIR
+    assert scenario_results_dir(plain, RESULTS_DIR) == RESULTS_DIR
+
+
+def test_a_four_step_tensorrt_arm_is_gated_on_its_own_engine(tmp_path):
+    """Four steps go through the UNet as a batch of four, which is a different
+    engine - ~5 GB and 15-25 minutes - so it needs the same explicit opt-in."""
+    from bench.cli import engine_build_guard
+
+    _, arm = resolve_target(
+        build_parser().parse_args(["img2img-tensorrt-512x512-b1", "--steps", "4"]))
+    with pytest.raises(SystemExit) as excinfo:
+        engine_build_guard(arm, engines_root=tmp_path, allow_build=False)
+    assert "img2img-tensorrt-512x512-b1-s4" in str(excinfo.value)
+
+
+def test_the_steps_report_exits_zero_even_before_anything_is_committed():
+    result = subprocess.run(
+        [sys.executable, "-m", "bench", "--steps-report"],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "step" in result.stdout
+
+
+# --- the base-model arm (issue #38) ------------------------------------------
+
+def test_a_selective_run_can_be_asked_for_another_base_model():
+    from bench.selective import PRIORITY_CASE
+
+    _, case = resolve_target(
+        build_parser().parse_args([PRIORITY_CASE, "--base-model", "sd15"]))
+    assert case.base_model == "sd15"
+    assert case.name == f"{PRIORITY_CASE}-sd15"
+
+
+def test_a_base_model_arm_is_written_beside_the_other_arms_not_the_baselines():
+    from bench.paths import MODEL_RESULTS_SUBDIR, SELECTIVE_RESULTS_SUBDIR
+    from bench.selective import CASES, PRIORITY_CASE, results_subdir
+
+    assert results_subdir(CASES[PRIORITY_CASE]) == SELECTIVE_RESULTS_SUBDIR
+    assert results_subdir(
+        CASES[PRIORITY_CASE].replace(base_model="sd15")) == MODEL_RESULTS_SUBDIR
+
+
+def test_a_base_model_arm_renders_through_that_model_s_own_engine():
+    """At the step count `BASE_MODELS` says it needs - the arm differs from the
+    baseline in the model, and in what the model cannot render without."""
+    from bench.selective import CASES, PRIORITY_CASE, engine_scenario_for
+
+    scenario = engine_scenario_for(CASES[PRIORITY_CASE].replace(base_model="sd15"))
+    assert scenario.model == "sd-v1-5-fp16"
+    assert scenario.use_lcm_lora is True
+    assert scenario.steps == 4
+    assert scenario.acceleration == "tensorrt"
+
+
+def test_the_shipped_case_still_renders_through_the_shipped_engine():
+    """Every committed baseline was measured through it; the arm must not move it."""
+    from bench.selective import CASES, ENGINE_SCENARIO, PRIORITY_CASE, \
+        engine_scenario_for
+
+    assert engine_scenario_for(CASES[PRIORITY_CASE]) is SCENARIOS[ENGINE_SCENARIO]

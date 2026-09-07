@@ -75,11 +75,23 @@ def load_wrapper_module():
 
 
 def build_stream(scenario: ScenarioConfig, engines_root: Optional[Path] = None):
-    """A prepared `StreamDiffusionWrapper` for `scenario`, with the app's own settings."""
+    """A prepared `StreamDiffusionWrapper` for `scenario`, with the app's own settings.
+
+    The two LoRA arguments are issue #38's: `lcm_lora_id` is the local file the app
+    prefers over the repo id when one is staged, and `lora_dict` is the style LoRA
+    the arm fuses. Both are resolved through `bench.models`, which is also what
+    `bench.cli.engine_dir_name` asks whether the resulting engine is cached - a
+    second spelling would let the guard answer about a directory the build never
+    writes.
+    """
+    from bench.models import lcm_lora_path, lora_dict_for
+
     wrapper = load_wrapper_module()
     engines_root = resolve_engines_dir() if engines_root is None else Path(engines_root)
     stream = wrapper.StreamDiffusionWrapper(
         model_id_or_path=resolve_model_path(scenario.model),
+        lora_dict=lora_dict_for(scenario),
+        lcm_lora_id=scenario.lcm_lora_id or lcm_lora_path(),
         t_index_list=list(scenario.t_index_list),
         frame_buffer_size=scenario.batch_size,
         width=scenario.width,

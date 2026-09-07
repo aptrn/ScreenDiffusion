@@ -1,0 +1,145 @@
+{
+  "clock_normalization": {
+    "basis_mhz": 3150.0,
+    "basis_source": "clocks.max.sm",
+    "method": "ms_per_frame * time-weighted mean SM clock / basis clock",
+    "ms_per_frame": 43.0654,
+    "note": "Clocks were not locked (unlocked), so the raw figure carries this run's clock. This is a first-order estimate of the same work at 3150 MHz, not a measurement, and not a substitute for `nvidia-smi --lock-gpu-clocks` from an elevated shell.",
+    "regime": "unlocked",
+    "sampled_mean_sm_clock_mhz": 2715.0
+  },
+  "cooldown": {
+    "cap_s": 120.0,
+    "enabled": true,
+    "final_temperature_c": 43.0,
+    "outcome": "reached",
+    "reached": true,
+    "samples": [
+      [
+        0.031000000000858563,
+        43.0
+      ]
+    ],
+    "threshold_c": 62.0,
+    "waited_s": 0.031000000000858563
+  },
+  "disk": null,
+  "hardware": {
+    "clock_lock": {
+      "applied_clock_mhz": null,
+      "current_sm_clock_mhz": 210.0,
+      "evidence": "clocks_event_reasons.applications_clocks_setting=Not Active",
+      "max_sm_clock_mhz": 3150.0,
+      "state": "unlocked"
+    },
+    "cuda_version": "12.8",
+    "driver_version": "610.47",
+    "enforced_power_limit_w": 500.0,
+    "gpu_name": "NVIDIA GeForce RTX 4090",
+    "hostname": "DESKTOP-7OBJQKB",
+    "nvidia_smi_captured_utc": "2026-09-07T18:17:59Z",
+    "nvidia_smi_raw": "Mon Sep  7 20:17:59 2026       \n+-----------------------------------------------------------------------------------------+\n| NVIDIA-SMI 610.47                 KMD Version: 610.47        CUDA UMD Version: 13.3     |\n+-----------------------------------------+------------------------+----------------------+\n| GPU  Name                  Driver-Model | Bus-Id          Disp.A | Volatile Uncorr. ECC |\n| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |\n|                                         |                        |               MIG M. |\n|=========================================+========================+======================|\n|   0  NVIDIA GeForce RTX 4090      WDDM  |   00000000:01:00.0  On |                  Off |\n|  0%   42C    P8             28W /  500W |     934MiB /  24564MiB |      7%      Default |\n|                                         |                        |                  N/A |\n+-----------------------------------------+------------------------+----------------------+\n\n+-----------------------------------------------------------------------------------------+\n| Processes:                                                                              |\n|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |\n|        ID   ID                                                               Usage      |\n|=========================================================================================|\n|    0   N/A  N/A            1724    C+G   ...ntrolPanel\\SystemSettings.exe      N/A      |\n|    0   N/A  N/A            2816    C+G   C:\\Windows\\explorer.exe               N/A      |\n|    0   N/A  N/A            3648    C+G   ...5n1h2txyewy\\TextInputHost.exe      N/A      |\n|    0   N/A  N/A            3692    C+G   ...32-x64\\open-stage-control.exe      N/A      |\n|    0   N/A  N/A            4452    C+G   ...yb3d8bbwe\\WindowsTerminal.exe      N/A      |\n|    0   N/A  N/A           12072    C+G   ...vv_gamma_7.1-win-x64\\vvvv.exe      N/A      |\n|    0   N/A  N/A           12208    C+G   ...h_cw5n1h2txyewy\\SearchApp.exe      N/A      |\n|    0   N/A  N/A           12660    C+G   ...App_cw5n1h2txyewy\\LockApp.exe      N/A      |\n|    0   N/A  N/A           12752    C+G   ...ms\\t3code\\T3 Code (Alpha).exe      N/A      |\n|    0   N/A  N/A           12864    C+G   ...mmaLauncher\\GammaLauncher.exe      N/A      |\n|    0   N/A  N/A           13024    C+G   ...bs-studio\\bin\\64bit\\obs64.exe      N/A      |\n|    0   N/A  N/A           14768    C+G   ...6)\\Dropbox\\Client\\Dropbox.exe      N/A      |\n|    0   N/A  N/A           17148    C+G   ...xyewy\\ShellExperienceHost.exe      N/A      |\n|    0   N/A  N/A           19156    C+G   ...Chrome\\Application\\chrome.exe      N/A      |\n+-----------------------------------------------------------------------------------------+\n",
+    "power_limit_w": 500.0,
+    "torch_version": "2.7.0+cu128",
+    "total_vram_mib": 24564.0
+  },
+  "run": {
+    "finished_utc": "2026-09-07T18:18:08Z",
+    "fps": 20.014,
+    "gpu_samples": [
+      [
+        0.028470600000218838,
+        2715.0,
+        45.0
+      ],
+      [
+        0.5559281000005285,
+        2715.0,
+        54.0
+      ],
+      [
+        1.0858816999989358,
+        2715.0,
+        56.0
+      ]
+    ],
+    "max_ms_per_frame": 53.1166,
+    "max_temperature_c": 56.0,
+    "mean_ms_per_frame": 49.9654,
+    "mean_sm_clock_mhz": 2715.0,
+    "median_ms_per_frame": 49.5993,
+    "min_ms_per_frame": 48.928,
+    "p95_ms_per_frame": 51.8924,
+    "peak_vram_bytes": 3071374848,
+    "peak_vram_mib": 2929.1,
+    "per_module_ms": {
+      "unet": 39.6254,
+      "vae_decode": 2.9626,
+      "vae_encode": 2.1231
+    },
+    "per_rep_ms": [
+      50.5936,
+      49.3241,
+      49.7952,
+      49.5721,
+      49.0883,
+      49.9927,
+      51.2061,
+      49.4024,
+      50.0001,
+      49.5325,
+      49.2952,
+      49.3954,
+      49.3994,
+      49.6265,
+      51.8924,
+      50.2503,
+      51.2505,
+      50.3999,
+      50.2673,
+      49.5565,
+      50.2574,
+      49.1924,
+      50.1972,
+      48.928,
+      49.5298,
+      49.4402,
+      53.1166,
+      49.0308,
+      49.3536,
+      50.0742
+    ],
+    "reps": 30,
+    "started_utc": "2026-09-07T18:18:07Z",
+    "stdev_ms_per_frame": 0.9168,
+    "warmup_reps": 5
+  },
+  "scenario": {
+    "acceleration": "none",
+    "batch_size": 1,
+    "cfg_type": "none",
+    "do_add_noise": true,
+    "height": 512,
+    "lcm_lora_id": null,
+    "lora_scale": 1.0,
+    "mode": "img2img",
+    "model": "sd-v1-5-fp16",
+    "name": "img2img-none-512x512-b1-sd15-s4",
+    "prompt": "a photograph of a city street, cinematic lighting",
+    "reps": 30,
+    "seed": 2,
+    "style_lora": null,
+    "t_index_list": [
+      35,
+      40,
+      44,
+      49
+    ],
+    "use_denoising_batch": true,
+    "use_lcm_lora": true,
+    "use_tiny_vae": true,
+    "warmup_reps": 5,
+    "width": 512
+  },
+  "schema_version": 2
+}

@@ -22,6 +22,7 @@ import ctypes.wintypes as wint
 from render_plan import (
     CROP as PLAN_CROP,
     MASKED as PLAN_MASKED,
+    DEFAULT_MAX_INSTANCES,
     INITIAL_PLAN_VERSION,
     ActivePlan,
     RenderPlan,
@@ -29,8 +30,14 @@ from render_plan import (
     plan_from_fields,
     priority_case_plan,
     t_index_for_denoise,
+    t_index_ladder,
     validate_plan,
 )
+
+# Which TensorRT engine a configuration needs, and whether it is already built
+# (issue #38). Stdlib, and shared with `bench.cli`'s build guard rather than
+# mirrored here: a build the window allows and the harness refuses is two rules.
+import engine_cache
 
 # The tracker and the worker's detector (issue #7, spec 5.1 C3/C4). Neither imports
 # torch or ultralytics at module scope - the weights are loaded on the detector's
@@ -541,6 +548,72 @@ def resolve_local_model_path(explicit: _PathArg = None, models_root: _PathArg = 
     return ""
 
 
+# --- choosing the base model (issue #38, step 6) -----------------------------
+#
+# The model was a path in an entry box, and changing it meant knowing three other
+# settings had to change with it. SD-Turbo is distilled to one step and fuses no
+# LCM-LoRA; SD 1.5 is not and does, and rendered at one step with no LCM-LoRA it
+# produces noise rather than a weaker restyle. So the model is picked from what is
+# on disk, and picking one applies what it needs.
+
+# What issue #38's step-count sweep measured SD 1.5 needs to run at all, and what
+# SD-Turbo is distilled for. Not preferences: 4 steps is a batch-4 UNet engine and
+# 1 step is a batch-1 one, so this number keys the build the next section warns about.
+MODEL_STEPS_SD15 = 4
+MODEL_STEPS_TURBO = 1
+
+# The one-step schedule the window has always opened on, and what SD-Turbo wants.
+# Index 30 is timestep 399: a higher index is *less* denoise, not more.
+DEFAULT_T_INDEX_LIST: Tuple[int, ...] = (30,)
+
+
+class ModelCompanions(NamedTuple):
+    """The settings a base model cannot render without, and cannot choose itself."""
+
+    use_lcm_lora: bool
+    t_index_list: List[int]
+
+
+def local_model_paths(models_root: _PathArg = None,
+                      environ: Optional[Mapping[str, str]] = None) -> List[str]:
+    """Every loadable model under the models root, the preferred names first.
+
+    The same two rules `resolve_local_model_path` applies, for the same reasons: a
+    directory without a `model_index.json` is a cancelled download the worker
+    cannot load, and the folder the Download button writes is what a machine set up
+    either way already has, so it opens the list.
+    """
+    root = resolve_models_dir(environ=environ) if models_root is None else Path(models_root)
+    named = [root / name for name in LOCAL_MODEL_NAMES]
+    try:
+        rest = sorted(p for p in root.iterdir() if p.is_dir() and p not in named)
+    except OSError:
+        rest = []
+    return [str(path) for path in named + rest if is_diffusers_dir(path)]
+
+
+def model_label(path: _PathArg) -> str:
+    """What a model is called in the picker: its folder name, not its whole path."""
+    return Path(str(path)).name if path else ""
+
+
+def model_companions(path: _PathArg) -> ModelCompanions:
+    """LCM-LoRA and the step ladder this base model needs.
+
+    `engine_cache.is_turbo_model` is `wrapper.py`'s own rule - `"turbo" in the
+    path` - and it is the rule that decides whether LCM-LoRA is fused at all, so
+    the window has to answer it the same way or offer a setting the worker ignores.
+    The ladder is `render_plan.t_index_ladder`, so what the window builds and what
+    a plan asks for are one schedule.
+    """
+    if not path or engine_cache.is_turbo_model(path):
+        return ModelCompanions(use_lcm_lora=False,
+                               t_index_list=list(DEFAULT_T_INDEX_LIST))
+    return ModelCompanions(
+        use_lcm_lora=True,
+        t_index_list=t_index_ladder(DEFAULT_T_INDEX_LIST[0], MODEL_STEPS_SD15))
+
+
 # StreamDiffusion's three acceleration paths. `tensorrt` is the default because it
 # is the only one this repo has ever measured: every figure in spec 7, every
 # committed benchmark and the ~5 GB engine cache under `engines/` belong to that
@@ -558,11 +631,12 @@ DEFAULT_FRAME_BUFFER_SIZE = 1
 
 # --- what a change costs, said before it happens (issue #40, step 4) ---------
 
-# Measured at 512x512 on an RTX 3080 laptop: ~5.0 GB on disk, 15-25 minutes to
-# build (CLAUDE.md, spec 7.2). A user who changes one of these and then watches the
-# app go quiet for twenty minutes has been told nothing.
-ENGINE_BUILD_SIZE = "~5 GB"
-ENGINE_BUILD_TIME = "15-25 minutes"
+# Measured at 512x512 on both machines: ~5.0 GB on disk, and 15-25 minutes on the
+# RTX 3080 laptop against ~5 on the 4090 (CLAUDE.md, spec 7.2). A user who changes
+# one of these and then watches the app go quiet has been told nothing. One
+# spelling, shared with the harness that refuses the same build.
+ENGINE_BUILD_SIZE = engine_cache.ENGINE_BUILD_SIZE
+ENGINE_BUILD_TIME = engine_cache.ENGINE_BUILD_TIME
 
 # The settings that key a distinct engine *and* have a control in this window.
 # Resolution keys one too and is not here: `wrapper.py` never forwards a resolution
@@ -587,6 +661,77 @@ ENGINE_REBUILD_HINT = (
 def engine_rebuild_needed(acceleration: str) -> bool:
     """Only the TensorRT path compiles an engine; the others merely run slower."""
     return acceleration == TENSORRT
+
+
+class EngineConfiguration(NamedTuple):
+    """Which engine the settings in the window need, and whether it exists yet.
+
+    `builds` is the whole question a user wants answered before Start: this
+    configuration has no compiled engine, so pressing Start spends minutes making
+    one. Before issue #38 nothing looked - `_confirm_engine_rebuild` fired on a
+    non-default batch size or any listed LoRA and never on a model change, which
+    is the one setting that guarantees a different engine.
+    """
+
+    model_path: str
+    engine_dir: str
+    engines_root: str
+    cached: bool
+    builds: bool
+    steps: int
+    free_bytes: int
+    enough_disk: bool
+
+
+def engine_configuration(model_path: str, acceleration: str, use_lcm_lora: bool,
+                         steps: int, frame_buffer_size: int,
+                         lora_dict: Optional[Dict[str, float]] = None,
+                         engines_root: _PathArg = None,
+                         use_tiny_vae: bool = True) -> EngineConfiguration:
+    """What `wrapper.py` would look for, and what it would do if it were not there.
+
+    Answered through `engine_cache`, which is a mirror of `create_prefix` held to
+    it by a test - so a "no engine yet" here is the same directory the worker will
+    miss a moment later, and not an approximation of it.
+    """
+    root = resolve_engines_dir() if engines_root is None else Path(engines_root)
+    directory = engine_cache.engine_dir_name(
+        model_path, use_lcm_lora=use_lcm_lora, use_tiny_vae=use_tiny_vae,
+        unet_batch=engine_cache.unet_batch_size(frame_buffer_size, steps),
+        width=DIFFUSION_CANVAS, height=DIFFUSION_CANVAS, lora_dict=lora_dict)
+    cached = engine_cache.engine_is_cached(root, directory)
+    free = engine_cache.free_bytes(root)
+    return EngineConfiguration(
+        model_path=str(model_path), engine_dir=directory, engines_root=str(root),
+        cached=cached, builds=engine_rebuild_needed(acceleration) and not cached,
+        steps=int(steps), free_bytes=free,
+        enough_disk=free >= engine_cache.MIN_FREE_BYTES_FOR_ENGINE_BUILD)
+
+
+def _engine_missing_warning(configuration: EngineConfiguration) -> str:
+    """What Start says before it spends the minutes, naming what made it different."""
+    return (
+        f"There is no compiled TensorRT engine for this configuration yet:\n\n"
+        f"    {model_label(configuration.model_path) or configuration.model_path}, "
+        f"{configuration.steps} denoising step"
+        f"{'' if configuration.steps == 1 else 's'}, "
+        f"{DIFFUSION_CANVAS}x{DIFFUSION_CANVAS}\n"
+        f"    {configuration.engine_dir}\n\n"
+        f"Starting will build one first: about {ENGINE_BUILD_TIME}, and "
+        f"{ENGINE_BUILD_SIZE} under {configuration.engines_root}. The window will "
+        f"look frozen while it does.\n\n"
+        "Continue?")
+
+
+def _not_enough_disk_message(engines_root: _PathArg, free_bytes: int) -> str:
+    """The refusal. Loud, before the build, rather than a half-written engine."""
+    gib = engine_cache.BYTES_PER_GIB
+    return (
+        f"{free_bytes / gib:.1f} GB free on the volume holding {engines_root}, and "
+        f"building a TensorRT engine needs "
+        f"{engine_cache.MIN_FREE_BYTES_FOR_ENGINE_BUILD / gib:.1f} GB.\n\n"
+        f"Free some space, or point SD_ENGINES_DIR at a volume that has it. "
+        f"Stopping before the build rather than partway through it.")
 
 
 def _engine_rebuild_warning(setting: str) -> str:
@@ -1621,6 +1766,10 @@ class StreamGUI(ctk.CTk):
         # complete model is under the models root, so a machine that has one can
         # start without pasting a path (issue #40, step 1).
         self.model_var = ctk.StringVar(value=resolve_local_model_path(LOCAL_MODEL_PATH))
+        # What the picker shows (a folder name) against what the worker is given (a
+        # path), and the standing sentence about the engine that pair needs.
+        self.model_choice_var = ctk.StringVar(value=model_label(self.model_var.get()))
+        self.engine_state_var = ctk.StringVar(value="")
         # Each entry: {"path": str, "scale": float}. Converted to StreamDiffusion's
         # lora_dict ({path: scale}) at start time.
         self.lora_items: List[Dict[str, Any]] = []
@@ -1659,7 +1808,7 @@ class StreamGUI(ctk.CTk):
         self.sim_maxskip_var = ctk.StringVar(value="10.0")
         self.offline_var = ctk.BooleanVar(value=True)
         self._debounce_prompt = self._debounce_neg = self._debounce_region = self._debounce_plan = None
-        self.t_index_list: List[int] = [30]
+        self.t_index_list: List[int] = list(DEFAULT_T_INDEX_LIST)
         self._lockables: List[ctk.CTkBaseClass] = []
         self._step_sliders: List[ctk.CTkSlider] = []
         self.capwin: Optional[FloatingCaptureWindow] = None
@@ -1672,6 +1821,9 @@ class StreamGUI(ctk.CTk):
         except Exception:
             self.logo_img = None
         self._build_ui()
+        # What the window opens on has an engine or it does not, and that is worth
+        # knowing before Start rather than after it (issue #38, step 6).
+        self._refresh_engine_state()
         self._setup_input_validation()
         self.bind("<Configure>", self._on_window_configure)
         self._poll_queues()
@@ -2058,16 +2210,27 @@ class StreamGUI(ctk.CTk):
         self._w_plan_note.grid_remove()
         row += 1
         if SHOW.get("model_path", True):
-            ctk.CTkLabel(left, text="Model (diffusers folder):", anchor="w").grid(row=row, column=0, sticky="ew", pady=(4, 0))
+            ctk.CTkLabel(left, text="Base model:", anchor="w").grid(row=row, column=0, sticky="ew", pady=(4, 0))
             mp = ctk.CTkFrame(left); mp.grid(row=row+1, column=0, sticky="ew")
             mp.grid_columnconfigure(0, weight=1); mp.grid_columnconfigure(1, weight=0); mp.grid_columnconfigure(2, weight=0)
-            self._w_model_entry = ctk.CTkEntry(mp, textvariable=self.model_var)
-            self._w_model_entry.grid(row=0, column=0, sticky="ew", padx=(0,6), pady=6)
+            # Issue #38 step 6: pick from what is on disk. The entry stays, because
+            # a model outside the models root is still a legal answer and Browse is
+            # how it gets typed - but choosing one should not require knowing a path.
+            self._w_model_combo = ctk.CTkOptionMenu(
+                mp, values=self._model_choices(),
+                variable=self.model_choice_var, command=self._on_model_chosen)
+            self._w_model_combo.grid(row=0, column=0, sticky="ew", padx=(0,6), pady=6)
             self._w_model_browse = ctk.CTkButton(mp, text="Browse", command=self._browse_model, width=70)
             self._w_model_browse.grid(row=0, column=1, padx=(0,6), pady=6)
             self._w_model_download = ctk.CTkButton(mp, text="⬇ Download SD-Turbo", command=self._download_sd_turbo, width=140, fg_color="#10B981", hover_color="#059669")
             self._w_model_download.grid(row=0, column=2, pady=6)
-            self._register_lockables(self._w_model_entry, self._w_model_browse, self._w_model_download)
+            self._w_model_entry = ctk.CTkEntry(mp, textvariable=self.model_var)
+            self._w_model_entry.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(0, 6))
+            # What that model needs compiling, and whether it is compiled. The one
+            # thing the window could not say before Start went quiet for minutes.
+            self._w_engine_state = ctk.CTkLabel(mp, textvariable=self.engine_state_var, anchor="w", justify="left", wraplength=400)
+            self._w_engine_state.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(0, 6))
+            self._register_lockables(self._w_model_entry, self._w_model_browse, self._w_model_download, self._w_model_combo)
             row += 2
         if SHOW.get("lora", True):
             lf = ctk.CTkFrame(left); lf.grid(row=row, column=0, sticky="ew", pady=(4, 6))
@@ -2620,22 +2783,101 @@ class StreamGUI(ctk.CTk):
     def _browse_model(self):
         d = filedialog.askdirectory(title="Select diffusers model folder",
                                     initialdir=str(resolve_models_dir()))
-        if d: self.model_var.set(d)
+        if d: self._apply_model(d)
+
+    def _model_choices(self) -> List[str]:
+        """What the picker offers: every loadable model under the models root.
+
+        Whatever is currently set comes first even when it is outside that root -
+        a Browse-d path is a legal answer and the list must not silently drop it.
+        """
+        labels = [model_label(path) for path in local_model_paths()]
+        current = model_label(self.model_var.get())
+        if current and current not in labels:
+            labels.insert(0, current)
+        return labels or [""]
+
+    def _on_model_chosen(self, label: str):
+        """A model picked from the list of what is on disk (issue #38, step 6)."""
+        for path in local_model_paths():
+            if model_label(path) == label:
+                self._apply_model(path)
+                return
+
+    def _apply_model(self, path: str):
+        """Set the model, and with it the two settings it cannot render without.
+
+        SD-Turbo is distilled to one step and fuses no LCM-LoRA; SD 1.5 is not and
+        does. Choosing the model and leaving those behind is how a user gets noise
+        with nothing in the window saying why, so `model_companions` moves them
+        together - and the step *count* keys a TensorRT engine, which is what the
+        check at Start is for.
+        """
+        self.model_var.set(path)
+        self.model_choice_var.set(model_label(path))
+        companions = model_companions(path)
+        self.use_lcm_lora_var.set(companions.use_lcm_lora)
+        if list(self.t_index_list) != list(companions.t_index_list):
+            self.t_index_list = list(companions.t_index_list)
+            self._build_steps_ui()
+        self._refresh_engine_state()
+
+    def _refresh_engine_state(self):
+        """The standing line under the model: which engine this needs, and if it exists."""
+        configuration = self._engine_configuration()
+        if configuration is None:
+            self.engine_state_var.set("")
+            return
+        if configuration.cached:
+            self.engine_state_var.set(
+                f"Engine: cached for {model_label(configuration.model_path)} at "
+                f"{configuration.steps} step"
+                f"{'' if configuration.steps == 1 else 's'}.")
+        else:
+            self.engine_state_var.set(
+                f"⚠  No engine yet for {model_label(configuration.model_path)} at "
+                f"{configuration.steps} step"
+                f"{'' if configuration.steps == 1 else 's'} - Start will build one "
+                f"({ENGINE_BUILD_TIME}, {ENGINE_BUILD_SIZE}).")
+
+    def _engine_configuration(self) -> Optional[EngineConfiguration]:
+        """What the settings in the window add up to, or None on a path that builds
+        nothing at all."""
+        if not engine_rebuild_needed(self.accel_var.get()):
+            return None
+        try:
+            buffer_size = int(self.buffer_var.get())
+        except (TypeError, ValueError):
+            buffer_size = DEFAULT_FRAME_BUFFER_SIZE
+        return engine_configuration(
+            model_path=self.model_var.get(), acceleration=self.accel_var.get(),
+            use_lcm_lora=bool(self.use_lcm_lora_var.get()),
+            steps=len(self.t_index_list), frame_buffer_size=buffer_size,
+            lora_dict=self._lora_dict() or None)
+
+    def _confirm_engine_available(self) -> bool:
+        """Say what Start is about to spend, and refuse a volume that cannot hold it.
+
+        The last moment before minutes are spent inside another process, and the
+        only check here that looks on disk rather than guessing from a setting.
+        """
+        configuration = self._engine_configuration()
+        if configuration is None or configuration.cached:
+            return True
+        if not configuration.enough_disk:
+            messagebox.showerror(
+                "Not enough disk space",
+                _not_enough_disk_message(configuration.engines_root,
+                                         configuration.free_bytes))
+            return False
+        return bool(messagebox.askokcancel("TensorRT engine build required",
+                                           _engine_missing_warning(configuration)))
 
     def _on_start(self):
         if self.running: return
         if not self._validate_numeric_parameters(): return
         try: verify_local_model_path_dir(self.model_var.get())
         except Exception as e: messagebox.showerror("Paths error", str(e)); return
-        # The cached engine is a `DEFAULT_FRAME_BUFFER_SIZE` one; anything else
-        # builds its own, and start is the last moment to say so.
-        if int(self.buffer_var.get()) != DEFAULT_FRAME_BUFFER_SIZE:
-            if not self._confirm_engine_rebuild("batch size"): return
-        ctx = get_context("spawn")
-        self.proc_ctx = ctx
-        self.out_q = ctx.Queue(maxsize=2); self.fps_q = ctx.Queue(); self.status_q = ctx.Queue()
-        self.control_q = ctx.Queue(); self.debug_q = ctx.Queue(); self.close_q = ctx.Queue()
-        self.monitor_sender, self.monitor_receiver = ctx.Pipe()
         lora_dict = self._lora_dict()
         if lora_dict:
             missing = [p for p in lora_dict if not os.path.isfile(p)]
@@ -2643,9 +2885,20 @@ class StreamGUI(ctk.CTk):
                 messagebox.showerror("LoRA error",
                     "These LoRA files no longer exist:\n\n" + "\n".join(missing))
                 return
-            # LoRA weights are fused into the UNet before the TensorRT engine
-            # is compiled, so each distinct LoRA set needs its own build.
-            if not self._confirm_engine_rebuild("LoRA set"): return
+            # The build itself is not asked about here: LoRA weights are fused
+            # into the UNet before the engine is compiled, so the fused set is
+            # part of the directory the check below looks for.
+        # Whether *this* configuration has an engine, looked up on disk rather than
+        # guessed from whether a setting is at its default (issue #38, step 6). It
+        # covers the batch size, the step count, the model and the fused LoRA set
+        # in one reading, because those are exactly what key the directory - and it
+        # is the last moment before minutes are spent inside another process.
+        if not self._confirm_engine_available(): return
+        ctx = get_context("spawn")
+        self.proc_ctx = ctx
+        self.out_q = ctx.Queue(maxsize=2); self.fps_q = ctx.Queue(); self.status_q = ctx.Queue()
+        self.control_q = ctx.Queue(); self.debug_q = ctx.Queue(); self.close_q = ctx.Queue()
+        self.monitor_sender, self.monitor_receiver = ctx.Pipe()
         controlnet_paths: List[str] = []; controlnet_scales: List[float] = []
         # One reading of what was picked, for the worker, the capture thread and
         # the capture window alike - three sizes that have to agree or the mask

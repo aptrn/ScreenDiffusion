@@ -539,6 +539,60 @@ TensorRT batch curve at 512² is trustworthy. `tests/test_trt_engine_resolution.
 pins the finding so it cannot rot; fixing it is a `wrapper.py` change plus ~10 GB
 of rebuilds, and wants its own issue.
 
+#### Measured: the step-count axis — **issue #38**
+
+Every figure above is SD-Turbo at **one** denoising step, and until issue #38
+nothing in this repo swept the step count at all — §7.2's measured table sweeps
+*batch size*, which is `frame_buffer_size`. That mattered the moment a second base
+model was considered: SD 1.5 is not a turbo model and needs LCM-LoRA at about four
+steps, and the only estimate available was arithmetic on the 256×256 laptop
+per-module split — UNet ~80% of the call, so four passes ≈ 3.4× it.
+
+**That estimate was wrong, and the reason is instructive.** `use_denoising_batch`
+puts the steps through the UNet as one batch of N rather than as N calls, and a
+batch of four is not four calls. Reproduce with
+`uv run python -m bench --steps-report`; the arms live in `bench/results/steps/`,
+which is deliberately *not* `bench/results/` — `--marginal` reads every JSON there
+as a (resolution, batch) cell, so a two-step arm at batch 1 would join the
+committed batch curve as a second batch-1 point.
+
+<!-- BEGIN STEP COUNT -->
+Step count swept over 1, 2, 4 on NVIDIA GeForce RTX 4090, at 512x512 batch 1 on `sd-turbo-fp16`, `sd-v1-5-fp16`. Only the count moves: every arm opens at schedule index 35 and spends its extra steps after it (`render_plan.t_index_ladder`), so an arm is not also a strength change. Batch 1 throughout, so ms/call is ms/frame. The UNet, VAE-encode and VAE-decode columns come from `--per-module`, whose extra synchronises perturb the total - they are read as a split of the call, not as the call.
+
+| steps | model | style LoRA | accel | t_index list | ms/call | x 1 step | UNet ms | VAE encode ms | VAE decode ms | UNet share | peak VRAM (MiB) | SM clock (MHz) | cooldown | ms/call at basis clock |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | sd-turbo-fp16 | - | none | 35 | 26.02 | 1.00x | 16.70 | 2.09 | 2.48 | 64% | 2593 | 2715 | reached | 22.43 @ 3150 MHz |
+| 1 | sd-turbo-fp16 | - | tensorrt | 35 | 20.67 | 1.00x | 12.55 | 1.41 | 1.38 | 61% | 2500 | 2662 | reached | 17.47 @ 3150 MHz |
+| 2 | sd-turbo-fp16 | - | none | 35,49 | 32.73 | 1.26x | 21.84 | 2.09 | 2.90 | 67% | 2658 | 2708 | reached | 28.13 @ 3150 MHz |
+| 4 | sd-turbo-fp16 | - | none | 35,40,44,49 | 48.63 | 1.87x | 37.29 | 2.14 | 2.94 | 77% | 2757 | 2705 | reached | 41.74 @ 3150 MHz |
+| 4 | sd-v1-5-fp16 | - | none | 35,40,44,49 | 49.97 | - | 39.63 | 2.12 | 2.96 | 79% | 2929 | 2715 | reached | 43.07 @ 3150 MHz |
+| 4 | sd-v1-5-fp16 | - | tensorrt | 35,40,44,49 | 33.88 | - | 25.69 | 1.37 | 1.41 | 76% | 2673 | 2722 | reached | 29.28 @ 3150 MHz |
+| 4 | sd-v1-5-fp16 | loving-vincent | none | 35,40,44,49 | 52.02 | - | 41.09 | 2.15 | 3.02 | 79% | 2930 | 2720 | reached | 44.90 @ 3150 MHz |
+| 4 | sd-v1-5-fp16 | loving-vincent | tensorrt | 35,40,44,49 | 33.57 | - | 25.27 | 1.33 | 1.38 | 75% | 2672 | 2722 | reached | 29.02 @ 3150 MHz |
+
+**`sd-turbo-fp16`, `none`.** At one step the UNet is 64% of the 26.02 ms call (16.70 ms against VAE-encode 2.09 and VAE-decode 2.48). 2 steps cost **1.26x** the one-step call (32.73 ms against 26.02), so each step after the first cost 6.71 ms. That is 1.31x the UNet for 2x the passes (21.84 ms against 16.70): `use_denoising_batch` puts the steps through the UNet as one batch of 2, and a batch of 2 is not 2 calls. 4 steps cost **1.87x** the one-step call (48.63 ms against 26.02), so each step after the first cost 7.54 ms. That is 2.23x the UNet for 4x the passes (37.29 ms against 16.70): `use_denoising_batch` puts the steps through the UNet as one batch of 4, and a batch of 4 is not 4 calls. Issue #38 estimated ~3.4x for four steps, from the 256x256 laptop per-module split. Measured here it is 1.87x, below it - the estimate was pessimistic. That estimate is replaced by this table.
+
+**`sd-turbo-fp16`, `tensorrt`.** At one step the UNet is 61% of the 20.67 ms call (12.55 ms against VAE-encode 1.41 and VAE-decode 1.38).
+
+No one-step arm in 4 configurations (`sd-v1-5-fp16`, `none`; `sd-v1-5-fp16`, `none`, `loving-vincent` fused; `sd-v1-5-fp16`, `tensorrt`; `sd-v1-5-fp16`, `tensorrt`, `loving-vincent` fused), so their `x 1 step` cell is empty - which for a model that cannot render at one step is the honest answer. What those arms are read against is the base-model comparison below.
+
+**Base model, `none`.** `sd-v1-5-fp16` (SD 1.5) at its working 4 steps costs 49.97 ms/call against `sd-turbo-fp16`'s 26.02 at 1 - **1.92x** the diffusion call. The step count is the whole of it: at 4 steps the two models are within 3% of each other.
+
+**Base model, `tensorrt`.** `sd-v1-5-fp16` (SD 1.5) at its working 4 steps costs 33.88 ms/call against `sd-turbo-fp16`'s 20.67 at 1 - **1.64x** the diffusion call.
+<!-- END STEP COUNT -->
+
+Two consequences the rest of issue #38 rests on. Four steps is affordable on the
+diffusion call — 1.87× rather than 3.4× on `none` — and four steps is a **batch-4
+UNet engine**, so the step count keys its own ~5 GB build exactly as the batch size
+does. `engine_cache.unet_batch_size` is that rule, shared by the window and the
+harness.
+
+The table also carries the answer to *which model*, on the same axis and in the
+same session: SD 1.5 at its working four steps costs 1.64× SD-Turbo at its one on
+TensorRT, and at four steps the two models are within 3% of each other. **The cost
+of moving to SD 1.5 is the steps it needs, not the checkpoint.** §7.5 takes that
+end to end.
+
 ### 7.3 The batch-size problem (the hard one)
 
 A TensorRT engine is built for a **fixed batch size**. The scene contains a
@@ -789,6 +843,66 @@ which is the difference the move was expected to show, recorded rather than
 normalised away.
 
 ---
+
+### 7.5 The base model is a choice — **issue #38**
+
+Every number in §7 above is SD-Turbo, which is **SD 2.1-based**. That came with
+choosing SD-Turbo; it was never a separate decision and had never been revisited.
+The reason to revisit it is not speed — SD-Turbo is the faster model and always will
+be — it is **style control**. Live testing on 2026-09-07 found the prompt respected
+only at low `t_index`, and low `t_index` is where the output stops correlating with
+what is on screen. That trade is structural on the strength axis, so the levers left
+are conditioning and the model, and the model's lever is the LoRA ecosystem: SD-Turbo
+can load no SD 1.5 or SDXL LoRA at all.
+
+Both models were run through the **shipped** selective path over the same clip under
+the same plan, each at the step count it needs. `uv run python -m bench
+selective-people --base-model {sd-turbo,sd15}` writes the arms to
+`bench/results/base-models/` — their own directory, because an arm at another
+checkpoint and another step count must not become the row §8.8 and §7.4 quote for
+the shipped path. `base-models` and not `models`: `.gitignore` carries a bare
+`models/` for the multi-GB downloads and it matches at any depth, so the obvious
+name would have left every record here silently untracked. Regenerate with `uv run python -m bench --model-report`.
+
+<!-- BEGIN BASE MODEL -->
+The shipped selective path on each base model, over the same 48 frames of `people.mp4` under the same `person / lower_half / denoise 0.49` plan, on NVIDIA GeForce RTX 4090. Each model runs at the step count it needs rather than at a shared one: SD-Turbo is distilled to a single step and SD 1.5 is not, so an equal-step table would compare one model against a crippled one. The denoise is shared and *means* the same thing on both - the two checkpoints carry the same `scaled_linear` beta schedule, so `render_plan.t_index_for_denoise`'s ladder is the same ladder.
+
+| base model | steps | regions/frame | ms/frame | +detect | FPS | headroom (ms) | flicker | background | 30 FPS |
+|---|---|---|---|---|---|---|---|---|---|
+| `sd-turbo-fp16` | 1 | 5.19 | 17.81 | 21.87 | 45.7 | +11.46 | 1.49 | identical | yes |
+| `sd-v1-5-fp16` | 4 | 5.19 | 34.49 | 40.99 | 24.4 | -7.65 | 2.31 | identical | **no** |
+
+**`sd-turbo-fp16` at 1 step: 30 FPS MET.** 45.7 FPS at 5.19 regions/frame on NVIDIA GeForce RTX 4090 - 21.87 ms per frame with detection amortised against the 33.33 ms a 30 FPS budget allows, 11.46 ms to spare; detect_every_n 5, clocks unlocked. Background: 48/48 frames left every pixel outside the rendered regions exactly as captured (164676 background pixels on the frame with the most painted).
+
+**`sd-v1-5-fp16` at 4 steps: 30 FPS NOT MET.** 24.4 FPS at 5.19 regions/frame on NVIDIA GeForce RTX 4090 - 40.99 ms per frame with detection amortised against the 33.33 ms a 30 FPS budget allows, 1.23x the budget; detect_every_n 5, clocks unlocked. Background: 48/48 frames left every pixel outside the rendered regions exactly as captured (164676 background pixels on the frame with the most painted).
+
+Every arm above left the background bit-identical to the capture.
+
+Manual-verification artefacts, source | render: `selective-people-sd-turbo-20260907-183923Z-comparison.mp4`, `selective-people-sd15-20260907-183827Z-comparison.mp4`.
+<!-- END BASE MODEL -->
+
+**The denoise ladder survives the move, and that is measured rather than assumed.**
+Issue #38's third trap warns that `render_plan.t_index_for_denoise` computes noise
+amplitudes from SD-Turbo's own beta schedule. Both checkpoints' scheduler configs
+carry `scaled_linear`, `beta_start 0.00085`, `beta_end 0.012`, 1000 train timesteps,
+and `LCMScheduler.from_config` over either produces the same 50-step grid — index 30
+is timestep 399 and index 45 is timestep 99 on both, with identical
+`alphas_cumprod`. So the ladder means the same thing on SD 1.5, and the two arms
+above are at one denoise honestly. What is *not* equal is the visible change it
+buys: 14.5/255 on SD 1.5 against 11.8 on SD-Turbo, so 1.5 restyles slightly harder
+at the same setting.
+
+**30 FPS does not survive the move, and it is the steps rather than the model.**
+§7.2's step-count block measures the two models within a few percent of each other
+at four steps on `none`; what SD 1.5 costs is that it needs four. On TensorRT the
+diffusion call alone is 33.9 ms against a 33.33 ms budget, before detection or
+compositing — the frame lands at 40.99 ms with detection amortised, 24.4 FPS.
+
+**Neither number disqualifies it.** The trade is visible and is a product decision
+rather than a benchmark one: SD-Turbo at 45.7 FPS with no style LoRAs, or SD 1.5 at
+24.4 FPS with the ecosystem's. §8.10 measures the second half of that sentence.
+Background bit-identity held 48/48 on both arms, so the selective path's own
+criterion is indifferent to the model.
 
 ## 8. Open questions (the research agenda)
 
@@ -1678,6 +1792,61 @@ identity either side of the swap, so a reviewer recomputes the zero rather than
 trusting it.
 
 ---
+
+### 8.10 Do style LoRAs work on SD 1.5, and how does a style ship? — **measured**
+
+Issue #38 steps 3-5. §7.5 prices the move to SD 1.5; this is the half that says
+whether the move buys anything, and the Gate's sentence is sharp: **a LoRA that
+loads and changes nothing is a failure, not a pass.** So an arm carries two numbers.
+`net change` is the render against the source with the resize control subtracted —
+§8.2's own criterion — and `vs base` is the arm against the *same arm with no LoRA
+fused*, which is the number that says the LoRA did anything. A plain SD 1.5 render
+already clears the first.
+
+A third thing is recorded rather than inferred: **which formats load**. One arm is
+deliberately a LoCon file, because reporting "LoRAs work" from one plain LoRA that
+happened to would be reporting a coincidence.
+
+`uv run python -m bench style-sd15`; regenerate with
+`uv run python -m bench --style-report`.
+
+<!-- BEGIN STYLE LORAS -->
+3 style LoRAs on `img2img-none-512x512-b1-sd15` at 4 steps, over 24 frames of `people.mp4` at 512x512, on NVIDIA GeForce RTX 4090. Every arm renders the same frames at the same denoise (0.62) under the same prompt ("a painting"); only the fused LoRA moves. `net change` is the render against the source with the resize control subtracted - spec 8.2's criterion - and `vs base` is the arm against the same arm with no LoRA fused, which is the number that says the LoRA did anything.
+
+| arm | format | loaded | ms/frame | net change | vs base | flicker | verdict |
+|---|---|---|---|---|---|---|---|
+| `base` | no LoRA | yes | 53.33 | 14.58 | 0.00 | 2.51 | control |
+| `loving-vincent` | LoRA (kohya, linear only) | yes | 46.69 | 19.74 | 19.23 | 1.31 | pass |
+| `illusion-pattern` | LoRA (kohya, linear only) | yes | 46.72 | 15.17 | 5.32 | 2.55 | pass |
+| `locon-probe` | LoCon / LyCORIS (198 conv keys) | **no** | 0.00 | 0.00 | 0.00 | 0.00 | **FAIL** |
+
+**2 of 3 style LoRAs loaded and visibly changed the output.**
+
+- `loving-vincent` loaded and moved the output 19.2/255 against the same arm without it (threshold 4), on a render that is itself 19.7/255 from the source net of the control.
+- `illusion-pattern` loaded and moved the output 5.3/255 against the same arm without it (threshold 4), on a render that is itself 15.2/255 from the source net of the control.
+- `locon-probe` (LoCon / LyCORIS (198 conv keys)) did not load: Failed to load LoRA 'style-locon-probe.safetensors': 'UNet2DConditionModel' object has no attribute 'conv'
+
+The LoRA must match the base model's architecture (sd-turbo is SD 2.1-based), and LoRAs containing convolution layers (LoCon/LyCORIS) are not supported by diffusers 0.24.0..
+The artefact a human judges this by, source | base | one panel per style: `style-sd15-20260907-183158Z-styles.jpg`, `style-sd15-20260907-183158Z-styles.mp4`.
+
+**Neither path ships a real-time style at this step count.** The same LoRA (`loving-vincent`) fused into a TensorRT engine costs 33.57 ms/call against 52.02 ms without one - 1.55x - and against a 33.33 ms budget, neither path fits the frame budget on the diffusion call alone. What the engine costs is that it *is* an engine: each distinct style and scale keys its own ~5 GB, 15-25 minute build (`create_prefix` puts the fused-LoRA fingerprint in the cache key), so styles are a release-time set rather than something a user types. The `none` path swaps a style for a model reload and no compile, which is what LoRA *experimentation* needs.
+<!-- END STYLE LORAS -->
+
+**The delivery decision, in one sentence: pre-built engines, one per style.** A
+fused LoRA keys its own TensorRT engine — `create_prefix` puts a sha1 of the fused
+`lora_dict` in the cache directory name, so `loving-vincent` at 0.9 and the same
+LoRA at 0.5 are two ~5 GB builds. That is not a detail to route around; it is the
+shape of the feature. Styles are a **release-time set** the app ships engines for,
+not something a user types, and the non-TensorRT path is where LoRA
+*experimentation* happens: it swaps a style for a model reload and no compile, at
+52.02 ms/call against 33.57.
+
+Two things the block does not settle. The engine cost is per (LoRA, scale) pair, so
+a "style strength" slider is a slider over engines and cannot exist on the TensorRT
+path — a fixed scale per shipped style is the only expressible form. And neither
+path clears the frame budget on the diffusion call alone at four steps, so shipping
+a style on SD 1.5 is shipping §7.5's 24.4 FPS with it.
+
 
 ## 9. Risks
 

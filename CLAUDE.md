@@ -170,9 +170,50 @@ the capture grew. It does not - the canvas is fixed, and a bare probe measures
 15.5 / 15.3 / 16.8 ms at the three geometries. `--capture-report` regenerates the
 block in spec 8.2.
 
-All seven case-table blocks (`--detector-report`, `--primitive-report`,
+`--steps N` runs the same diffusion scenario at another **step count** - issue
+#38's first question, and the one that had to be answered before anything was
+compiled for a second base model. The arm is named `<scenario>-sN` and writes to
+`bench/results/steps/`, **never beside the batch curve**: `--marginal` reads every
+JSON in `bench/results/` as a (resolution, batch) cell, so a two-step arm at batch
+1 would join spec 7.2's committed curve as a second batch-1 point. That includes
+`--steps 1`, which is the sweep's own control and has to be measured on the same
+machine in the same session. Only the count moves - the opening index is the
+scenario's and `render_plan.t_index_ladder` spends the rest after it.
+`--steps-report` regenerates the block in spec 7.2. Measured on a 4090: **four
+steps cost 1.87x the one-step call, not the ~3.4x the issue estimated**, because
+`use_denoising_batch` puts the steps through the UNet as one batch of four and a
+batch of four is not four calls. Four steps is therefore a **batch-4 UNet engine**
+- the step count keys its own ~5 GB build, exactly as the batch size does.
+
+The registry carries a second **base model** (issue #38):
+`img2img-{accel}-512x512-b1-sd15` is SD 1.5 with LCM-LoRA, and `--base-model
+sd15` runs the `selective-people` case end to end through it at the four steps it
+needs, writing to `bench/results/base-models/` for the reason the cadence arms have
+their own directory. `--model-report` regenerates the block in spec 7.5. Measured
+on a 4090: **SD-Turbo 45.7 FPS against SD 1.5's 24.4**, 21.87 ms/frame with
+detection against 40.99, background bit-identical 48/48 on both. The cost is the
+*steps*, not the checkpoint - at four steps the two models are within 3% of each
+other. The denoise ladder survives the move and that is checked rather than
+assumed: both checkpoints carry the same `scaled_linear` beta schedule, so
+`t_index_for_denoise` names the same timestep on both.
+
+`--style-lora NAME` fuses one of the style LoRAs in `bench.models.STYLE_LORAS`
+into an arm, and the `style-sd15` case tries all of them on SD 1.5 over one clip -
+issue #38 steps 3-5, `bench/results/styles/`, `--style-report`, spec 8.10. An arm
+carries two numbers because a LoRA that loads and changes nothing is a failure:
+the render against the source net of the resize control, and the arm against the
+*same arm with no LoRA fused*. Measured on a 4090: **two of three loaded and
+visibly changed the output** (19.2/255 and 5.3/255 against the base arm); the
+third is a LoCon file and is in the case deliberately, so "which formats load" is
+measured rather than inferred from the ones that happened to. **A fused LoRA keys
+its own engine** - `create_prefix` puts a sha1 of the `lora_dict` in the cache key
+- so every style *and scale* is a separate ~5 GB build, which makes styles a
+release-time set rather than something a user types. The non-TensorRT path swaps a
+style for a model reload and no compile, at 52.02 ms/call against 33.57.
+
+All ten case-table blocks (`--detector-report`, `--primitive-report`,
 `--capture-report`, `--selective-report`, `--cadence-report`, `--swap-report`,
-`--stability-report`)
+`--stability-report`, `--steps-report`, `--model-report`, `--style-report`)
 keep the newest run **per (thing measured, GPU)**, not per name. A 4090 run
 therefore adds a row beside the 3080's instead of erasing it, which is what keeps
 spec 7.4's portability table checkable. When rows span GPUs the table grows a
@@ -186,13 +227,13 @@ from.
 `--portability-report` is the second question asked of those same records — not
 "does the path work" but "which of its numbers survived the move to the hardware
 this ships on" — and regenerates the block in spec 7.4, byte-matched by a test
-like the other six. It refuses to draw a table at all when the two runs rendered
+like the other nine. It refuses to draw a table at all when the two runs rendered
 different regions/frame, because region count drives cost and a table across two
 of them is the wrong answer in a quotable shape. The 30 FPS verdict it prints is
 judged on `ms/frame with detection`, carries the region count and the clock
 regime, and says whether every committed run on the card landed on the same side
 of the target — a verdict inside the run-to-run spread is labelled one.
-`scripts/regen_spec_blocks.py` pastes all nine generated blocks back into the
+`scripts/regen_spec_blocks.py` pastes all twelve generated blocks back into the
 spec, so a regeneration is never a hand-copy that drops a digit.
 
 The clips in `bench/clips/` are committed and so are their box tracks
@@ -230,9 +271,27 @@ starts on `resolve_local_model_path()` - a diffusers folder (one with a
 `model_index.json`) under the models root - rather than on a blank string nothing
 could start from. Anything that keys a new TensorRT engine and has a control here -
 step count, batch size, LoRA set - goes through `_confirm_engine_rebuild`, which
-names the measured cost (~5 GB, 15-25 minutes) before the change, and only on the
-acceleration path that compiles one. `scripts/gui_screenshot.py` photographs the
-window; `docs/gui/` holds before and after.
+names the measured cost before the change, and only on the acceleration path that
+compiles one. `scripts/gui_screenshot.py` photographs the window; `docs/gui/` holds
+before and after.
+
+**The base model is a picker, and Start looks on disk** (issue #38, step 6).
+`local_model_paths()` offers every diffusers folder under the models root and
+`model_companions()` applies what the chosen one cannot render without - LCM-LoRA
+and `t_index_ladder`'s four steps for a non-turbo model, one step and no LCM-LoRA
+for a turbo one, decided by `engine_cache.is_turbo_model`, which is `wrapper.py`'s
+own `"turbo" in the path`. Picking SD 1.5 and leaving those behind is how a user
+gets noise with nothing in the window saying why, so `_apply_model` moves all three
+together and Browse goes through it too. Under the picker, `_refresh_engine_state`
+says which engine that configuration needs and whether it exists; `_on_start` then
+asks `_confirm_engine_available`, which **looks the directory up** rather than
+guessing from whether a setting is at its default - the old check fired on a
+non-default batch size or any listed LoRA and never on a model change, which is the
+one setting that guarantees a different engine. It refuses outright below the 20 GB
+free-disk floor. `engine_cache.py` is that naming rule, stdlib, shared with
+`bench.cli`'s build guard and held to `create_prefix` by
+`tests/test_engine_cache.py`: a build the window allows and the harness refuses is
+two rules, not one.
 
 They talk only over `multiprocessing.Queue`s. Live changes reach the worker as
 `control_queue` messages (`set_prompt`, `set_region`, `set_t_index_list`, …); adding a
@@ -468,7 +527,23 @@ ever, so an empty field cannot overwrite it.
   `image_generation_process()` and never passed to the wrapper. Inherited dead stub —
   wiring it up is real work, not a one-liner.
 - **SD-Turbo is SD 2.1-based.** SD 1.5 and SDXL LoRAs will not load, and LoCon/LyCORIS
-  convolution layers are unsupported by this diffusers version.
+  convolution layers are unsupported by this diffusers version. Measured on the SD 1.5
+  arm (issue #38, spec 8.10): a plain kohya LoRA loads and works, and a LoCon file
+  with 198 conv keys fails with `'UNet2DConditionModel' object has no attribute
+  'conv'`. Test the format, not the extension.
+- **A step count is an engine, not a setting.** `use_denoising_batch` puts the
+  denoising steps through the UNet as one batch, so four steps is a batch-4 UNet
+  engine and `--steps 4` on the TensorRT path is a ~5 GB build. `engine_cache.
+  unet_batch_size` is the one spelling of `frame_buffer_size * steps`, read by both
+  the window's warning and the harness's guard. The good news measured in spec 7.2:
+  four steps costs 1.87x the one-step *call*, not 4x, because a batch of four is not
+  four calls.
+- **Do not read "SD 1.5 misses 30 FPS" as "SD 1.5 is out."** Spec 7.5 measures 24.4
+  FPS against SD-Turbo's 45.7 on the same clip and plan, and the whole point of the
+  arm is that SD-Turbo can load no style LoRA at all. The trade is a product
+  decision with two measured sides, not a benchmark verdict - which is why the
+  arm, the engine and the GUI's model picker all ship even though the default does
+  not move.
 - **`YOLOWorld.set_classes` drops the predictor.** Changing the vocabulary sets
   `self.predictor = None`, so the *next* `predict` rebuilds it and costs ~108 ms more
   than a steady detect (measured; a bare `predictor = None` costs the same). The text

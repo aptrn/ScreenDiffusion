@@ -46,7 +46,7 @@ from bench.primitive_runner import (
     read_clip,
     resize,
     resized_panel,
-    set_denoise,
+    set_denoise_ladder,
     sha256_of,
     triptych,
     write_clip,
@@ -60,9 +60,8 @@ from bench.runner import (
     cooldown_gate,
     occupancy_gate,
 )
-from bench.scenarios import SCENARIOS
 from bench.selective import (
-    ENGINE_SCENARIO,
+    engine_scenario_for,
     SELECTIVE_README_NAME,
     SELECTIVE_README_PREAMBLE,
     RegionSummary,
@@ -257,16 +256,17 @@ def run_selective(
     log(f"clip: {case.clip} {meta['width']}x{meta['height']} -> {canvas}x{canvas}, "
         f"{len(frames)} frames from {case.start_frame}")
 
-    scenario = SCENARIOS[ENGINE_SCENARIO]
+    scenario = engine_scenario_for(case)
     log(f"building {scenario.name}")
     stream = build_stream(scenario.replace(prompt=plan.effective_prompt),
                           engines_root=engines_root)
     t_index = t_index_for_denoise(plan.effective_denoise)
-    timestep, strength = set_denoise(stream, t_index)
+    # The whole ladder, which at the shipped one step is the single rung every
+    # committed baseline was measured at (issue #38).
+    ladder = set_denoise_ladder(stream, t_index, scenario.steps)
     log(f"plan: {concepts} / {plan.honoured_target.region} / denoise "
-        f"{plan.effective_denoise} -> t_index {t_index} (timestep {timestep}, "
-        f"strength {strength:.3f}), seed {plan.effective_seed_policy}, "
-        f"output_ema {plan.settings.output_ema}")
+        f"{plan.effective_denoise} -> t_index {ladder}, seed "
+        f"{plan.effective_seed_policy}, output_ema {plan.settings.output_ema}")
 
     models_root = resolve_models_dir() if models_dir is None else Path(models_dir)
     live = open_detector(models_root, concepts, log)
@@ -381,7 +381,7 @@ def run_selective(
     with_detection = round(render_latency.mean_ms + amortised, 4)
     run = SelectiveRunMetrics(
         started_utc=started_utc, finished_utc=finished_utc,
-        warmup_frames=case.warmup_frames, engine_scenario=ENGINE_SCENARIO,
+        warmup_frames=case.warmup_frames, engine_scenario=scenario.name,
         detector=None if detection is None else PRIMARY_DETECTOR,
         frames=len(frames), diffusion_calls=diffusion_calls,
         render=render_latency, composite=blend_latency, detect=detect_latency,
