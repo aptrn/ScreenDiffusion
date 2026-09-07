@@ -33,7 +33,14 @@ from bench.paths import (
     RESULTS_DIR,
     SELECTIVE_RESULTS_DIR,
     SELECTIVE_RESULTS_SUBDIR,
+    SWAP_RESULTS_SUBDIR,
     resolve_engines_dir,
+)
+from bench.plan_swap import (
+    CASES as SWAP_CASES,
+    SwapCase,
+    format_swap_report,
+    load_swap_results,
 )
 from bench.portability import format_portability_report
 from bench.primitive_results import format_primitive_report, load_primitive_results
@@ -55,10 +62,11 @@ ENGINE_DIR_TEMPLATE = ("{model}--lcm_lora-{lcm}--tiny_vae-{tiny}--max_batch-{bat
                        "--min_batch-{batch}--res-{width}x{height}--lora-none--mode-{mode}")
 
 # What the one positional slot can name: a diffusion scenario, a detector, a
-# rendering-primitive case (issue #5) or an end-to-end selective render (issue #8).
-# One slot for all four - a run measures one thing, the names cannot collide, and
-# someone holding a name should not have to know which flag it belongs behind.
-Target = Union[ScenarioConfig, DetectorConfig, CaseConfig, SelectiveCase]
+# rendering-primitive case (issue #5), an end-to-end selective render (issue #8) or
+# a plan swap (issue #30). One slot for all five - a run measures one thing, the
+# names cannot collide, and someone holding a name should not have to know which
+# flag it belongs behind.
+Target = Union[ScenarioConfig, DetectorConfig, CaseConfig, SelectiveCase, SwapCase]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -70,11 +78,11 @@ def build_parser() -> argparse.ArgumentParser:
                "happen, there is no record.",
     )
     parser.add_argument("scenario", nargs="?",
-                        help="scenario, detector, primitive-case or selective-case "
-                             "name; --list shows them all")
+                        help="scenario, detector, primitive-case, selective-case or "
+                             "swap-case name; --list shows them all")
     parser.add_argument("--list", action="store_true",
-                        help="list the scenarios, detectors, primitive cases and "
-                             "selective cases, and exit")
+                        help="list the scenarios, detectors, primitive cases, "
+                             "selective cases and swap cases, and exit")
     parser.add_argument("--marginal", action="store_true",
                         help="report the marginal cost per additional batch item from "
                              "the committed results, and exit")
@@ -90,6 +98,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--portability-report", action="store_true",
                         help="report the dev-vs-deploy block spec 7.4 carries, from "
                              "the committed selective runs on each GPU, and exit")
+    parser.add_argument("--swap-report", action="store_true",
+                        help="report the plan-swap block spec 8.9 carries - "
+                             "acceptance criteria 1 and 3 - from the committed "
+                             "swaps, and exit")
     parser.add_argument("--cadence-report", action="store_true",
                         help="report the detect_every_n sweep spec 8.8 carries, from "
                              "the committed arms, and exit")
@@ -189,6 +201,19 @@ def _selective_case(case: SelectiveCase, args: argparse.Namespace) -> SelectiveC
     return case
 
 
+def _swap_case(case: SwapCase, args: argparse.Namespace) -> SwapCase:
+    """One swap case with its overrides applied.
+
+    `--frames` is a development shortcut, and it moves the swap with it: a run
+    shorter than `swap_frame` would submit the new instruction after the last
+    frame and measure nothing at all.
+    """
+    if not args.frames:
+        return case
+    return case.replace(frames=args.frames,
+                        swap_frame=min(case.swap_frame, args.frames // 2))
+
+
 def resolve_target(args: argparse.Namespace) -> Tuple[str, Target]:
     """The scenario, detector or case `args.scenario` names, with overrides applied.
 
@@ -214,6 +239,8 @@ def resolve_target(args: argparse.Namespace) -> Tuple[str, Target]:
         return "primitive", (case.replace(frames=args.frames) if args.frames else case)
     if args.scenario in SELECTIVE_CASES:
         return "selective", _selective_case(SELECTIVE_CASES[args.scenario], args)
+    if args.scenario in SWAP_CASES:
+        return "swap", _swap_case(SWAP_CASES[args.scenario], args)
     raise SystemExit(
         f"bench: unknown scenario, detector or case {args.scenario!r}. "
         f"Run `python -m bench --list`."
@@ -345,6 +372,16 @@ def report_portability(results_dir: Path, out: TextIO = sys.stdout) -> None:
     out.write(format_portability_report(load_selective_results(results_dir)) + "\n")
 
 
+def report_swap(results_dir: Path, out: TextIO = sys.stdout) -> None:
+    """The plan-swap block spec 8.9 carries (issue #30).
+
+    Acceptance criteria 1 and 3, from the committed swaps: how long a typed
+    instruction takes to reach the screen, and what swapping it cost the output
+    stream and the engine.
+    """
+    out.write(format_swap_report(load_swap_results(results_dir)) + "\n")
+
+
 def report_cadence(results_dir: Path, out: TextIO = sys.stdout,
                    baseline_dir: Path = SELECTIVE_RESULTS_DIR) -> None:
     """The `detect_every_n` sweep block spec 8.8 carries (issue #23).
@@ -376,6 +413,10 @@ def list_targets(out: TextIO = sys.stdout) -> None:
         out.write(f"{name}\tselective case\t{case.clip}"
                   f"\t{case.canvas}x{case.canvas} canvas\t{case.frames} frames"
                   f"\tthe shipped path end to end\n")
+    for name, case in SWAP_CASES.items():
+        out.write(f"{name}\tswap case\t{case.clip}\t{case.before.target} -> "
+                  f"{case.after.target}\t{case.frames} frames, swap on "
+                  f"{case.swap_frame}\tacceptance criteria 1 and 3\n")
 
 
 def run_detector_target(args: argparse.Namespace, config: DetectorConfig) -> int:
@@ -468,6 +509,29 @@ def run_selective_target(args: argparse.Namespace, case: SelectiveCase) -> int:
     return 0
 
 
+def run_swap_target(args: argparse.Namespace, case: SwapCase) -> int:
+    """Swap one instruction for another mid-clip (issue #30). Imported late.
+
+    Rendered through the same cached engine every other case is, so it passes the
+    same engine-build guard - and the record lands in `bench/results/swaps/`,
+    because the selective reports read every JSON beside them as a selective run.
+    """
+    from bench.selective import ENGINE_SCENARIO
+    from bench.plan_swap_runner import run_swap
+
+    engine_build_guard(SCENARIOS[ENGINE_SCENARIO], allow_build=args.allow_engine_build)
+    run_swap(
+        case,
+        cooldown=args.cooldown,
+        results_dir=args.results_dir / SWAP_RESULTS_SUBDIR,
+        threshold_c=args.cooldown_threshold,
+        cap_s=args.cooldown_cap,
+        poll_interval_s=args.cooldown_poll,
+        write_clips=args.write_clips,
+    )
+    return 0
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -490,6 +554,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.portability_report:
         report_portability(args.results_dir / SELECTIVE_RESULTS_SUBDIR)
         return 0
+    if args.swap_report:
+        report_swap(args.results_dir / SWAP_RESULTS_SUBDIR)
+        return 0
     if args.cadence_report:
         report_cadence(args.results_dir / CADENCE_RESULTS_SUBDIR,
                        baseline_dir=args.results_dir / SELECTIVE_RESULTS_SUBDIR)
@@ -508,6 +575,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return run_primitive_target(args, target)
     if kind == "selective":
         return run_selective_target(args, target)
+    if kind == "swap":
+        return run_swap_target(args, target)
 
     scenario = target
     disk = engine_build_guard(scenario, allow_build=args.allow_engine_build)
