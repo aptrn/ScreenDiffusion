@@ -218,8 +218,11 @@ background nothing — which is what makes "bit-identical outside the regions"
 literally true and measurable (§8.8). Overlapping regions take the stronger
 alpha; the blend is written as `source + (rendered - source) * alpha`, whose two
 endpoints are exact in floating point; and only the bounding rectangle of the
-non-zero alpha is written at all. Colour matching and the temporal EMA are not
-built — they are M2 levers (§8.5).
+non-zero alpha is written at all. The temporal EMA **is** built (issue #32): it
+smooths the rendered canvas *before* the mask, so history reaches only the pixels
+the mask lets through and the criterion above survives it unchanged. It is a plan
+field, `global.output_ema`, and it defaults to 0.0 — §8.5 measured what it costs.
+Colour matching is still unbuilt.
 
 **And on the device** (issue #31): `device_compositor.DeviceCompositor` **is** a
 `Compositor` — the actions, the feather, the alpha cache and the numpy blend are
@@ -260,13 +263,13 @@ away from the code.
       "prompt": "",                 // the style for this target
       "negative_prompt": "",
       "denoise": 0.45,              // 0.0-1.0; carried, and applied by the render path
-      "seed_policy": "per_track",   // "per_track" | "fixed" | "random"
+      "seed_policy": "fixed",       // "per_track" | "fixed" | "random" (spec 8.5)
       "max_instances": 6,           // 1-16
       "priority": 1                 // 0-99, an ordering key between targets
     }
   ],
   "background": { "action": "passthrough", "prompt": "" },   // or "stylize"
-  "global": { "fps_target": 30, "detect_every_n": 5 },
+  "global": { "fps_target": 30, "detect_every_n": 5, "output_ema": 0.0 },   // 0.0-0.9, spec 8.5
   "confidence": 1.0,
   "notes": ""
 }
@@ -1058,14 +1061,114 @@ on the frame path.
 **Leaning:** CPU-side small model first (simplest, zero VRAM contention),
 revisit if the latency annoys.
 
-### 8.5 Temporal stability
+### 8.5 Temporal stability — **measured**
 
-The known failure mode of per-frame diffusion is boiling/flicker. Levers:
-per-track fixed seed, prompt-embedding caching per track, latent reuse across
-frames, output EMA in the compositor, box smoothing in the tracker. Needs a
-**quantitative flicker metric** (e.g. mean absolute difference between
-consecutive outputs in static regions) so we can tell whether a change helped
-rather than arguing about it.
+The known failure mode of per-frame diffusion is boiling/flicker. Five levers were
+named here: per-track fixed seed, prompt-embedding caching per track, latent reuse
+across frames, output EMA in the compositor, box smoothing in the tracker. Two were
+built by earlier issues — box smoothing in `detection.Tracker`, and the feathered
+composite that keeps a moving seam from becoming one — and this section asked for a
+**quantitative flicker metric** so that a change could be judged rather than argued
+about. The metric has existed since issue #5 (`bench.flicker`). Issue #32 built the
+two remaining levers, wired both to plan fields, and used the metric on them.
+
+**What `per_track` can mean, and what it cannot.** Stated first, because it is a
+finding rather than an implementation note. Issue #5 chose the full-frame masked
+primitive: one diffusion call per frame, and therefore one latent noise field
+covering all K regions. So a per-track *strength*, *prompt* or *sampler* is not
+expressible without a second call, and no amount of seeding makes it so. What *is*
+expressible is one field composed of per-track patches — each track owns a
+canvas-sized noise realisation drawn from its own id, and the frame pastes that
+realisation, rolled to the track's current centre, into the region the compositor
+is about to paint. That is `seeding.NoiseField`, and it is the whole of what the
+name can mean here.
+
+**And the shipped path was already `fixed`.** `StreamDiffusion.prepare()` draws
+`init_noise` once from a seeded generator and `encode_image` adds it to every
+frame's latent thereafter; with one denoising step nothing overwrites it. So the
+noise this app renders on is already fixed and canvas-pinned, and `fixed` names
+what it has always done rather than a new setting — which is why it is
+`DEFAULT_SEED_POLICY`, and why the previous default of `per_track` was a field
+nothing read describing behaviour nothing produced. `random` — a fresh field every
+frame — does not ship and is here as the control: if the metric cannot tell it from
+`fixed`, the metric is not measuring noise.
+
+The sweep is generated from the committed records; re-run an arm and the merge gate
+fails until 8.5 is regenerated with `uv run python -m bench --stability-report`.
+
+<!-- BEGIN STABILITY SWEEP -->
+The shipped path's committed runs measure flicker at 1.49 (spec 8.8); this sweep's control arm - `seed_policy: fixed`, `output_ema: 0.00` - measures 1.49, which is the same figure, so the control is measuring the shipped path.
+
+`seed_policy` swept over fixed, per_track, random and `global.output_ema` over 0.00, 0.25, 0.50, 0.75 on NVIDIA GeForce RTX 4090, through the shipped selective path: the same img2img-tensorrt-512x512-b1 engine, the same 48 frames of `people.mp4` at the app's 512x512 capture canvas, the same `person / lower_half / t_index 40` plan and the same detector cadence. `flicker` is the mean absolute difference between consecutive outputs where the source stood still and the mask painted both frames - lower is steadier; `response` is the same figure where the source *moved* - higher is more responsive; `net change` is how much the regions changed against the capture, net of the capture's own round trip, and an arm under 8 is disqualified.
+
+| seed policy | output EMA | flicker | vs shipped | response | net change | regions/frame | ms/frame | +detect | background |
+|---|---|---|---|---|---|---|---|---|---|
+| fixed | 0.00 | 1.49 | control | 4.76 | 11.8 | 5.04 | 16.90 | 24.25 | identical |
+| fixed | 0.25 | 1.28 | -0.21 | 4.16 | 11.7 | 5.04 | 16.94 | 24.21 | identical |
+| fixed | 0.50 | 0.88 | -0.60 | 3.46 | 11.7 | 5.04 | 16.67 | 23.59 | identical |
+| fixed | 0.75 | 0.63 | -0.86 | 2.58 | 11.9 | 5.04 | 16.92 | 23.90 | identical |
+| per_track | 0.00 | 1.74 | +0.26 | 5.38 | 11.7 | 5.04 | 17.46 | 24.27 | identical |
+| random | 0.00 | 8.72 | +7.24 | 19.38 | 11.9 | 5.04 | 16.97 | 23.89 | identical |
+
+**Recommended: `seed_policy: fixed`, `output_ema: 0.00` on NVIDIA GeForce RTX 4090 - the shipped default. Every arm that lowered flicker did it by low-passing the output: the closest, `seed_policy: fixed` / `output_ema: 0.25`, took flicker 1.49 -> 1.28 and the response to motion 4.76 -> 4.16, keeping 87% of it against the 90% a recommendation has to keep. So neither lever pays for itself here.**
+
+Nothing was traded, because nothing was adopted. That is the answer this section asked for rather than a gap in it: the levers are built, they are wired to plan fields, and the measurement says what they cost.
+
+Each arm was measured at least twice and two runs of one never differed in flicker by more than 0.00035 - unlike a millisecond, a flicker figure here carries essentially no run-to-run noise, because the render is deterministic given the clip, the plan and the seed. So the differences between arms are the arms.
+
+Manual verification artefact at the recommended setting: `selective-people-fixed-ema00-20260907-133259Z-comparison.mp4` (source | selective render) and `selective-people-fixed-ema00-20260907-133259Z-comparison.jpg`.
+
+What the metric's upper bound looks like: `selective-people-random-ema00-20260907-133330Z-comparison.mp4` is the `random` arm, a fresh noise field every frame.
+
+Every arm above left the background bit-identical to the capture, and every one changed the region by 11.7-11.9/255 net of the control against a 8/255 threshold - so no arm bought its steadiness by rendering less, and the trade the table shows is the whole trade.
+<!-- END STABILITY SWEEP -->
+
+Four things the block does not say for itself.
+
+**The control works, and the metric is measuring noise.** `random` scores 8.72
+against `fixed`'s 1.49 on the same clip, the same plan and the same engine — nearly
+6×. A metric that could not separate a redrawn noise field from a reused one would
+have had nothing to say about either lever, and every number above would have been
+a number about something else.
+
+**`per_track` makes flicker *worse*, and the geometry says why.** 1.74 against
+1.49, +0.26 — outside a run-to-run spread of 0.0004. Flicker is measured where the
+*source* stood still, and a canvas-pinned field already gives a static pixel the
+same noise on every frame; pinning the field to a track instead makes the noise
+translate, so the static background *inside* a moving person's box now boils where
+it did not before. The lever does exactly what its name says and the name was
+aimed at the wrong thing: under one noise field per frame, "per-track" and "steady
+where nothing moved" are opposed rather than aligned. It is built, it is a plan
+field, and it is measured — and it is not the default.
+
+**The EMA works and is priced fairly.** Flicker falls monotonically with the
+coefficient (1.49 → 1.28 → 0.88 → 0.63) and so does the output's response to the
+source's own motion (4.76 → 4.16 → 3.46 → 2.58). Nothing is bought free: at 0.25
+it takes 14% off the boiling and 13% off the response, and at 0.75 it takes 58%
+and 46%. And it is not cheating — the net change inside the regions is 11.7–11.9/255
+at *every* setting against an 8/255 threshold, so no arm lowered flicker by
+rendering less, which is the failure the visible-change control exists to catch.
+Background bit-identity is 48/48 at every setting too: the EMA smooths the
+*rendered canvas* before the mask, so history cannot reach a pixel the composite
+copies from the capture.
+
+**The reason to ship neither is the starting point, not the levers.** 1.49/255 is
+0.6% of range on a clip the whole pipeline was tuned on; the boiling this section
+was written to worry about is not what this path does at `t_index 40` on the
+priority case. Spending a seventh of the restyle's response to motion to remove
+something already near the floor is a bad trade, and that is the whole of the
+verdict. Both defaults therefore stay where the measurement found them —
+`seed_policy: fixed`, `output_ema: 0.0` — and the levers stay built, because the
+answer changes if the denoise, the clip or the primitive does: a stronger `denoise`
+boils more, and an EMA that is worth nothing at 1.49 may be worth something at 5.
+
+Two of the five levers are still unbuilt and were not measured: prompt-embedding
+caching per track and latent reuse across frames. Neither is expressible under one
+diffusion call per frame either — one embedding per frame is the same constraint
+that limits `per_track`, and latent reuse would make a frame a function of the
+previous *latent* rather than the previous output, which is the EMA one stage
+earlier and with bit-identity much harder to keep. Both want the primitive to
+change before they want an issue.
 
 ### 8.6 Does the LLM ever see the screen?
 
@@ -1167,7 +1270,11 @@ five host-composite runs stay in `bench/results/selective/` as the before.
 same measurement — this one renders detected boxes at the app's capture geometry,
 that one rendered a committed track at clip resolution — but they are the same
 order, so neither the tracker's box smoothing nor the feathered composite made the
-boiling worse. Per-track seed pinning and the output EMA (§8.5) are still unbuilt.
+boiling worse. Per-track seed pinning and the output EMA are now built and measured
+(§8.5), and neither is on: the EMA trades response to motion roughly one for one
+for steadiness, and per-track seeding makes flicker *worse* under a primitive with
+one noise field per frame. 1.49 is the floor this path renders at, not a figure
+waiting to be improved.
 
 **30 FPS is not this section's claim and is not a gate here.** This section asks
 whether the path works, and both rows say it does. What it costs is a fact about
@@ -1392,7 +1499,7 @@ trusting it.
 | Per-object diffusion can't hit 30 FPS at any useful K | kills the design        | Measure §7.2 **first**; fall back to option B / 7.3(d) |
 | TRT fixed batch forces rebuilds mid-stream        | multi-second stalls     | Fixed slot count 7.3(a) or dynamic profiles 7.3(c)     |
 | Small crops produce mush                          | unusable output quality | Minimum crop-size floor; skip objects below it         |
-| Flicker makes it unwatchable                      | unusable                | §8.5 — measure, don't eyeball                          |
+| Flicker makes it unwatchable                      | unusable                | §8.5 — measured: 1.49/255 on the priority case, against 8.72 for a redrawn noise field. Two levers built and neither needed |
 | LLM emits plausible-but-wrong plans               | user confusion          | Constrained decoding, validator, visible `notes`, manual override |
 | VRAM exhaustion (diffusion + detector + LLM)      | crash                   | CPU LLM; measure peak; hard budget                     |
 | Detector vocabulary too narrow                    | "it doesn't understand me" | Open-vocab detector, or an honest UI error listing what *is* supported |
@@ -1475,6 +1582,10 @@ cheaply — which is the point of ordering them this way.
    is cheaper than steady state on the frame path and costs ten frames of unstyled
    capture instead; §8.9 says why that is the half worth watching.
 4. Non-target pixels are bit-identical to the capture (verifiable).
+   **Held across the §8.5 levers (issue #32, 2026-09-07):** 48/48 frames at every
+   seed policy and every output EMA measured. The EMA smooths the *rendered canvas*
+   before the mask rather than the composited frame, so blending across frames
+   cannot reach a pixel the composite copies from the capture.
 5. An unsatisfiable instruction leaves the previous render running and shows a
    readable explanation.
 

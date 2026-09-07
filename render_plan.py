@@ -59,9 +59,17 @@ GLOBAL = "global"
 INVERSE = "inverse"
 MODES: Tuple[str, ...] = (SELECTIVE, GLOBAL, INVERSE)
 
+# How the engine's latent noise field is built (spec 8.5, issue #32). `fixed` is
+# the field StreamDiffusion draws once at `prepare()` and reuses for every frame -
+# which is what this app has always done, so it is the default rather than a new
+# setting; `per_track` pins a patch of that field to each track's identity and
+# moves it with the object; `random` redraws the whole field every frame, which is
+# the boiling upper bound and the control that says the flicker metric can move.
 PER_TRACK = "per_track"
-SEED_POLICIES: Tuple[str, ...] = (PER_TRACK, "fixed", "random")
-DEFAULT_SEED_POLICY = PER_TRACK
+FIXED = "fixed"
+RANDOM = "random"
+SEED_POLICIES: Tuple[str, ...] = (PER_TRACK, FIXED, RANDOM)
+DEFAULT_SEED_POLICY = FIXED
 
 PASSTHROUGH = "passthrough"
 STYLIZE = "stylize"
@@ -104,6 +112,15 @@ DEFAULT_FPS_TARGET = 30  # spec 7.1
 # whole second on its own.
 DETECT_EVERY_N_RANGE: Tuple[int, int] = (1, 30)
 DEFAULT_DETECT_EVERY_N = 5
+
+# How much of the previous rendered canvas the next one keeps - the output EMA
+# (spec 8.5, issue #32). 0.0 is off, which is what every measured run before that
+# issue was measured at. The ceiling stops short of 1.0 because at 1.0 the output
+# is the first rendered frame for ever: a frozen frame is not a steadier one, and
+# a value that turns the render off is not a stability setting. 0.9 is already a
+# ~10-frame time constant, a third of a second at 30 FPS.
+OUTPUT_EMA_RANGE: Tuple[float, float] = (0.0, 0.9)
+DEFAULT_OUTPUT_EMA = 0.0
 
 CONFIDENCE_RANGE: Tuple[float, float] = (0.0, 1.0)
 # The compiler that would have reported less than full confidence is cut from v1, so
@@ -307,6 +324,7 @@ class GlobalSettings:
 
     fps_target: int = DEFAULT_FPS_TARGET
     detect_every_n: int = DEFAULT_DETECT_EVERY_N
+    output_ema: float = DEFAULT_OUTPUT_EMA
 
     def to_dict(self) -> Dict[str, Any]:
         return dataclasses.asdict(self)
@@ -363,6 +381,24 @@ class RenderPlan:
     def effective_denoise(self) -> float:
         target = self.honoured_target
         return DEFAULT_DENOISE if target is None else target.denoise
+
+    @property
+    def effective_seed_policy(self) -> str:
+        """The one seed policy the engine's noise field is built under.
+
+        The honoured target's, for the reason the prompt and the denoise are its:
+        the full-frame masked primitive draws **one** latent noise field per frame
+        covering every region, so a plan carrying two policies can only be rendered
+        under one of them. What `per_track` can still mean under that constraint -
+        a field composed of per-track patches rather than a field per track - is
+        `seeding.py`, and spec 8.5 says what it cannot mean.
+
+        With no target there is nothing selective to render, so the field the
+        engine was prepared with stands: that is `fixed`, and it is what this app
+        has always done.
+        """
+        target = self.honoured_target
+        return FIXED if target is None else target.seed_policy
 
     def to_dict(self) -> Dict[str, Any]:
         """The wire form: exactly what `validate_plan` accepts back."""
@@ -578,6 +614,8 @@ def _settings(raw: Any, notes: List[str]) -> GlobalSettings:
         detect_every_n=_number(raw.get("detect_every_n"), "detect_every_n",
                                *DETECT_EVERY_N_RANGE, DEFAULT_DETECT_EVERY_N, notes,
                                as_int=True),
+        output_ema=_number(raw.get("output_ema"), "output_ema", *OUTPUT_EMA_RANGE,
+                           DEFAULT_OUTPUT_EMA, notes),
     )
 
 

@@ -38,6 +38,7 @@ from bench.paths import (
     RESULTS_DIR,
     SELECTIVE_RESULTS_DIR,
     SELECTIVE_RESULTS_SUBDIR,
+    STABILITY_RESULTS_SUBDIR,
     SWAP_RESULTS_SUBDIR,
     resolve_engines_dir,
 )
@@ -54,11 +55,16 @@ from bench.scenarios import SCENARIOS, ScenarioConfig
 from bench.selective import (
     CASES as SELECTIVE_CASES,
     SelectiveCase,
+    ema_suffix,
     format_selective_report,
     load_selective_results,
     readme_preamble,
     results_subdir,
 )
+from bench.stability import format_stability_report
+# The shipped vocabulary, so `--seed-policy` cannot drift from what a plan accepts.
+# Stdlib, like every other import here: the CLI has to stay loadable without CUDA.
+from render_plan import SEED_POLICIES
 
 # The directory name `create_prefix()` in wrapper.py builds for a UNet engine, with
 # `--lora-none` because no scenario fuses a LoRA. Mirrored here so the guard can
@@ -110,6 +116,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cadence-report", action="store_true",
                         help="report the detect_every_n sweep spec 8.8 carries, from "
                              "the committed arms, and exit")
+    parser.add_argument("--stability-report", action="store_true",
+                        help="report the temporal-stability sweep spec 8.5 carries - "
+                             "per-track seeds and the output EMA - from the "
+                             "committed arms, and exit")
     parser.add_argument("--reps", type=int, help="timed reps (default: the scenario's)")
     parser.add_argument("--warmup", type=int, dest="warmup_reps",
                         help="warmup reps before timing (default: the scenario's)")
@@ -168,12 +178,21 @@ def build_parser() -> argparse.ArgumentParser:
                                 "development only")
     primitive.set_defaults(write_clips=True)
 
-    selective = parser.add_argument_group("selective render path (issues #8, #23)")
+    selective = parser.add_argument_group("selective render path (issues #8, #23, #32)")
     selective.add_argument("--detect-every-n", type=int, metavar="N",
                            help="run this selective case at one detector cadence "
                                 "instead of the plan's, as one arm of the sweep. "
                                 "The arm is named `<case>-nN` and is written under "
                                 "bench/results/cadence/, never beside the baselines")
+    selective.add_argument("--seed-policy", choices=SEED_POLICIES, metavar="POLICY",
+                           help="run this selective case under one seed policy "
+                                f"({', '.join(SEED_POLICIES)}) instead of the "
+                                "plan's, as one arm of the temporal-stability "
+                                "sweep, under bench/results/stability/")
+    selective.add_argument("--output-ema", type=float, metavar="E",
+                           help="run this selective case with the compositor's "
+                                "output EMA at E (0.0-0.9) instead of the plan's, "
+                                "as one arm of the same sweep")
 
     parser.add_argument("--allow-engine-build", action="store_true",
                         help="permit compiling a TensorRT engine that is not cached "
@@ -196,16 +215,22 @@ def _rep_overrides(args: argparse.Namespace) -> dict:
 def _selective_case(case: SelectiveCase, args: argparse.Namespace) -> SelectiveCase:
     """One selective case with its overrides applied.
 
-    A cadence override renames the arm after the cadence it ran at, so a filename
-    on disk says what it measured and two arms cannot overwrite each other's
-    record. The name carries what was *asked* for; `plan.detect_every_n` in the
-    record carries what the validator allowed, and those can differ by a clamp.
+    An override renames the arm after the setting it ran at, so a filename on disk
+    says what it measured and two arms cannot overwrite each other's record. The
+    name carries what was *asked* for; the record's `plan` block carries what the
+    validator allowed, and those can differ by a clamp.
     """
     if args.frames:
         case = case.replace(frames=args.frames)
     if args.detect_every_n is not None:
         case = case.replace(name=f"{case.name}-n{args.detect_every_n}",
                             detect_every_n=args.detect_every_n)
+    if args.seed_policy is not None:
+        case = case.replace(name=f"{case.name}-{args.seed_policy}",
+                            seed_policy=args.seed_policy)
+    if args.output_ema is not None:
+        case = case.replace(name=f"{case.name}-{ema_suffix(args.output_ema)}",
+                            output_ema=args.output_ema)
     return case
 
 
@@ -436,6 +461,19 @@ def report_cadence(results_dir: Path, out: TextIO = sys.stdout,
               + "\n")
 
 
+def report_stability(results_dir: Path, out: TextIO = sys.stdout,
+                     baseline_dir: Path = SELECTIVE_RESULTS_DIR) -> None:
+    """The temporal-stability block spec 8.5 carries (issue #32).
+
+    Two directories, like the cadence report and for the same reason: `results_dir`
+    holds the swept arms and `baseline_dir` holds the shipped path's own runs, and
+    the block is about the distance between them.
+    """
+    out.write(format_stability_report(load_selective_results(results_dir),
+                                      baseline=load_selective_results(baseline_dir))
+              + "\n")
+
+
 def list_targets(out: TextIO = sys.stdout) -> None:
     """Every registry, one name per line - whatever the positional slot accepts."""
     for name, scenario in SCENARIOS.items():
@@ -600,6 +638,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.cadence_report:
         report_cadence(args.results_dir / CADENCE_RESULTS_SUBDIR,
                        baseline_dir=args.results_dir / SELECTIVE_RESULTS_SUBDIR)
+        return 0
+    if args.stability_report:
+        report_stability(args.results_dir / STABILITY_RESULTS_SUBDIR,
+                         baseline_dir=args.results_dir / SELECTIVE_RESULTS_SUBDIR)
         return 0
     if not args.scenario:
         parser.print_usage()
