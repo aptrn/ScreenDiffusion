@@ -49,6 +49,7 @@ from bench.results import (
     load_records,
     measured_on,
     require_recordable,
+    table_row,
     table_separator,
     timestamp_from,
     write_record,
@@ -294,8 +295,6 @@ def append_style_readme_rows(result: StyleResult, readme_path: Path,
 
 def _readme_row(result: StyleResult, arm: StyleArm,
                 verdict: Optional[StyleVerdict], filename: str) -> str:
-    from bench.results import table_row
-
     return table_row([
         result.finished_utc,
         result.case.name,
@@ -321,7 +320,8 @@ class DeliveryRecommendation:
 
     Computed from the committed step arms rather than argued: the same style LoRA
     is measured with an engine and without one, and the difference between those
-    two milliseconds figures is what the ~5 GB and the 15-25 minutes buy.
+    two milliseconds figures is what a build (`engine_cache.ENGINE_BUILD_SIZE`,
+    `ENGINE_BUILD_TIME`) buys.
     """
 
     style: str
@@ -340,8 +340,8 @@ def _styled_arm(records: Mapping[str, dict], acceleration: str,
     Reduced first, like every other reader of a results directory: two runs of one
     configuration are two honest records and a table wants the later one.
     """
-    records = latest_per(records, lambda record: record["scenario"]["name"])
-    for record in records.values():
+    newest = latest_per(records, lambda record: record["scenario"]["name"])
+    for record in newest.values():
         scenario = record["scenario"]
         if (scenario["acceleration"] == acceleration
                 and scenario.get("style_lora") == style):
@@ -368,14 +368,19 @@ def delivery_recommendation(step_records: Mapping[str, dict],
         return None
     tensorrt_ms = float(engine["run"]["mean_ms_per_frame"])
     torch_ms = float(torch_path["run"]["mean_ms_per_frame"])
-    fits = ("both paths fit the frame budget" if max(tensorrt_ms, torch_ms) <= budget_ms
-            else ("only the pre-built engine fits the frame budget"
-                  if tensorrt_ms <= budget_ms < torch_ms
-                  else "neither path fits the frame budget on the diffusion call "
-                       "alone"))
-    verdict = ("**Ship a small fixed set of pre-built engines, one per style.** "
-               if tensorrt_ms <= budget_ms
-               else "**Neither path ships a real-time style at this step count.** ")
+    if max(tensorrt_ms, torch_ms) <= budget_ms:
+        fits = "both paths fit the frame budget"
+    elif tensorrt_ms <= budget_ms < torch_ms:
+        fits = "only the pre-built engine fits the frame budget"
+    else:
+        fits = "neither path fits the frame budget on the diffusion call alone"
+    # The engine path is the one a release could ship, so it is the one the
+    # recommendation turns on: a style nothing can render in budget is not a
+    # delivery question yet.
+    if tensorrt_ms <= budget_ms:
+        verdict = "**Ship a small fixed set of pre-built engines, one per style.** "
+    else:
+        verdict = "**Neither path ships a real-time style at this step count.** "
     return DeliveryRecommendation(
         style=style, tensorrt_ms=round(tensorrt_ms, 4), torch_ms=round(torch_ms, 4),
         statement=(

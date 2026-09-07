@@ -27,7 +27,9 @@ GPU-free, like every other `bench.*` results module: the record is a plain
 from __future__ import annotations
 
 import re
-from typing import Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import (
+    TYPE_CHECKING, Dict, List, Mapping, Optional, Sequence, Tuple,
+)
 
 from bench.results import (
     BYTES_PER_MIB,
@@ -43,6 +45,9 @@ from bench.results import (
 )
 from bench.scenarios import ScenarioConfig
 
+if TYPE_CHECKING:  # `bench.models` reaches this module back through the reports
+    from bench.models import BaseModel
+
 # The three the issue names. One is the control, two says whether the second step
 # is cheaper than the first, four is what SD 1.5 + LCM-LoRA actually needs.
 STEPS_SWEPT: Tuple[int, ...] = (1, 2, 4)
@@ -52,6 +57,9 @@ STEPS_SWEPT: Tuple[int, ...] = (1, 2, 4)
 # down so the report can say whether the measurement agreed with it, which is what
 # "replacing the estimate" means.
 ESTIMATED_FOUR_STEP_FACTOR = 3.4
+# The count that factor was estimated for, so the arm the report checks it against
+# is chosen by the same number rather than by a 4 written out again.
+ESTIMATED_STEPS = 4
 
 # The one step every committed figure in this repo was measured at.
 CONTROL_STEPS = 1
@@ -174,6 +182,18 @@ def in_configuration(arms: Sequence[dict],
     return [arm for arm in arms if configuration_of(arm) == configuration]
 
 
+def bare_arm(arms: Sequence[dict], model: str, steps: int) -> Optional[dict]:
+    """The arm of `model` at `steps` with no style LoRA fused, if it was measured.
+
+    Bare on purpose: a fused style LoRA is compiled into the UNet weights and so is
+    a different engine, and reading one as a model's own arm would price the LoRA
+    as the model.
+    """
+    return next((arm for arm in arms
+                 if model_of(arm) == model and steps_of(arm) == steps
+                 and style_of(arm) == NO_STYLE), None)
+
+
 def factor_over_control(result: Mapping,
                         control: Optional[Mapping]) -> Optional[float]:
     """How many times the one-step call this arm cost."""
@@ -197,7 +217,7 @@ def _row(result: dict, column: GpuColumn, models: OptionalColumn,
     scenario, run = result["scenario"], result["run"]
     share = module_share(result, "unet")
     factor = factor_over_control(result, control)
-    cells = styles.cells(models.cells([
+    cells = [
         str(steps_of(result)),
         scenario["acceleration"],
         ",".join(str(index) for index in scenario["t_index_list"]),
@@ -211,7 +231,11 @@ def _row(result: dict, column: GpuColumn, models: OptionalColumn,
         format_number(run["mean_sm_clock_mhz"], 0),
         result["cooldown"]["outcome"],
         normalised_cell(result),
-    ], result), result)
+    ]
+    # Model first, then style, then GPU - the order `format_steps_report` builds
+    # the heading in, because a row and its header have to agree about both.
+    cells = models.cells(cells, result)
+    cells = styles.cells(cells, result)
     return column.row(cells, result)
 
 
@@ -266,8 +290,9 @@ def _finding(arms: Sequence[dict], configuration: Configuration) -> List[str]:
                 f"({unet:.2f} ms against {base_unet:.2f}): `use_denoising_batch` "
                 f"puts the steps through the UNet as one batch of {steps}, and a "
                 f"batch of {steps} is not {steps} calls.")
-    four = next((arm for arm in arms if steps_of(arm) == 4), None)
-    factor = factor_over_control(four, control) if four is not None else None
+    estimated = next((arm for arm in arms if steps_of(arm) == ESTIMATED_STEPS), None)
+    factor = (None if estimated is None
+              else factor_over_control(estimated, control))
     if factor is not None:
         verdict = ("below it - the estimate was pessimistic"
                    if factor < ESTIMATED_FOUR_STEP_FACTOR else
@@ -291,22 +316,15 @@ def _model_comparison(arms: Sequence[dict], gpu: str,
     """
     from bench.models import BASE_MODELS, DEFAULT_BASE
 
-    def working(model: str, steps: int) -> Optional[dict]:
-        # Bare arms only: a fused style LoRA is a different engine, and comparing
-        # one against a bare arm of another model would price the LoRA as the model.
-        return next((arm for arm in arms
-                     if model_of(arm) == model and steps_of(arm) == steps
-                     and style_of(arm) == NO_STYLE), None)
-
     shipped = BASE_MODELS[DEFAULT_BASE]
-    baseline = working(shipped.model, shipped.steps)
+    baseline = bare_arm(arms, shipped.model, shipped.steps)
     if baseline is None:
         return None
     lines = []
     for base in BASE_MODELS.values():
         if base.key == DEFAULT_BASE:
             continue
-        arm = working(base.model, base.steps)
+        arm = bare_arm(arms, base.model, base.steps)
         if arm is None:
             continue
         sentence = (
@@ -327,7 +345,8 @@ def _model_comparison(arms: Sequence[dict], gpu: str,
     return f"**Base model, {machine}`{acceleration}`.** " + " ".join(lines)
 
 
-def _same_step_gap(arms: Sequence[dict], base, shipped) -> Optional[float]:
+def _same_step_gap(arms: Sequence[dict], base: "BaseModel",
+                   shipped: "BaseModel") -> Optional[float]:
     """How far apart the two models are at *one* step count, as a percentage.
 
     The control on the comparison above: it says whether the cost of the move is
@@ -335,13 +354,11 @@ def _same_step_gap(arms: Sequence[dict], base, shipped) -> Optional[float]:
     only one of the two was measured at that count - a gap of zero from a missing
     record is a finding invented rather than measured.
     """
-    at = {model: next((arm for arm in arms
-                       if model_of(arm) == model and steps_of(arm) == base.steps
-                       and style_of(arm) == NO_STYLE), None)
-          for model in (base.model, shipped.model)}
-    if not all(at.values()):
+    at_base = bare_arm(arms, base.model, base.steps)
+    at_shipped = bare_arm(arms, shipped.model, base.steps)
+    if at_base is None or at_shipped is None:
         return None
-    return (ms_per_call(at[base.model]) / ms_per_call(at[shipped.model]) - 1) * 100
+    return (ms_per_call(at_base) / ms_per_call(at_shipped) - 1) * 100
 
 
 def format_steps_report(results: Mapping[str, dict]) -> str:
@@ -357,7 +374,7 @@ def format_steps_report(results: Mapping[str, dict]) -> str:
     column = GpuColumn.for_gpus(gpus)
     models = OptionalColumn.when_varied(ordered, "model", model_of, index=1)
     styles = OptionalColumn.when_varied(ordered, "style LoRA", style_of, index=2)
-    header = column.header(styles.header(models.header(REPORT_HEADER)))
+    header = column.header(styles.header(models.header(REPORT_HEADER)))  # see _row
     sections = [
         _preamble(ordered, gpus),
         "\n".join([header, table_separator(header)]

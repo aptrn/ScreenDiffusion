@@ -94,23 +94,23 @@ def engine_scenario_for(case: "SelectiveCase"):
     count, so the arm differs from the baseline in the model and nothing else a
     reader has to go looking for.
     """
-    from bench.models import BASE_MODELS
+    # Late, and it has to be: `bench.models` reaches this module through
+    # `bench.portability`, so importing it at the top would be a cycle.
+    from bench.models import BASE_MODELS, DEFAULT_BASE
     from bench.scenarios import SCENARIOS, base_model_name
     from bench.steps import step_arm
 
-    from bench.models import DEFAULT_BASE
-
-    if case.base_model is None:
+    # No arm, or the shipped model, which is not a variant of itself: the
+    # registry's own cell is what every committed baseline was measured through,
+    # and naming it any other way would key an engine nothing has built. So
+    # `--base-model sd-turbo` is the same-session *control* on the comparison
+    # rather than a second configuration.
+    if case.base_model is None or case.base_model == DEFAULT_BASE:
         return SCENARIOS[ENGINE_SCENARIO]
     base = BASE_MODELS[case.base_model]
-    # The shipped model is not a variant of itself: the registry's own cell is what
-    # every committed baseline was measured through, and naming it any other way
-    # would key an engine nothing has built. So `--base-model sd-turbo` is the
-    # same-session *control* on the comparison rather than a second configuration.
-    if case.base_model == DEFAULT_BASE:
-        return SCENARIOS[ENGINE_SCENARIO]
     return step_arm(SCENARIOS[base_model_name("tensorrt", case.base_model)],
                     base.steps)
+
 
 # Mean absolute difference inside the rendered region, in 0-255 units, below which
 # the restyle is not visible. The threshold issue #5 selected its denoise by, used

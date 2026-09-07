@@ -65,9 +65,6 @@ CAPTURE_RESULTS_DIR = RESULTS_DIR / CAPTURE_RESULTS_SUBDIR
 STEPS_RESULTS_SUBDIR = "steps"
 STEPS_RESULTS_DIR = RESULTS_DIR / STEPS_RESULTS_SUBDIR
 
-# Style-LoRA runs (issue #38) are a record shape of their own - one row per fused
-# LoRA, with whether it loaded at all - so they get their own directory like every
-# other shape does.
 # A selective run on another base model (issue #38) is the selective record shape
 # again, swept on the model instead of the cadence - so it needs its own directory
 # for exactly the reason the cadence and stability arms do. `base-models` rather
@@ -78,6 +75,9 @@ STEPS_RESULTS_DIR = RESULTS_DIR / STEPS_RESULTS_SUBDIR
 MODEL_RESULTS_SUBDIR = "base-models"
 MODEL_RESULTS_DIR = RESULTS_DIR / MODEL_RESULTS_SUBDIR
 
+# Style-LoRA runs (issue #38) are a record shape of their own - one row per fused
+# LoRA, with whether it loaded at all - so they get their own directory like every
+# other shape does.
 STYLE_RESULTS_SUBDIR = "styles"
 STYLE_RESULTS_DIR = RESULTS_DIR / STYLE_RESULTS_SUBDIR
 

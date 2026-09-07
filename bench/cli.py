@@ -237,22 +237,21 @@ def build_parser() -> argparse.ArgumentParser:
                                 "output EMA at E (0.0-0.9) instead of the plan's, "
                                 "as one arm of the same sweep")
 
-    steps = parser.add_argument_group("base model and step count (issue #38)")
-    steps.add_argument("--steps", type=int, metavar="N",
+    model = parser.add_argument_group("base model and step count (issue #38)")
+    model.add_argument("--steps", type=int, metavar="N",
                        help="run this diffusion scenario at N denoising steps "
                             "instead of the registry's one, as one arm of the "
                             "step-count sweep. The arm is named `<scenario>-sN` "
                             "and is written under bench/results/steps/, never "
                             "beside the batch curve spec 7.2 quotes - including "
                             "at N=1, which is the sweep's own control")
-
-    steps.add_argument("--base-model", choices=sorted(BASE_MODELS), metavar="NAME",
+    model.add_argument("--base-model", choices=sorted(BASE_MODELS), metavar="NAME",
                        help="render this selective case through another base "
                             f"model ({', '.join(sorted(BASE_MODELS))}) at the "
                             "step count it needs. The arm is named "
                             "`<case>-<NAME>` and is written under "
                             "bench/results/base-models/, never beside the baselines")
-    steps.add_argument("--style-lora", choices=sorted(STYLE_LORAS), metavar="NAME",
+    model.add_argument("--style-lora", choices=sorted(STYLE_LORAS), metavar="NAME",
                        help="fuse this style LoRA into the arm "
                             f"({', '.join(sorted(STYLE_LORAS))}). Under "
                             "`tensorrt` that keys its own ~5 GB engine, which is "
@@ -588,7 +587,7 @@ def report_models(results_dir: Path, out: TextIO = sys.stdout) -> None:
 
 
 def report_styles(results_dir: Path, out: TextIO = sys.stdout,
-                  step_dir: Optional[Path] = None) -> None:
+                  step_dir: Path = STEPS_RESULTS_DIR) -> None:
     """The style-LoRA block spec 8.10 carries (issue #38).
 
     Two directories, like the cadence and stability reports: the arms say whether
@@ -596,9 +595,8 @@ def report_styles(results_dir: Path, out: TextIO = sys.stdout,
     that style costs with a TensorRT engine and without one - which is the
     delivery question step 4 asks and the arms themselves cannot answer.
     """
-    steps_dir = STEPS_RESULTS_DIR if step_dir is None else step_dir
     out.write(format_style_report(load_style_results(results_dir),
-                                  step_records=load_records(steps_dir)) + "\n")
+                                  step_records=load_records(step_dir)) + "\n")
 
 
 def report_stability(results_dir: Path, out: TextIO = sys.stdout,

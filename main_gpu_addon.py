@@ -606,12 +606,14 @@ def model_companions(path: _PathArg) -> ModelCompanions:
     The ladder is `render_plan.t_index_ladder`, so what the window builds and what
     a plan asks for are one schedule.
     """
+    opening = DEFAULT_T_INDEX_LIST[0]
     if not path or engine_cache.is_turbo_model(path):
-        return ModelCompanions(use_lcm_lora=False,
-                               t_index_list=list(DEFAULT_T_INDEX_LIST))
+        return ModelCompanions(
+            use_lcm_lora=False,
+            t_index_list=t_index_ladder(opening, MODEL_STEPS_TURBO))
     return ModelCompanions(
         use_lcm_lora=True,
-        t_index_list=t_index_ladder(DEFAULT_T_INDEX_LIST[0], MODEL_STEPS_SD15))
+        t_index_list=t_index_ladder(opening, MODEL_STEPS_SD15))
 
 
 # StreamDiffusion's three acceleration paths. `tensorrt` is the default because it
@@ -708,13 +710,17 @@ def engine_configuration(model_path: str, acceleration: str, use_lcm_lora: bool,
         enough_disk=free >= engine_cache.MIN_FREE_BYTES_FOR_ENGINE_BUILD)
 
 
+def _steps_phrase(steps: int, noun: str = "step") -> str:
+    """`1 step` / `4 steps`, so three messages cannot pluralise it three ways."""
+    return f"{steps} {noun}{'' if steps == 1 else 's'}"
+
+
 def _engine_missing_warning(configuration: EngineConfiguration) -> str:
     """What Start says before it spends the minutes, naming what made it different."""
     return (
         f"There is no compiled TensorRT engine for this configuration yet:\n\n"
         f"    {model_label(configuration.model_path) or configuration.model_path}, "
-        f"{configuration.steps} denoising step"
-        f"{'' if configuration.steps == 1 else 's'}, "
+        f"{_steps_phrase(configuration.steps, 'denoising step')}, "
         f"{DIFFUSION_CANVAS}x{DIFFUSION_CANVAS}\n"
         f"    {configuration.engine_dir}\n\n"
         f"Starting will build one first: about {ENGINE_BUILD_TIME}, and "
@@ -2828,16 +2834,13 @@ class StreamGUI(ctk.CTk):
         if configuration is None:
             self.engine_state_var.set("")
             return
+        model = model_label(configuration.model_path)
+        steps = _steps_phrase(configuration.steps)
         if configuration.cached:
-            self.engine_state_var.set(
-                f"Engine: cached for {model_label(configuration.model_path)} at "
-                f"{configuration.steps} step"
-                f"{'' if configuration.steps == 1 else 's'}.")
+            self.engine_state_var.set(f"Engine: cached for {model} at {steps}.")
         else:
             self.engine_state_var.set(
-                f"⚠  No engine yet for {model_label(configuration.model_path)} at "
-                f"{configuration.steps} step"
-                f"{'' if configuration.steps == 1 else 's'} - Start will build one "
+                f"⚠  No engine yet for {model} at {steps} - Start will build one "
                 f"({ENGINE_BUILD_TIME}, {ENGINE_BUILD_SIZE}).")
 
     def _engine_configuration(self) -> Optional[EngineConfiguration]:

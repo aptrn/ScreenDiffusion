@@ -173,17 +173,26 @@ def style_arm_name(scenario_name: str, style: str) -> str:
     return f"{scenario_name}-{style}"
 
 
+def _base_key_of(result: Mapping) -> str:
+    """The `BASE_MODELS` key this arm's case names, or the shipped model's."""
+    return str((result.get("case") or {}).get("base_model") or DEFAULT_BASE)
+
+
 def base_model_of(result: Mapping) -> str:
-    """Which base model a selective arm rendered through, off its own case."""
-    key = (result.get("case") or {}).get("base_model") or DEFAULT_BASE
-    base = BASE_MODELS.get(str(key))
-    return base.model if base is not None else str(key)
+    """Which base model a selective arm rendered through, off its own case.
+
+    A key the registry no longer carries is echoed back rather than resolved: an
+    old record still says what it was measured on, and inventing a name for it
+    would be worse than quoting its own.
+    """
+    key = _base_key_of(result)
+    base = BASE_MODELS.get(key)
+    return base.model if base is not None else key
 
 
 def steps_of(result: Mapping) -> int:
     """How many denoising steps that arm ran at - its base model's own count."""
-    key = (result.get("case") or {}).get("base_model") or DEFAULT_BASE
-    base = BASE_MODELS.get(str(key))
+    base = BASE_MODELS.get(_base_key_of(result))
     return base.steps if base is not None else 1
 
 
@@ -246,9 +255,10 @@ def format_model_report(results: Mapping[str, dict]) -> str:
     for gpu in gpus:
         for result in measured_on(ordered, gpu):
             verdict = criterion_verdict(result)
+            steps = steps_of(result)
             sections.append(
-                f"**`{base_model_of(result)}` at {steps_of(result)} step"
-                f"{'' if steps_of(result) == 1 else 's'}: 30 FPS "
+                f"**`{base_model_of(result)}` at {steps} step"
+                f"{'' if steps == 1 else 's'}: 30 FPS "
                 f"{'MET' if verdict.met else 'NOT MET'}.** "
                 f"{sentence_case(verdict.statement)}. "
                 f"Background: {result['gate']['background']['statement']}.")

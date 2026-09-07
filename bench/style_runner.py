@@ -193,11 +193,14 @@ def run_style(
             outputs, ms = render_arm(stream, tensors, ladder)
             renders.append(outputs)
             labels.append(label)
-            arms.append(_measured_arm(label, models_root, sources, outputs, ms,
-                                      control_change, renders[0]))
+            # `renders[0]` is the base arm - the first one rendered, and the one
+            # every later arm's `change_vs_base` is measured against.
+            arm = _measured_arm(label, models_root, sources, outputs, ms,
+                                control_change, renders[0])
+            arms.append(arm)
             log(f"arm {label}: {ms:.2f} ms/frame, "
-                f"{arms[-1].net_change:.2f}/255 net of control, "
-                f"{arms[-1].change_vs_base:.2f}/255 against the base arm")
+                f"{arm.net_change:.2f}/255 net of control, "
+                f"{arm.change_vs_base:.2f}/255 against the base arm")
             free(stream)
     finished_utc = utc_now()
 
