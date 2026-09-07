@@ -35,12 +35,17 @@ from bench.detectors import (
 from bench.fingerprint import Fingerprint
 from bench.results import (
     BYTES_PER_MIB,
+    GpuColumn,
     append_row,
+    distinct_gpus,
     format_number,
+    gpu_of,
     latest_per,
     load_records,
     normalised_cell,
     require_recordable,
+    table_row,
+    table_separator,
     timestamp_from,
     write_record,
 )
@@ -322,7 +327,7 @@ DETECTOR_README_HEADER = (
     " with diffusion (MiB) | vocab change (ms) | concepts resolved | cooldown |"
     " clock regime | ms/detect at basis clock | file |"
 )
-DETECTOR_README_SEPARATOR = "|" + "---|" * (DETECTOR_README_HEADER.count("|") - 1)
+DETECTOR_README_SEPARATOR = table_separator(DETECTOR_README_HEADER)
 DETECTOR_README_NAME = "README.md"
 
 DETECTOR_README_PREAMBLE = (
@@ -340,7 +345,7 @@ def _resolved_cell(result: dict) -> str:
 def detector_readme_row(result: dict, filename: str) -> str:
     detector, run, budget = result["detector"], result["run"], result["budget"]
     change = result["vocabulary_change"]
-    return "| " + " | ".join([
+    return table_row([
         run["finished_utc"],
         detector["name"],
         result["hardware"]["gpu_name"],
@@ -360,7 +365,7 @@ def detector_readme_row(result: dict, filename: str) -> str:
         regime_of(result),
         normalised_cell(result),
         f"[{filename}]({filename})",
-    ]) + " |"
+    ])
 
 
 def append_detector_readme_row(result: ResultLike, readme_path: Path, filename: str) -> None:
@@ -378,7 +383,11 @@ def load_detector_results(results_dir: Path) -> Dict[str, dict]:
 
 
 def latest_per_detector(results: Mapping[str, dict]) -> Dict[str, dict]:
-    """One result per detector: the most recently finished run of each."""
+    """One result per detector *per GPU*: the most recently finished run of each.
+
+    Per GPU because the same detector measured on a deploy card does not supersede
+    the laptop measurement - the pair is the portability evidence (issue #25).
+    """
     return latest_per(results, lambda result: result["detector"]["name"])
 
 
@@ -386,32 +395,31 @@ REPORT_HEADER = ("| detector | role | vocabulary | ms/detect | p95 ms |"
                  " ms/detect at basis clock | amortised ms/frame | fits 4-8 ms |"
                  " torch peak (MiB) | with diffusion resident (MiB) |"
                  " vocabulary change (ms) |")
-REPORT_SEPARATOR = "|" + "---|" * (REPORT_HEADER.count("|") - 1)
-
 EVIDENCE_HEADER = ("| concept | kind | detector | asked for | resolved |"
                    " top confidence | strongest other label | frame |")
-EVIDENCE_SEPARATOR = "|" + "---|" * (EVIDENCE_HEADER.count("|") - 1)
 
 
-def _report_preamble(results: Sequence[dict]) -> str:
-    """One line saying which machine and which input these numbers are for.
+def _report_preamble(results: Sequence[dict], gpus: Sequence[str]) -> str:
+    """One line saying which machines and which input these numbers are for.
 
     spec 7.4's rule applied to spec 8.1: a detector table with no GPU attached invites the
     reader to treat a laptop measurement as a deploy-hardware one.
     """
-    gpus = sorted({result["hardware"]["gpu_name"] for result in results})
     sizes = sorted({f"{result['run']['imgsz']}x{result['run']['imgsz']}"
                     for result in results})
     resident = sorted({result["vram"]["diffusion_scenario"] or "nothing else resident"
                        for result in results})
+    spanning = ("" if len(gpus) == 1 else
+                " Rows are one per detector per GPU, and absolute figures belong to "
+                "the GPU in the row (spec 7.4).")
     return (f"Measured: {', '.join(gpus)}, {', '.join(sizes)} input, PyTorch. "
-            f"Diffusion resident during the timing: {', '.join(resident)}.")
+            f"Diffusion resident during the timing: {', '.join(resident)}.{spanning}")
 
 
-def _report_row(result: dict) -> str:
+def _report_row(result: dict, column: GpuColumn) -> str:
     detector, run, budget = result["detector"], result["run"], result["budget"]
     change = result["vocabulary_change"]
-    return "| " + " | ".join([
+    return column.row([
         detector["name"],
         detector["role"],
         "open" if detector["open_vocabulary"] else "80 COCO classes",
@@ -423,7 +431,7 @@ def _report_row(result: dict) -> str:
         format_number(result["vram"]["torch_peak_mib"], 0),
         format_number(result["vram"]["combined_used_mib"], 0),
         format_number(change["median_change_ms"], 1) if change["supported"] else "n/a",
-    ]) + " |"
+    ], result)
 
 
 def _other_cell(item: dict) -> str:
@@ -436,11 +444,16 @@ def _other_cell(item: dict) -> str:
     return "-" if not others else f"{others[0]['label']} {others[0]['confidence']:.2f}"
 
 
-def _evidence_rows(results: Sequence[dict]) -> List[str]:
+# Where the `GPU` column goes in the evidence table: after `detector`, because a
+# row there is identified by the concept *and* the detector that was asked for it.
+EVIDENCE_GPU_INDEX = 3
+
+
+def _evidence_rows(results: Sequence[dict], column: GpuColumn) -> List[str]:
     rows = []
     for result in results:
         for item in result.get("evidence") or []:
-            rows.append("| " + " | ".join([
+            rows.append(column.row([
                 item["concept"],
                 item["kind"],
                 result["detector"]["name"],
@@ -449,7 +462,7 @@ def _evidence_rows(results: Sequence[dict]) -> List[str]:
                 format_number(item["top_confidence"], 3),
                 _other_cell(item),
                 item["frame"],
-            ]) + " |")
+            ], result, EVIDENCE_GPU_INDEX))
     return rows
 
 
@@ -498,6 +511,25 @@ def _ranking_basis(results: Sequence[dict]) -> str:
             "is what it is used for.")
 
 
+def _recommendation_lines(results: Sequence[dict], gpus: Sequence[str],
+                          cadence: int) -> List[str]:
+    """The recommendation, made once per machine.
+
+    Ranking two detectors against each other only means something within one
+    machine - and with rows from two, the same detector would appear twice in one
+    ranking and be ranked against itself. With one machine the sentence is the one
+    it always was.
+    """
+    lines = []
+    for gpu in gpus:
+        measured = [result for result in results if gpu_of(result) == gpu]
+        recommendation = recommend(candidates_from(measured), cadence=cadence)
+        label = "Recommendation" if len(gpus) == 1 else f"Recommendation ({gpu})"
+        lines.append(f"**{label}: {recommendation.name}.** {recommendation.reason}"
+                     f"{_ranking_basis(measured)}")
+    return lines
+
+
 def format_detector_report(results: Mapping[str, dict],
                            cadence: int = DEFAULT_CADENCE) -> str:
     """The spec 8.1 measured block: the table, the evidence, and the recommendation.
@@ -505,21 +537,27 @@ def format_detector_report(results: Mapping[str, dict],
     Generated from the committed JSON rather than transcribed, for the reason
     spec 7.2's table is: a table pasted into Markdown drifts the moment a cell is
     re-measured, and nothing notices.
+
+    Rows are one per (detector, GPU) and a detector's machines sit adjacently, so a
+    second machine adds rows rather than replacing them (issue #25).
     """
     ordered = sorted(latest_per_detector(results).values(),
-                     key=lambda result: result["detector"]["name"])
+                     key=lambda result: (result["detector"]["name"], gpu_of(result),
+                                         result["run"]["finished_utc"]))
     if not ordered:
         return "no detector result committed yet"
 
-    recommendation = recommend(candidates_from(ordered), cadence=cadence)
+    gpus = distinct_gpus(ordered)
+    column = GpuColumn(shown=len(gpus) > 1)
+    header = column.header(REPORT_HEADER)
+    evidence_header = column.header(EVIDENCE_HEADER, EVIDENCE_GPU_INDEX)
     sections = [
-        _report_preamble(ordered),
-        "\n".join([REPORT_HEADER, REPORT_SEPARATOR]
-                  + [_report_row(result) for result in ordered]),
+        _report_preamble(ordered, gpus),
+        "\n".join([header, table_separator(header)]
+                  + [_report_row(result, column) for result in ordered]),
         "Vocabulary evidence - what each detector returned when asked for the "
         "concept, and what a closed vocabulary had to be asked for instead:",
-        "\n".join([EVIDENCE_HEADER, EVIDENCE_SEPARATOR] + _evidence_rows(ordered)),
-        f"**Recommendation: {recommendation.name}.** {recommendation.reason}"
-        f"{_ranking_basis(ordered)}",
+        "\n".join([evidence_header, table_separator(evidence_header)]
+                  + _evidence_rows(ordered, column)),
     ]
-    return "\n\n".join(sections)
+    return "\n\n".join(sections + _recommendation_lines(ordered, gpus, cadence))

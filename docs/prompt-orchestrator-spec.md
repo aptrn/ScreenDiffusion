@@ -618,6 +618,18 @@ A laptop also may never reach the §7.2 cooldown threshold under sustained load.
 The harness caps the wait and records that the threshold was not met, rather than
 blocking forever or silently reporting a throttled number.
 
+**The generated blocks keep one row per (thing measured, GPU)** — issue #25. The
+§8.1, §8.2 and §8.8 tables reduce the committed JSON to the newest run of each
+case or detector *on each machine*, so a deploy-card run adds a row beside the
+laptop's rather than replacing it: the table above is a claim about two machines
+and it is only checkable while both rows exist. A block whose rows span GPUs
+grows a `GPU` column, names every machine in its preamble, and takes its
+per-machine verdicts — the §8.1 recommendation, the §8.2 decision, the §8.8 Gate
+lines — once per machine, because a ranking across two GPUs is not a ranking. A
+single-machine repo renders exactly what it rendered before. A record with no
+`hardware.gpu_name` (there are none, but the fingerprint post-dates the first
+results) is labelled `unknown GPU` and never merged with another one.
+
 ---
 
 ## 8. Open questions (the research agenda)

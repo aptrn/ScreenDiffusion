@@ -21,7 +21,8 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, List, Mapping, Optional, Tuple, Union
+from typing import (Callable, Dict, List, Mapping, Optional, Sequence, Tuple,
+                    Union)
 
 from bench import RESULT_SCHEMA_VERSION
 from bench.clocks import LOCKED, REGIMES, ClockNormalization, regime_of
@@ -234,22 +235,92 @@ def load_records(results_dir: Path) -> Dict[str, dict]:
             for path in sorted(Path(results_dir).glob("*.json"))}
 
 
+UNKNOWN_GPU = "unknown GPU"
+
+
+def gpu_of(result: Mapping) -> str:
+    """Which machine produced this record, or `unknown GPU` when it does not say.
+
+    Results predating the hardware fingerprint carry no `hardware.gpu_name`. Reading
+    that back as `None` would put every one of them in a single group named after
+    nothing, which is the same deletion issue #25 exists to stop - so the absence
+    gets a name of its own and reads as one in a table.
+    """
+    hardware = result.get("hardware") or {}
+    return str(hardware.get("gpu_name") or "").strip() or UNKNOWN_GPU
+
+
 def latest_per(results: Mapping[str, dict],
                name_of: Callable[[dict], str]) -> Dict[str, dict]:
-    """One result per thing measured: the most recently finished run of each.
+    """One result per thing measured *per machine*: the newest run of each.
 
-    A thing measured twice is two honest records and both stay on disk; a table
-    built from a mixture would compare a cold run against a hot one. `name_of` says
-    what "the same thing" means - a detector name, a case name - because that is the
-    only part the two report tables disagree on.
+    A thing measured twice on one GPU is two honest records and both stay on disk; a
+    table built from a mixture would compare a cold run against a hot one. The same
+    thing measured on a *second* GPU is not a re-measurement at all - it is the
+    comparison spec 7.4 is built on, and a reduction that kept one row per name
+    would delete the development laptop the first time a deploy card ran (issue
+    #25). So the key is the name and the GPU together.
+
+    `name_of` says what "the same thing" means - a detector name, a case name -
+    because that is the only part the three report tables disagree on.
     """
-    newest: Dict[str, Tuple[str, str]] = {}
+    newest: Dict[Tuple[str, str], Tuple[str, str]] = {}
     for filename, result in results.items():
-        name = name_of(result)
+        gpu = gpu_of(result)
+        # A record that does not name its machine cannot be shown to supersede
+        # another one, so it stands alone under its own filename rather than
+        # joining a group of anonymous results and losing to the newest of them.
+        key = (name_of(result), gpu if gpu != UNKNOWN_GPU else filename)
         finished = str(result["run"]["finished_utc"])
-        if name not in newest or finished > newest[name][1]:
-            newest[name] = (filename, finished)
+        if key not in newest or finished > newest[key][1]:
+            newest[key] = (filename, finished)
     return {filename: results[filename] for filename, _ in newest.values()}
+
+
+def distinct_gpus(results: Sequence[dict]) -> List[str]:
+    """Every machine these records come from, sorted - the report's grouping axis."""
+    return sorted({gpu_of(result) for result in results})
+
+
+def table_row(cells: Sequence[str]) -> str:
+    """One Markdown row from its cells."""
+    return "| " + " | ".join(cells) + " |"
+
+
+def table_separator(header: str) -> str:
+    """The `|---|---|` under `header`, derived so it cannot be the wrong width."""
+    return "|" + "---|" * (header.count("|") - 1)
+
+
+GPU_COLUMN = "GPU"
+
+
+@dataclass(frozen=True)
+class GpuColumn:
+    """The `GPU` column a report table grows when its rows span more than one machine.
+
+    Off with one machine, and that is the point: a single-GPU repo renders exactly
+    what it rendered before, so the three committed spec blocks do not churn and
+    their byte-match tests keep passing while this lands (issue #25's third trap).
+    On with two, so no row implies a machine it was not measured on.
+    """
+
+    shown: bool
+
+    def header(self, header: str, index: int = 1) -> str:
+        """`header` with `GPU` inserted at `index`, or unchanged."""
+        return header if not self.shown else \
+            " | ".join(self._inserted(header.split(" | "), GPU_COLUMN, index))
+
+    def row(self, cells: Sequence[str], result: dict, index: int = 1) -> str:
+        """One row, carrying its machine at `index` when the table has that column."""
+        cells = list(cells)
+        return table_row(cells if not self.shown
+                         else self._inserted(cells, gpu_of(result), index))
+
+    @staticmethod
+    def _inserted(cells: List[str], value: str, index: int) -> List[str]:
+        return cells[:index] + [value] + cells[index:]
 
 
 def format_number(value: Optional[float], digits: int = 1) -> str:
@@ -283,7 +354,7 @@ README_HEADER = (
 )
 # Derived, so adding a column to the header cannot leave a separator of the wrong
 # width behind - which renders the whole table as plain text.
-README_SEPARATOR = "|" + "---|" * (README_HEADER.count("|") - 1)
+README_SEPARATOR = table_separator(README_HEADER)
 README_NAME = "README.md"
 
 
@@ -310,7 +381,7 @@ def normalised_cell(result: dict) -> str:
 def readme_row(result: dict, filename: str) -> str:
     scenario, run = result["scenario"], result["run"]
     cooldown, hardware = result["cooldown"], result["hardware"]
-    return "| " + " | ".join([
+    return table_row([
         run["finished_utc"],
         scenario["name"],
         hardware["gpu_name"],
@@ -327,7 +398,7 @@ def readme_row(result: dict, filename: str) -> str:
         f"[{filename}]({filename})",
         regime_of(result),
         normalised_cell(result),
-    ]) + " |"
+    ])
 
 
 def append_row(row: str, readme_path: Path, preamble: str) -> None:
