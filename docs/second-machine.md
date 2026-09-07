@@ -15,13 +15,24 @@ resumes somewhere else; it does not run in addition.
 git clone https://github.com/aptrn/ScreenDiffusion.git
 cd ScreenDiffusion
 gh repo set-default aptrn/ScreenDiffusion   # do not skip - see below
-npm install
-uv sync
 ```
 
-Then create `.sandcastle/.env` with `CLAUDE_CODE_OAUTH_TOKEN` and `GH_TOKEN` (a
-fine-grained PAT scoped to this repo: Contents R/W, Issues R/W, Pull requests R/W,
-Metadata R). `npm run sandcastle` starts it; the dashboard binds `127.0.0.1:4747`.
+Then `setup.bat`, which installs **uv** if it is missing, fetches Python 3.11 and runs
+`uv sync`. Do not reach for a bare `uv sync` — a machine without uv gets no useful error
+from it, and the loop needs uv on PATH for far more than the initial install (every
+agent worktree runs `uv sync` as its sandbox-ready hook, so a missing uv fails every
+sandbox, not just setup).
+
+**Open a new terminal before going further.** The uv installer only adds
+`%USERPROFILE%\.local\bin` to PATH for *new* shells. `setup.bat` patches its own session
+so its `uv sync` succeeds, which means setup can finish cleanly and the loop still fail
+afterwards if you reuse the old terminal.
+
+Then `npm install` for the Node-side tooling, and create `.sandcastle/.env` with
+`CLAUDE_CODE_OAUTH_TOKEN` and `GH_TOKEN` (a fine-grained PAT scoped to this repo:
+Contents R/W, Issues R/W, Pull requests R/W, Metadata R).
+
+`npm run sandcastle` starts the loop; the dashboard binds `127.0.0.1:4747`.
 
 ## The step that fails silently
 
@@ -39,7 +50,8 @@ against the upstream project instead of yours. Nothing warns you until it happen
 | `models/` (5.4 GB) | gitignored | copy it across, or let the app and bench re-download; point `SD_MODELS_DIR` at wherever it lands |
 | `engines/` | gitignored **and** GPU-specific | **rebuild.** Ampere engines do not load on Ada. ~5.1 GB and 15-25 min each |
 | `.sandcastle/.env` | secrets | recreate |
-| `.venv/`, `node_modules/` | build artefacts | `uv sync`, `npm install` |
+| `.venv/`, `node_modules/` | build artefacts | `setup.bat` (installs uv + Python 3.11 + syncs), then `npm install` |
+| uv itself | not part of the repo | `setup.bat` installs it, then **use a new terminal** |
 | `.sandcastle/logs/`, `worktrees/`, `monitor-history.json` | local run state | nothing - they regenerate |
 
 Committed results, reference clips and box tracks **do** travel, so comparisons stay
