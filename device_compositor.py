@@ -51,6 +51,21 @@ DEVICE = "device"
 Bounds = Tuple[int, int, int, int]
 
 
+def _as_bhwc(tensor):
+    """A capture or a render as `(B, H, W, C)`, detached and left where it is.
+
+    Both arrive as `(B, C, H, W)`, or as one frame's `(C, H, W)` when the caller
+    has already indexed the batch - `batch[i]` on the capture side, a
+    `frame_buffer_size` of 1 on the wrapper's. The batch axis goes back on rather
+    than being special-cased, so each conversion below is one expression about
+    dtype and nothing about shape.
+    """
+    tensor = tensor.detach()
+    if tensor.dim() == 3:
+        tensor = tensor.unsqueeze(0)
+    return tensor.permute(0, 2, 3, 1)
+
+
 def capture_frames(capture):
     """The captured frames as uint8 HWC on the device, without leaving it.
 
@@ -61,10 +76,7 @@ def capture_frames(capture):
     """
     import torch
 
-    tensor = capture.detach()
-    if tensor.dim() == 3:  # one frame, as `batch[i]` hands it over
-        tensor = tensor.unsqueeze(0)
-    frames = tensor.permute(0, 2, 3, 1)  # BCHW -> BHWC
+    frames = _as_bhwc(capture)
     if frames.dtype.is_floating_point:
         frames = frames.clamp(0.0, 1.0).mul(255.0).round()
     return frames.to(torch.uint8)
@@ -79,10 +91,7 @@ def rendered_frames(rendered):
     """
     import torch
 
-    tensor = rendered.detach()
-    if tensor.dim() == 3:  # frame_buffer_size 1: the wrapper already indexed it
-        tensor = tensor.unsqueeze(0)
-    return tensor.permute(0, 2, 3, 1).float().mul(255.0).round().to(torch.uint8)
+    return _as_bhwc(rendered).float().mul(255.0).round().to(torch.uint8)
 
 
 def composite_device(source, rendered, weights, bounds: Bounds):

@@ -55,8 +55,8 @@ def test_torch_is_imported_inside_the_functions_that_use_it():
     at module scope would put a CUDA runtime in a process that never touches one,
     and would take the whole module out of the merge gate's tier."""
     tree = ast.parse(SOURCE.read_text(encoding="utf-8"), filename=str(SOURCE))
-    top_level = [node for node in tree.body if isinstance(node, (ast.Import,
-                                                                 ast.ImportFrom))]
+    top_level = [node for node in tree.body
+                 if isinstance(node, (ast.Import, ast.ImportFrom))]
     names = {alias.name for node in top_level if isinstance(node, ast.Import)
              for alias in node.names}
     names |= {node.module for node in top_level if isinstance(node, ast.ImportFrom)}
@@ -78,8 +78,8 @@ def test_the_device_compositor_is_a_compositor():
 
 def test_it_decides_what_a_frame_is_exactly_as_the_host_compositor_does():
     selection = selection_of(REGION)
-    host, device = Compositor().frame(selection, W, H), DeviceCompositor().frame(
-        selection, W, H)
+    host = Compositor().frame(selection, W, H)
+    device = DeviceCompositor().frame(selection, W, H)
     assert device.action == host.action == MASKED
     assert np.array_equal(device.alpha, host.alpha)
 
@@ -90,9 +90,10 @@ def test_a_selective_plan_with_nothing_detected_still_costs_no_diffusion_call():
 
 def test_the_alpha_is_still_zero_outside_the_region():
     """The criterion, on the map the device path uploads."""
-    alpha = DeviceCompositor().frame(selection_of(REGION), W, H).alpha
+    selection = selection_of(REGION)
+    alpha = DeviceCompositor().frame(selection, W, H).alpha
     outside = np.ones((H, W), dtype=bool)
-    for box in selection_of(REGION).boxes:
+    for box in selection.boxes:
         outside[box.y0:box.y1, box.x0:box.x1] = False
     assert np.all(alpha[outside] == 0.0)
 

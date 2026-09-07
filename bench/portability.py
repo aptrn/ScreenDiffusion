@@ -278,12 +278,15 @@ def fps_spread(results: Mapping[str, dict], gpu_name: str,
     "before" the change is read against, so the ones left out are counted out loud
     instead of vanishing (issue #31).
     """
-    def blended_the_same_way(result: dict) -> bool:
-        return composite is None or composite_path(result) == composite
-
-    on_card = [result for result in results.values() if gpu_of(result) == gpu_name]
-    counted = [result for result in on_card if blended_the_same_way(result)]
-    excluded = [result for result in on_card if not blended_the_same_way(result)]
+    counted: List[dict] = []
+    excluded: List[dict] = []
+    for result in results.values():
+        if gpu_of(result) != gpu_name:
+            continue
+        if composite is None or composite_path(result) == composite:
+            counted.append(result)
+        else:
+            excluded.append(result)
     rates = sorted(fps(result) for result in counted)
     if not rates:
         return Spread(gpu=gpu_name, runs=0, lowest_fps=0.0, highest_fps=0.0,
@@ -482,13 +485,13 @@ def composite_note(baseline: dict, deploy: dict) -> str:
     than left for a reader to notice, for the reason `comparability` refuses a table
     across two region counts.
     """
-    dev, deployed = composite_path(baseline), composite_path(deploy)
-    if dev == deployed:
-        return f"The composite ran on the {_where(dev)} on both machines."
-    return (f"**The `composite ms/frame` row is not a hardware ratio**: the blend ran "
-            f"on the {_where(dev)} on {gpu_of(baseline)} and on the {_where(deployed)} "
-            f"on {gpu_of(deploy)} (issue #31), so those two figures are two designs "
-            f"as much as two cards.")
+    baseline_path, deploy_path = composite_path(baseline), composite_path(deploy)
+    if baseline_path == deploy_path:
+        return f"The composite ran on the {_where(baseline_path)} on both machines."
+    return ("**The `composite ms/frame` row is not a hardware ratio**: the blend ran "
+            f"on the {_where(baseline_path)} on {gpu_of(baseline)} and on the "
+            f"{_where(deploy_path)} on {gpu_of(deploy)} (issue #31), so those two "
+            f"figures are two designs as much as two cards.")
 
 
 def _table(header: str, cells: Sequence[Sequence[str]]) -> str:

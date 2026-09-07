@@ -208,7 +208,6 @@ def test_the_device_blend_and_the_host_blend_render_the_same_frame(stream, frame
     things the frame loop actually hands over - a real capture tensor and a real
     diffusion - because that is where the conversions the equality rests on live.
     """
-    import numpy as np
     import torch
     from bench.selective_runner import capture_tensor
     from detector_worker import frame_to_array
