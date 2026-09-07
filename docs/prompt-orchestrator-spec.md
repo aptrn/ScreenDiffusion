@@ -332,6 +332,19 @@ mean stopping the run - and `SD_DEMO_PLAN=1` still starts the worker on the hard
 priority case, so a headless run is unaffected: a blank target sends nothing at all
 rather than overwriting it.
 
+**Where they sit, and what the window says about them** (issue #40). Target and
+Style lead the left panel, above the model path and the strength slider; the engine
+knobs - seed, buffer, acceleration, LCM-LoRA, denoising batch, and the step *count* -
+are folded into a collapsed **Advanced** section, which is the `SHOW` dict the file
+already had, used for what it was for. Underneath the two fields the window carries
+one sentence of plan state: whether the plan is global or selective, whether
+detection is running, on what concept, how many objects it is holding and at what
+cadence. The concept it names is the *detector's*, taken from the fps payload, not
+the field's - an edit is debounced and then costs a vocabulary re-encode, so for a
+moment the two disagree and the one worth showing is the one being detected. Before
+this the only sign the object-aware path was alive at all was the tail of the FPS
+line. `docs/gui/` holds the before and after.
+
 ---
 
 ## 7. Performance model
@@ -1358,6 +1371,12 @@ goes to the GUI status area beside the field that caused it; a plan it accepts
 carries its `notes` to the same place. What the worker refuses, it says on the
 status queue and keeps rendering the plan in force. `confidence` is carried and
 nothing reads it yet: with no LLM in the path there is nothing to be unconfident.
+
+Issue #40 moved that half a step closer to the user: the refusal and the notes are
+also drawn on their own row *under the two fields*, the refusal in the error colour,
+the row not there at all when there is nothing to read. The status bar still gets
+both, but it is shared with the worker's own messages and the next one replaces
+whatever was there - which is the failure mode #22's own notes named.
 
 ### 8.8 Does the selective path work end to end? — **yes, measured**
 

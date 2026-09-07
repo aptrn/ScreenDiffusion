@@ -1,8 +1,7 @@
 """The GUI's end of the Render Plan (issue #22), checked structurally.
 
-`StreamGUI` cannot be instantiated in this tier - importing `main_gpu_addon.py` primes
-the Windows DLL search path and pulls in the whole customtkinter stack - so these
-assertions read the source. What they hold up is the part the unit tests cannot see:
+`StreamGUI` cannot be instantiated in this tier, so these assertions read the
+source through `guisource`. What they hold up is the part the unit tests cannot see:
 that an edit is debounced rather than sent per keystroke, that only a plan the
 producer validated crosses the queue, that a headless `SD_DEMO_PLAN` run is not
 overwritten by a blank field, and that the controls that were already there still
@@ -10,80 +9,49 @@ send what they always sent.
 """
 
 import ast
-from pathlib import Path
 
+from guisource import GUI, calls_named, gui_method, mentions
 from sourceloader import load_symbols
-
-SOURCE = Path(__file__).resolve().parent.parent / "main_gpu_addon.py"
-TEXT = SOURCE.read_text(encoding="utf-8-sig")
-TREE = ast.parse(TEXT, filename=str(SOURCE))
 
 _DELAYS = load_symbols("main_gpu_addon.py", ["PLAN_DEBOUNCE_MS", "PROMPT_DEBOUNCE_MS"])
 PLAN_DEBOUNCE_MS = _DELAYS["PLAN_DEBOUNCE_MS"]
 PROMPT_DEBOUNCE_MS = _DELAYS["PROMPT_DEBOUNCE_MS"]
 
 
-def _class(name: str) -> ast.ClassDef:
-    for node in ast.walk(TREE):
-        if isinstance(node, ast.ClassDef) and node.name == name:
-            return node
-    raise AssertionError(f"main_gpu_addon.py defines no class {name}")
-
-
-GUI = _class("StreamGUI")
-
-
-def _method(name: str) -> ast.FunctionDef:
-    for node in GUI.body:
-        if isinstance(node, ast.FunctionDef) and node.name == name:
-            return node
-    raise AssertionError(f"StreamGUI defines no {name}")
-
-
-def _calls_named(node: ast.AST, name: str) -> list:
-    return [call for call in ast.walk(node)
-            if isinstance(call, ast.Call)
-            and getattr(call.func, "attr", getattr(call.func, "id", None)) == name]
-
-
-def _mentions(node: ast.AST, name: str) -> bool:
-    return any(getattr(n, "attr", getattr(n, "id", None)) == name for n in ast.walk(node))
-
-
 # --- the fields --------------------------------------------------------------
 
 
 def test_the_two_fields_have_variables_the_gui_holds():
-    init = _method("__init__")
+    init = gui_method("__init__")
     assigned = {node.attr for node in ast.walk(init)
                 if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Store)}
     assert {"target_var", "style_var"} <= assigned
 
 
 def test_both_fields_are_built_and_bound_to_the_same_debounced_handler():
-    build = _method("_build_ui")
-    binds = [call for call in _calls_named(build, "bind")
-             if _mentions(call, "_on_plan_field_changed")]
+    build = gui_method("_build_ui")
+    binds = [call for call in calls_named(build, "bind")
+             if mentions(call, "_on_plan_field_changed")]
     assert len(binds) == 2, "target and style are not both wired to the plan handler"
 
 
 def test_the_fields_stay_editable_while_generation_runs():
     """A locked target field would mean stopping the run to change what is restyled."""
-    build = _method("_build_ui")
-    for call in _calls_named(build, "_register_lockables"):
+    build = gui_method("_build_ui")
+    for call in calls_named(build, "_register_lockables"):
         for widget in ("_w_target_entry", "_w_style_entry"):
-            assert not _mentions(call, widget), f"{widget} is disabled while running"
+            assert not mentions(call, widget), f"{widget} is disabled while running"
 
 
 # --- the debounce ------------------------------------------------------------
 
 
 def test_an_edit_is_debounced_rather_than_sent_per_keystroke():
-    handler = _method("_on_plan_field_changed")
-    assert _calls_named(handler, "after_cancel"), "a pending plan send is never cancelled"
-    after, = _calls_named(handler, "after")
-    assert _mentions(after, "PLAN_DEBOUNCE_MS")
-    assert _mentions(after, "_push_plan_runtime")
+    handler = gui_method("_on_plan_field_changed")
+    assert calls_named(handler, "after_cancel"), "a pending plan send is never cancelled"
+    after, = calls_named(handler, "after")
+    assert mentions(after, "PLAN_DEBOUNCE_MS")
+    assert mentions(after, "_push_plan_runtime")
 
 
 def test_the_plan_waits_longer_than_a_prompt_edit_does():
@@ -98,23 +66,23 @@ def test_the_plan_waits_longer_than_a_prompt_edit_does():
 def test_the_prompt_boxes_still_debounce_at_their_own_delay():
     """Not regressed: the plan's longer wait is not imposed on the prompt controls."""
     for name in ("_on_prompt_changed", "_on_neg_prompt_changed"):
-        after, = _calls_named(_method(name), "after")
-        assert _mentions(after, "PROMPT_DEBOUNCE_MS")
+        after, = calls_named(gui_method(name), "after")
+        assert mentions(after, "PROMPT_DEBOUNCE_MS")
 
 
 # --- what is sent ------------------------------------------------------------
 
 
 def test_the_send_goes_through_the_pure_mapping():
-    push = _method("_push_plan_runtime")
-    assert _calls_named(push, "_plan_update_from_fields"), \
+    push = gui_method("_push_plan_runtime")
+    assert calls_named(push, "_plan_update_from_fields"), \
         "the GUI builds its plan somewhere other than the tested mapping"
 
 
 def test_only_a_validated_plan_reaches_the_queue():
     """A refusal is a status line, not a message: the worker never sees it."""
-    push = _method("_push_plan_runtime")
-    puts = _calls_named(push, "put_nowait")
+    push = gui_method("_push_plan_runtime")
+    puts = calls_named(push, "put_nowait")
     assert puts, "the plan never reaches control_q"
     guards = [node for node in ast.walk(push)
               if isinstance(node, ast.If) and any(put in ast.walk(node) for put in puts)]
@@ -124,8 +92,8 @@ def test_only_a_validated_plan_reaches_the_queue():
 
 def test_the_status_area_carries_the_outcome():
     """Step 4: notes and rejections are read where the fields were typed."""
-    push = _method("_push_plan_runtime")
-    assert any(_mentions(call, "status_var") for call in _calls_named(push, "set"))
+    push = gui_method("_push_plan_runtime")
+    assert any(mentions(call, "status_var") for call in calls_named(push, "set"))
 
 
 def test_a_blank_target_does_not_overwrite_a_headless_demo_plan():
@@ -134,12 +102,12 @@ def test_a_blank_target_does_not_overwrite_a_headless_demo_plan():
     `SD_DEMO_PLAN` submits the priority case inside the worker; a start that sent an
     unasked-for global plan would replace it a few frames later.
     """
-    start = _method("_on_start")
-    pushes = _calls_named(start, "_push_plan_runtime")
+    start = gui_method("_on_start")
+    pushes = calls_named(start, "_push_plan_runtime")
     assert pushes, "a target typed before Start never reaches the worker"
     guards = [node for node in ast.walk(start)
               if isinstance(node, ast.If) and any(p in ast.walk(node) for p in pushes)]
-    assert any(_mentions(node.test, "target_var") for node in guards), \
+    assert any(mentions(node.test, "target_var") for node in guards), \
         "the GUI sends a plan at start whether or not a target was typed"
 
 
@@ -156,16 +124,16 @@ def test_the_existing_runtime_controls_still_send_their_messages():
 
 
 def test_the_detail_choice_has_a_variable_the_gui_holds():
-    init = _method("__init__")
+    init = gui_method("__init__")
     assigned = {node.attr for node in ast.walk(init)
                 if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Store)}
     assert "detail_var" in assigned
 
 
 def test_the_detail_box_offers_exactly_the_presets():
-    build = _method("_build_ui")
-    combos = [call for call in _calls_named(build, "CTkComboBox")
-              if _mentions(call, "detail_var")]
+    build = gui_method("_build_ui")
+    combos = [call for call in calls_named(build, "CTkComboBox")
+              if mentions(call, "detail_var")]
     assert len(combos) == 1, "the Detail box is not built, or is built twice"
     values = [keyword for keyword in combos[0].keywords if keyword.arg == "values"]
     assert values and "DETAIL_PRESETS" in ast.unparse(values[0].value), (
@@ -175,22 +143,22 @@ def test_the_detail_box_offers_exactly_the_presets():
 def test_choosing_a_detail_goes_through_the_same_debounced_handler():
     """A combo change is a plan change like any other, and it re-encodes the
     detector's vocabulary through the same door a target edit does."""
-    build = _method("_build_ui")
-    combos = [call for call in _calls_named(build, "CTkComboBox")
-              if _mentions(call, "detail_var")]
-    assert _mentions(combos[0], "_on_plan_field_changed")
+    build = gui_method("_build_ui")
+    combos = [call for call in calls_named(build, "CTkComboBox")
+              if mentions(call, "detail_var")]
+    assert mentions(combos[0], "_on_plan_field_changed")
 
 
 def test_the_detail_box_stays_usable_while_generation_runs():
     """Same rule as the two fields beside it: `primitive` is a plan field, so
     changing it costs no engine rebuild and must not cost a restart."""
-    build = _method("_build_ui")
-    for call in _calls_named(build, "_register_lockables"):
-        assert not _mentions(call, "_w_detail_combo")
+    build = gui_method("_build_ui")
+    for call in calls_named(build, "_register_lockables"):
+        assert not mentions(call, "_w_detail_combo")
 
 
 def test_the_detail_choice_travels_with_the_plan():
-    push = _method("_push_plan_runtime")
-    update, = _calls_named(push, "_plan_update_from_fields")
+    push = gui_method("_push_plan_runtime")
+    update, = calls_named(push, "_plan_update_from_fields")
     assert any("detail_var" in ast.unparse(argument) for argument in update.args), (
         "the plan is built without the Detail box's choice")
