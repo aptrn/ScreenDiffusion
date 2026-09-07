@@ -131,13 +131,18 @@ range and says so in `notes`, drops unknown fields, and *rejects* — with a rea
 words — a value outside a fixed vocabulary, a number that is not a number, a
 duplicate target id, or a concept the active detector cannot serve. It assigns
 `plan_version` as `previous + 1`, so versions are monotonic in the worker rather than
-in whatever sent one. `plan_from_fields(target, style)` is the GUI's producer; there
-is no LLM in this path and none is coming in v1. The plan crosses the queue as a
-plain dict (`set_plan`); the worker validates it and holds it in an `ActivePlan`,
-whose `begin_frame()` is the frame loop's single read — a plan arriving mid-frame
-lands on the next frame. Only the *first* target's `prompt` and `denoise` reach the
-engine, because issue #5 chose the full-frame masked primitive and that is one
-embedding per frame; the rest are carried and the validator says when they differ.
+in whatever sent one. `plan_from_fields(target, style)` is the GUI's producer - the
+**Target** and **Style** fields beside the prompt boxes, debounced by
+`PLAN_DEBOUNCE_MS` because a target edit re-encodes the detector's vocabulary; a
+blank target is `global`, a blank style falls back to the prompt box, and a plan the
+GUI's own validator refuses is never sent, its reason going to the status area
+instead. There is no LLM in this path and none is coming in v1. The plan crosses the
+queue as a plain dict (`set_plan`); the worker validates it and holds it in an
+`ActivePlan`, whose `begin_frame()` is the frame loop's single read — a plan
+arriving mid-frame lands on the next frame. Only the *first* target's `prompt` and
+`denoise` reach the engine, because issue #5 chose the full-frame masked primitive
+and that is one embedding per frame; the rest are carried and the validator says
+when they differ.
 
 `detection.py` is the **tracker** — spec §5.1 C4 and §8.5. Stdlib only, like
 `render_plan.py`. `Tracker.update` takes one detector tick and returns tracks with
@@ -180,7 +185,8 @@ measured ladder by a test. Only the schedule *values* move, so a plan change is 
 runtime update and never an engine rebuild; a plan with no target leaves the
 t_index slider alone. `SD_DEMO_PLAN=1` starts the worker on
 `priority_case_plan()` — restyle the lower half of every person, gently — which is
-how the whole path is driven until a GUI field exists to drive it.
+the headless way to drive the whole path. It survives the GUI fields: a blank target
+sends no plan at all, at start or ever, so an empty field cannot overwrite it.
 
 ## Gotchas
 

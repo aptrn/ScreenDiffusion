@@ -4,7 +4,7 @@ import tempfile, time, queue, random, threading, pathlib, subprocess, shutil, re
 from collections import deque
 from multiprocessing import get_context, Queue
 from multiprocessing.connection import Connection
-from typing import List, Literal, Dict, Mapping, Optional, Deque, Any, Union
+from typing import List, Literal, Dict, Mapping, NamedTuple, Optional, Deque, Any, Sequence, Union
 import numpy as np
 from PIL import Image, ImageTk, ImageDraw
 import PIL.Image
@@ -24,6 +24,7 @@ from render_plan import (
     ActivePlan,
     RenderPlan,
     global_plan,
+    plan_from_fields,
     priority_case_plan,
     t_index_for_denoise,
     validate_plan,
@@ -579,6 +580,75 @@ def _format_fps(payload: Any) -> str:
                  f"{fields.get('deferred', 0)} waiting  "
                  f"{fields.get('skipped_small', 0)} too small")
     return line
+
+# --- the GUI's end of the Render Plan (issue #22) ----------------------------
+#
+# The two fields the user types into *are* the control plane in v1: target text goes
+# to the open-vocabulary detector, style text goes to StreamDiffusion. The mapping
+# from what was typed to the message that crosses the queue is kept pure and at
+# module scope, so it is testable without a Tk root - which is what the issue's Gate
+# asks for.
+
+# What a prompt or negative-prompt edit waits before it re-encodes on the live
+# engine. Cheap, so it fires nearly as fast as the user types.
+PROMPT_DEBOUNCE_MS = 150
+
+# A target edit changes the detector's vocabulary, and `YOLOWorld.set_classes` drops
+# the predictor: the next detect then costs ~108 ms more than a steady one (spec
+# 8.1). Per keystroke that is three frames' budget per character, so the plan waits
+# a good deal longer than a prompt edit does before it fires.
+PLAN_DEBOUNCE_MS = 400
+
+class PlanUpdate(NamedTuple):
+    """What the two fields came to: a line to read, and a plan to send or not.
+
+    Mirrors `render_plan.PlanValidation` one step further out - `message` is the
+    `set_plan` to put on `control_queue`, and it is None exactly when `reason`
+    holds the validator's stated refusal. `status` is filled either way, because
+    the user gets told what happened either way.
+    """
+
+    status: str
+    message: Optional[Dict[str, Any]] = None
+    reason: str = ""
+
+def _plan_status_line(plan: RenderPlan, notes: Sequence[str] = ()) -> str:
+    """The line the status bar carries for a plan the GUI just built.
+
+    Names one concept and one region because that is all a plan built from two
+    fields can hold, and says "every" rather than naming instances: issue #5 chose
+    the full-frame masked primitive, so one prompt embedding covers every match and
+    there are no per-object styles to imply.
+    """
+    target = plan.honoured_target
+    if target is None:
+        line = "Plan: whole frame, no target"
+    else:
+        line = f"Plan: restyle every {target.concept} ({target.region})"
+    if notes:
+        line += "  |  " + "; ".join(notes)
+    return line
+
+def _plan_update_from_fields(target: str, style: str, prompt: str,
+                             negative_prompt: str) -> PlanUpdate:
+    """The GUI's fields as a control message, or the reason there is not one.
+
+    The producer validates so a refusal is visible where it was typed instead of
+    silent in the worker; the worker validates the same plan again, because it owns
+    the version and because a plan can arrive from any hand.
+
+    An empty target is not "restyle nothing": it is `mode: "global"`, the whole
+    frame under one prompt, which is what this app has always done. An empty style
+    falls back to the prompt box for the same reason - naming a target must not
+    hand the engine an empty embedding and call it a style. The boxes arrive with
+    the newline Tk's `get` appends, so everything is stripped on the way in.
+    """
+    result = plan_from_fields(target.strip(), style.strip() or prompt.strip(),
+                              negative_prompt=negative_prompt.strip())
+    if result.plan is None:
+        return PlanUpdate(status=f"Plan rejected: {result.reason}", reason=result.reason)
+    return PlanUpdate(status=_plan_status_line(result.plan, result.notes),
+                      message={"type": "set_plan", "plan": result.plan.to_dict()})
 
 SHOW = {
     "model_path": True, "prompt": True, "negative_prompt": True, "seed": True,
@@ -1248,6 +1318,10 @@ class StreamGUI(ctk.CTk):
         self._lora_widgets: List[Any] = []
         self.prompt_var = ctk.StringVar(value="flip book animation, black and white rough sketch, rough drawing")
         self.neg_prompt_var = ctk.StringVar(value="low quality, bad quality, blurry, low resolution")
+        # The Render Plan's two fields (issue #22). Both start blank, which is
+        # `mode: "global"` - the whole frame under the prompt box, as it always was.
+        self.target_var = ctk.StringVar(value="")
+        self.style_var = ctk.StringVar(value="")
         self.seed_var = ctk.StringVar(value="1")
         self.width_var = ctk.IntVar(value=512)
         self.height_var = ctk.IntVar(value=512)
@@ -1264,7 +1338,7 @@ class StreamGUI(ctk.CTk):
         self.sim_thresh_var = ctk.StringVar(value="0.99")
         self.sim_maxskip_var = ctk.StringVar(value="10.0")
         self.offline_var = ctk.BooleanVar(value=True)
-        self._debounce_prompt = self._debounce_neg = self._debounce_region = None
+        self._debounce_prompt = self._debounce_neg = self._debounce_region = self._debounce_plan = None
         self.t_index_list: List[int] = [30]
         self._lockables: List[ctk.CTkBaseClass] = []
         self._step_sliders: List[ctk.CTkSlider] = []
@@ -1755,13 +1829,30 @@ class StreamGUI(ctk.CTk):
         ctk.CTkButton(button_container, text="❌ Quit", command=self.do_quit, width=100, height=36, fg_color=CUSTOM_COLORS["surface"], hover_color=CUSTOM_COLORS["error"], corner_radius=8, font=ctk.CTkFont(weight="bold")).grid(row=0, column=4)
         prompts_row = ctk.CTkFrame(self)
         prompts_row.grid(row=2, column=0, columnspan=2, sticky="nsew", padx=12, pady=(0, 8))
-        prompts_row.grid_columnconfigure(0, weight=1); prompts_row.grid_columnconfigure(1, weight=1); prompts_row.grid_rowconfigure(0, weight=1)
-        prompt_frame = ctk.CTkFrame(prompts_row, corner_radius=10); prompt_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+        prompts_row.grid_columnconfigure(0, weight=1); prompts_row.grid_columnconfigure(1, weight=1)
+        prompts_row.grid_rowconfigure(0, weight=0); prompts_row.grid_rowconfigure(1, weight=1)
+        # The Render Plan's producer (issue #22). Target text goes to the
+        # open-vocabulary detector, style text goes to StreamDiffusion, and both are
+        # editable while generation runs - changing what is restyled must not mean
+        # stopping the run. One style, not one per object: issue #5 chose the
+        # full-frame masked primitive, which is one prompt embedding per frame.
+        plan_frame = ctk.CTkFrame(prompts_row, corner_radius=10)
+        plan_frame.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        plan_frame.grid_columnconfigure(0, weight=1); plan_frame.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(plan_frame, text="Target  —  what to restyle (blank: the whole frame)", anchor="w").grid(row=0, column=0, sticky="ew", padx=10, pady=(8, 0))
+        ctk.CTkLabel(plan_frame, text="Style  —  one style for every match", anchor="w").grid(row=0, column=1, sticky="ew", padx=10, pady=(8, 0))
+        self._w_target_entry = ctk.CTkEntry(plan_frame, textvariable=self.target_var)
+        self._w_target_entry.grid(row=1, column=0, sticky="ew", padx=10, pady=(4, 10))
+        self._w_target_entry.bind("<KeyRelease>", self._on_plan_field_changed)
+        self._w_style_entry = ctk.CTkEntry(plan_frame, textvariable=self.style_var)
+        self._w_style_entry.grid(row=1, column=1, sticky="ew", padx=10, pady=(4, 10))
+        self._w_style_entry.bind("<KeyRelease>", self._on_plan_field_changed)
+        prompt_frame = ctk.CTkFrame(prompts_row, corner_radius=10); prompt_frame.grid(row=1, column=0, sticky="nsew", padx=(0, 6))
         prompt_frame.grid_rowconfigure(1, weight=1); prompt_frame.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(prompt_frame, text="Prompt", anchor="w").grid(row=0, column=0, sticky="ew", padx=10, pady=(8, 0))
         self.prompt_txt = ctk.CTkTextbox(prompt_frame, height=120); self.prompt_txt.grid(row=1, column=0, sticky="nsew", padx=10, pady=(4, 10))
         self.prompt_txt.delete("1.0", "end"); self.prompt_txt.insert("1.0", self.prompt_var.get()); self.prompt_txt.bind("<KeyRelease>", self._on_prompt_changed)
-        neg_frame = ctk.CTkFrame(prompts_row, corner_radius=10); neg_frame.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
+        neg_frame = ctk.CTkFrame(prompts_row, corner_radius=10); neg_frame.grid(row=1, column=1, sticky="nsew", padx=(6, 0))
         neg_frame.grid_rowconfigure(1, weight=1); neg_frame.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(neg_frame, text="Negative Prompt", anchor="w").grid(row=0, column=0, sticky="ew", padx=10, pady=(8, 0))
         self.neg_prompt_txt = ctk.CTkTextbox(neg_frame, height=120); self.neg_prompt_txt.grid(row=1, column=0, sticky="nsew", padx=10, pady=(4, 10))
@@ -1901,14 +1992,14 @@ class StreamGUI(ctk.CTk):
         if self._debounce_prompt is not None:
             try: self.after_cancel(self._debounce_prompt)
             except Exception: pass
-        self._debounce_prompt = self.after(150, self._push_prompt_runtime)
+        self._debounce_prompt = self.after(PROMPT_DEBOUNCE_MS, self._push_prompt_runtime)
 
     def _on_neg_prompt_changed(self, _evt=None):
         if not self.running: return
         if self._debounce_neg is not None:
             try: self.after_cancel(self._debounce_neg)
             except Exception: pass
-        self._debounce_neg = self.after(150, self._push_neg_prompt_runtime)
+        self._debounce_neg = self.after(PROMPT_DEBOUNCE_MS, self._push_neg_prompt_runtime)
 
     def _push_prompt_runtime(self):
         if not getattr(self, 'control_q', None): return
@@ -1923,6 +2014,31 @@ class StreamGUI(ctk.CTk):
             txt = self.neg_prompt_txt.get("1.0", "end").strip()
             self.control_q.put_nowait({"type": "set_negative_prompt", "negative_prompt": txt})
         except Exception: pass
+
+    def _on_plan_field_changed(self, _evt=None):
+        """A target or style edit. Debounced hard - see `PLAN_DEBOUNCE_MS`."""
+        if not self.running: return
+        if self._debounce_plan is not None:
+            try: self.after_cancel(self._debounce_plan)
+            except Exception: pass
+        self._debounce_plan = self.after(PLAN_DEBOUNCE_MS, self._push_plan_runtime)
+
+    def _push_plan_runtime(self):
+        """Send the plan the two fields describe, or say why there is not one.
+
+        The outcome always reaches the status area: the validator's notes when the
+        plan went through, its stated reason when it did not. A refused plan is
+        never put on the queue - the worker would validate it to the same refusal,
+        and the user would read it nowhere near the field they typed it into.
+        """
+        update = _plan_update_from_fields(
+            self.target_var.get(), self.style_var.get(),
+            self.prompt_txt.get("1.0", "end"), self.neg_prompt_txt.get("1.0", "end"),
+        )
+        self.status_var.set(update.status)
+        if update.message is not None and getattr(self, "control_q", None):
+            try: self.control_q.put_nowait(update.message)
+            except Exception: pass
 
     def _overlay_screen_rect(self) -> Dict[str, int]:
         if self.capwin is not None: return self.capwin.inner_rect_screen()
@@ -2138,6 +2254,12 @@ class StreamGUI(ctk.CTk):
         self.start_btn.configure(state="disabled"); self.stop_btn.configure(state="normal")
         self.hide_capture_btn.configure(state="normal")
         self._apply_running_state()
+        # A target typed before Start is applied as soon as the worker drains its
+        # queue. A blank one sends nothing: the worker already starts on today's
+        # behaviour as a plan, and SD_DEMO_PLAN's priority case has to survive a
+        # headless run rather than be overwritten by an empty field.
+        if self.target_var.get().strip():
+            self._push_plan_runtime()
 
     def _on_stop(self):
         if not self.running: return
