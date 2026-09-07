@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 
 from compositor import (
+    CROP,
     DEFAULT_FEATHER_PX,
     FULL_FRAME,
     MASKED,
@@ -319,3 +320,115 @@ def test_the_ema_never_touches_the_composite_outside_the_regions():
     output = compositor.blend(source, compositor.smooth(second), render.alpha)
     outside = ~painted_mask(render.alpha)
     assert np.array_equal(output[outside], source[outside])
+
+
+# --- the crop action (issue #39, spec 8.2) ----------------------------------
+#
+# `crop` spends the frame's one diffusion call on one region instead of on the
+# whole capture, so the object gets the engine's whole 512x512 canvas. The blend
+# is the same blend - the same feathered alpha, the same "outside is the captured
+# byte" rule - reading a render that covers only the crop box. `origin` is what
+# says where that patch sits.
+
+
+def crop_selection(*boxes, max_instances=1):
+    raw = {"source_prompt": "wet denim",
+           "targets": [{"id": "t0", "concept": "person", "region": "full_box",
+                        "box_scale": 1.0, "max_instances": max_instances}],
+           "global": {"primitive": "crop"}}
+    result = validate_plan(raw)
+    assert result.plan is not None, result.reason
+    tracks = Tracks(tracks=tuple(
+        Track(track_id=index, box=Box(*box), concept="person", confidence=0.9)
+        for index, box in enumerate(boxes)), ticks=1)
+    return RegionScheduler().select(tracks, result.plan, W, H), result.plan
+
+
+def test_the_compositor_vocabulary_is_the_plan_s():
+    """One spelling for the primitive the plan names and the action it selects."""
+    import render_plan
+
+    assert (CROP, MASKED) == (render_plan.CROP, render_plan.MASKED)
+
+
+def test_one_region_under_crop_is_a_crop_render():
+    selection, plan = crop_selection(REGION)
+    render = Compositor().frame(selection, W, H, plan.settings.primitive)
+    assert render.action == CROP
+    assert render.crop == REGION
+    assert render.diffuses
+
+
+def test_two_regions_under_crop_fall_back_to_masked():
+    """Crop is one call per region, so a frame that selected two would cost two.
+    The frame renders rather than refusing, and the plan's note said this would
+    happen."""
+    selection, plan = crop_selection(REGION, Box(44, 5, 62, 30), max_instances=2)
+    assert selection.count == 2
+    render = Compositor().frame(selection, W, H, plan.settings.primitive)
+    assert render.action == MASKED
+    assert render.crop is None
+
+
+def test_no_region_under_crop_still_passes_the_capture_through():
+    selection, plan = crop_selection()
+    render = Compositor().frame(selection, W, H, plan.settings.primitive)
+    assert render.action == PASSTHROUGH
+
+
+def test_a_global_plan_ignores_the_crop_primitive():
+    """`crop` names one region to spend the canvas on; `global` names none."""
+    selection = selection_of(REGION, mode="global")
+    render = Compositor().frame(selection, W, H, CROP)
+    assert render.action == FULL_FRAME
+
+
+def test_the_crop_alpha_is_the_masked_alpha():
+    """The same feather, so the bit-identity rule is the same rule."""
+    selection, plan = crop_selection(REGION)
+    render = Compositor().frame(selection, W, H, plan.settings.primitive)
+    assert np.array_equal(render.alpha, feather_alpha([REGION], W, H))
+
+
+def test_changing_the_primitive_rebuilds_the_render():
+    compositor = Compositor()
+    selection, _ = crop_selection(REGION)
+    assert compositor.frame(selection, W, H, MASKED).action == MASKED
+    assert compositor.frame(selection, W, H, CROP).action == CROP
+
+
+# --- the blend, with the render covering only the crop box ------------------
+
+
+def crop_patch(seed, box):
+    generator = np.random.default_rng(seed)
+    return generator.integers(0, 256, size=(box.height, box.width, 3), dtype=np.uint8)
+
+
+def test_a_patch_at_its_origin_blends_exactly_as_a_full_frame_render_would():
+    source = frame(1)
+    full = frame(2)
+    alpha = feather_alpha([REGION], W, H)
+    patch = full[REGION.y0:REGION.y1, REGION.x0:REGION.x1]
+    assert np.array_equal(
+        composite(source, patch, alpha, origin=(REGION.x0, REGION.y0)),
+        composite(source, full, alpha))
+
+
+def test_outside_the_crop_the_output_is_bit_identical_to_the_capture():
+    source = frame(3)
+    alpha = feather_alpha([REGION], W, H)
+    output = composite(source, crop_patch(4, REGION), alpha,
+                       origin=(REGION.x0, REGION.y0))
+    mask = painted_mask(alpha)
+    assert np.array_equal(output[~mask], source[~mask])
+
+
+def test_a_patch_smaller_than_the_alpha_is_a_producer_bug():
+    """The patch has to cover every pixel the alpha paints; a short one would
+    silently blend the wrong pixels rather than raising."""
+    source = frame(5)
+    alpha = feather_alpha([REGION], W, H)
+    with pytest.raises(ValueError):
+        composite(source, crop_patch(6, Box(0, 0, 4, 4)), alpha,
+                  origin=(REGION.x0, REGION.y0))

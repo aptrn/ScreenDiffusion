@@ -41,6 +41,7 @@ from typing import List, Optional, Tuple
 import numpy as np
 
 from compositor import DEFAULT_FEATHER_PX, Compositor, alpha_bounds
+from detection import Box
 
 # Where a frame's blend ran. Recorded by the bench beside the milliseconds, because
 # a composite figure measured on the host and one measured on the device are two
@@ -94,6 +95,68 @@ def rendered_frames(rendered):
     return _as_bhwc(rendered).float().mul(255.0).round().to(torch.uint8)
 
 
+def resize_uint8(frames, width: int, height: int):
+    """`frames`, uint8 BHWC on the device, at a new size. uint8 BHWC out.
+
+    The capture and the diffusion canvas are two sizes since issue #39, so a
+    render has to be grown back to the geometry it is composited onto - to the
+    whole capture under `masked`, to the crop box under `crop`. Identity when the
+    size already matches, which is the shipped 512x512-onto-512x512 case and the
+    reason nothing this change adds costs that configuration a single operation.
+
+    This is deliberately **not** under the host/device byte-identity rule the
+    blend is under: there is no numpy resampler in `compositor.py` to hold it to,
+    and none is wanted - the frame loop's other resize (the capture thread's) is
+    a torch interpolate too. What the rule protects is the background, and the
+    background is untouched by this: the blend still starts from a clone of the
+    capture and writes only inside the alpha.
+    """
+    import torch
+
+    if frames.shape[1] == height and frames.shape[2] == width:
+        return frames
+    planes = frames.permute(0, 3, 1, 2).to(torch.float32)
+    shrinking = width * height < frames.shape[2] * frames.shape[1]
+    resized = torch.nn.functional.interpolate(
+        planes, size=(height, width), mode="bilinear", align_corners=False,
+        antialias=shrinking)
+    return resized.round().clamp(0.0, 255.0).to(torch.uint8).permute(0, 2, 3, 1)
+
+
+def to_canvas(capture, width: int, height: int):
+    """The capture as the engine's canvas: float BCHW in, float BCHW out.
+
+    The other half of issue #39's split, on the way *in*. The capture thread hands
+    the frame loop a frame at the capture geometry - 1920x1080, say - and the
+    engine is 512x512 whatever the directory name claims (spec 7.2), so a frame
+    that is not already the canvas is resized onto it here rather than by
+    `preprocess_image`, which would want a host PIL image and a round trip.
+    """
+    import torch
+
+    if capture.shape[-2] == height and capture.shape[-1] == width:
+        return capture
+    shrinking = width * height < capture.shape[-1] * capture.shape[-2]
+    return torch.nn.functional.interpolate(
+        capture, size=(height, width), mode="bilinear", align_corners=False,
+        antialias=shrinking)
+
+
+def crop_to_canvas(capture, box: Box, width: int, height: int):
+    """One region of the capture, on the engine's whole canvas. `crop`, on the way in.
+
+    This is the whole primitive in one line of slicing: the region is cut out and
+    resized to 512x512 on its own, so an object occupying a tenth of the frame is
+    diffused at 512 px rather than at 50. The aspect ratio is *not* preserved -
+    the region is stretched onto the square canvas and squeezed back afterwards -
+    because that is what `bench.primitive_runner`'s arm A does and what spec 8.2's
+    option A means, and a shipped primitive measured against a different geometry
+    than the one that was compared is not the one that was compared.
+    """
+    box = Box(*box)
+    return to_canvas(capture[..., box.y0:box.y1, box.x0:box.x1], width, height)
+
+
 def ema_blend_device(previous, current, coefficient: float):
     """`compositor.ema_blend`'s body, on tensors. uint8 in, uint8 out.
 
@@ -109,7 +172,8 @@ def ema_blend_device(previous, current, coefficient: float):
     return (below + (above - below) * float(coefficient)).round().to(torch.uint8)
 
 
-def composite_device(source, rendered, weights, bounds: Bounds):
+def composite_device(source, rendered, weights, bounds: Bounds,
+                     origin: Tuple[int, int] = (0, 0)):
     """`rendered` blended onto `source` through `weights`. uint8 in, uint8 out.
 
     `compositor.composite`'s body, on tensors: the same interpolation written the
@@ -118,13 +182,18 @@ def composite_device(source, rendered, weights, bounds: Bounds):
     only the bounding rectangle of a non-zero alpha is written at all. Outside it
     the output is not recomputed to the same value - it is the captured byte,
     copied.
+
+    `origin` is the host body's, for the host body's reason: under `crop` the
+    render covers the crop box and not the frame, and where it sits is one
+    subtraction rather than a second blend.
     """
     import torch
 
     x0, y0, x1, y1 = bounds
+    left, top = origin
     output = source.clone()
     below = source[:, y0:y1, x0:x1].to(torch.float32)
-    above = rendered[:, y0:y1, x0:x1].to(torch.float32)
+    above = rendered[:, y0 - top:y1 - top, x0 - left:x1 - left].to(torch.float32)
     output[:, y0:y1, x0:x1] = (
         (below + (above - below) * weights).round().to(torch.uint8))
     return output
@@ -177,14 +246,22 @@ class DeviceCompositor(Compositor):
         self._previous_device = smoothed
         return smoothed
 
-    def blend_device(self, capture, rendered, alpha: np.ndarray) -> List[np.ndarray]:
+    def blend_device(self, capture, rendered, alpha: np.ndarray,
+                     crop: Optional[Box] = None) -> List[np.ndarray]:
         """This frame's blend, on the device; the finished frames, on the host.
 
-        `capture` is the tensor the engine was given and `rendered` is what it
-        returned under `output_type="pt"`, so neither has been to the host yet.
-        The `.cpu()` at the end is the frame's **one** device-to-host copy, and it
+        `capture` is the capture thread's own tensor - at the *capture* geometry,
+        which since issue #39 need not be the canvas - and `rendered` is what the
+        engine returned under `output_type="pt"`, always at the canvas. The
+        `.cpu()` at the end is the frame's **one** device-to-host copy, and it
         carries uint8 HWC - a quarter of the bytes the float round trip it replaces
         carried, and none of the PIL conversion that followed it.
+
+        `crop` is the box the render covers under the `crop` primitive; None means
+        it covers the whole capture. Either way the render is resized to the
+        geometry it is composited onto, the EMA runs on the *rendered canvas*
+        before that (which is what spec 8.5's safety argument is about), and the
+        alpha decides every pixel that is written.
         """
         source = capture_frames(capture)
         weights, bounds = self._alpha_on(alpha, source.device)
@@ -192,7 +269,12 @@ class DeviceCompositor(Compositor):
             # An alpha of nothing: the capture, exactly as `composite` returns it.
             return _to_host(source)
         smoothed = self.smooth_device(rendered_frames(rendered))
-        return _to_host(composite_device(source, smoothed, weights, bounds))
+        height, width = ((source.shape[1], source.shape[2]) if crop is None
+                         else (Box(*crop).height, Box(*crop).width))
+        placed = resize_uint8(smoothed, width, height)
+        origin = (0, 0) if crop is None else (Box(*crop).x0, Box(*crop).y0)
+        return _to_host(
+            composite_device(source, placed, weights, bounds, origin))
 
     def _alpha_on(self, alpha: np.ndarray, device):
         """The alpha's non-zero rectangle as a device tensor, uploaded once.

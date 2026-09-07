@@ -584,3 +584,52 @@ def test_an_output_ema_that_is_not_a_number_is_refused():
     result = validate_plan({"global": {"output_ema": "smooth"}})
     assert not result.ok
     assert "output_ema" in result.reason
+
+
+# --- the rendering primitive (issue #39, spec 8.2) --------------------------
+#
+# `global.primitive` is the lever that gives one object the whole 512x512 canvas
+# instead of the fraction of it the frame's own downscale leaves. It is a plan
+# field rather than a harness flag for the reason `output_ema` is: the worker has
+# to be able to be put into it from the producer the GUI already sends.
+
+
+def test_the_shipped_primitive_is_masked():
+    """What issue #5 chose and every committed baseline was measured under."""
+    from render_plan import DEFAULT_PRIMITIVE, MASKED
+
+    assert DEFAULT_PRIMITIVE == MASKED
+    assert ok({}).settings.primitive == MASKED
+
+
+def test_a_plan_can_ask_for_crop():
+    from render_plan import CROP
+
+    assert ok({"global": {"primitive": "crop"}}).settings.primitive == CROP
+
+
+def test_a_primitive_outside_the_vocabulary_is_refused():
+    result = validate_plan({"global": {"primitive": "inpaint"}})
+    assert result.plan is None
+    assert "primitive" in result.reason
+
+
+def test_crop_with_more_than_one_slot_is_noted_rather_than_refused():
+    """Crop is one diffusion call per region, so a frame that selects six of them
+    costs six. The plan is still renderable - the compositor falls back per frame -
+    but a producer that asked for it is told."""
+    result = validate_plan({
+        "global": {"primitive": "crop"},
+        "targets": [{"id": "t0", "concept": "person", "max_instances": 6}],
+    })
+    assert result.plan is not None
+    assert any("crop" in note and "max_instances" in note for note in result.notes)
+
+
+def test_crop_at_one_slot_is_noted_about_nothing():
+    result = validate_plan({
+        "global": {"primitive": "crop"},
+        "targets": [{"id": "t0", "concept": "person", "max_instances": 1}],
+    })
+    assert result.plan is not None
+    assert not any("max_instances" in note for note in result.notes)

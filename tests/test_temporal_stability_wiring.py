@@ -46,7 +46,7 @@ def test_the_noise_field_is_imported_at_module_scope():
     imported = {alias.name for node in ast.walk(TREE)
                 if isinstance(node, ast.ImportFrom) and node.module == "seeding"
                 for alias in node.names}
-    assert imported == {"NoiseField"}
+    assert imported == {"CanvasGeometry", "NoiseField"}
 
 
 def test_the_noise_field_is_built_once_and_held_across_frames():
@@ -74,7 +74,7 @@ def test_the_noise_is_written_before_the_call_that_reads_it():
     """`init_noise` is added to the latent inside `img2img`, so a write after it is
     a write the frame renders without."""
     body = WORKER_TEXT
-    assert body.index("noise.apply(") < body.index("stream.img2img(batch, output_type")
+    assert body.index("noise.apply(") < body.index("stream.img2img(canvas, output_type")
 
 
 def test_the_noise_is_applied_once_per_frame():

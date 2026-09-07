@@ -235,3 +235,73 @@ def _on_device(torch, array):
     frames = array if array.ndim == 4 else array[None]
     tensor = torch.from_numpy(frames.copy()).to(device="cuda", dtype=torch.float16)
     return tensor.permute(0, 3, 1, 2) / 255.0
+
+
+# --- the crop primitive and the capture/canvas split (issue #39) -------------
+#
+# Under `crop` the engine returns a render covering only one region, and at a
+# capture larger than the canvas it returns one that has to be grown back before
+# it can be blended. Both are still the same blend: what is asserted here is that
+# the bytes agree with the host reference given the same *already-placed* render,
+# and that the background is still the captured byte on either path.
+
+
+CROP_BOX = Box(12, 10, 44, 34)
+
+
+def test_a_crop_render_blends_exactly_as_the_host_composite_does(torch):
+    """The device path resizes the canvas back to the crop box and blends there;
+    the host reference is handed that same patch at the same origin."""
+    from device_compositor import resize_uint8
+
+    alpha = feather_alpha([CROP_BOX], W, H)
+    source, canvas = frames(11)[0], frames(12)[0]
+    patch = resize_uint8(torch.from_numpy(canvas).to("cuda").unsqueeze(0),
+                         CROP_BOX.width, CROP_BOX.height)
+    host = composite(source, patch[0].cpu().numpy(), alpha,
+                     origin=(CROP_BOX.x0, CROP_BOX.y0))
+
+    device = DeviceCompositor().blend_device(
+        _on_device(torch, source), _on_device(torch, canvas),
+        alpha, crop=CROP_BOX)[0]
+
+    assert np.array_equal(device, host)
+
+
+def test_a_crop_render_leaves_the_background_bit_identical(torch):
+    alpha = feather_alpha([CROP_BOX], W, H)
+    source = frames(13)[0]
+    rendered = _on_device(torch, frames(14)[0])
+
+    output = DeviceCompositor().blend_device(
+        _on_device(torch, source), rendered, alpha, crop=CROP_BOX)[0]
+
+    outside = ~(alpha > 0.0)
+    assert np.array_equal(output[outside], source[outside])
+
+
+def test_a_render_smaller_than_the_capture_is_grown_back_before_the_blend(torch):
+    """The capture/canvas split: a 512 canvas composited onto a bigger capture."""
+    alpha = feather_alpha([Box(0, 0, W, H)], W, H, feather_px=0)
+    source = frames(15)[0]
+    small = _on_device(torch, frames(16)[0][: H // 2, : W // 2])
+
+    output = DeviceCompositor().blend_device(
+        _on_device(torch, source), small, alpha)[0]
+
+    assert output.shape == source.shape
+
+
+def test_a_crop_costs_one_device_to_host_copy(torch, monkeypatch):
+    """The resize must not smuggle a second round trip in."""
+    import device_compositor as module
+
+    alpha = feather_alpha([CROP_BOX], W, H)
+    copies = []
+    original = module._to_host
+    monkeypatch.setattr(module, "_to_host",
+                        lambda frames: (copies.append(1), original(frames))[1])
+    module.DeviceCompositor().blend_device(
+        _on_device(torch, frames(17)[0]),
+        _on_device(torch, frames(18)[0]), alpha, crop=CROP_BOX)
+    assert len(copies) == 1

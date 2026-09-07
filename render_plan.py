@@ -75,6 +75,21 @@ PASSTHROUGH = "passthrough"
 STYLIZE = "stylize"
 BACKGROUND_ACTIONS: Tuple[str, ...] = (PASSTHROUGH, STYLIZE)
 
+# How a frame's diffusion call is spent (spec 8.2, issue #39). `masked` is issue
+# #5's choice and what every committed baseline was measured under: the whole
+# capture is squeezed onto the engine's 512x512 canvas, diffused once and
+# composited through the regions' mask. `crop` spends the same one call on **one**
+# region instead - the region is cut out of the capture, resized to the canvas on
+# its own, diffused and pasted back - so an object occupying a tenth of a 1080p
+# frame is diffused at 512 px rather than at 50. It is the same cost per frame and
+# a different place to spend it; what it costs is every *other* object in the
+# frame, which is why it is honoured only on a frame that selected exactly one
+# region and falls back to `masked` on any other.
+MASKED = "masked"
+CROP = "crop"
+PRIMITIVES: Tuple[str, ...] = (MASKED, CROP)
+DEFAULT_PRIMITIVE = MASKED
+
 # `global` is a Python keyword, so `RenderPlan` cannot carry a field of that name.
 # The *wire* key stays `global`, because that is what spec section 6 defines.
 GLOBAL_KEY = "global"
@@ -325,6 +340,7 @@ class GlobalSettings:
     fps_target: int = DEFAULT_FPS_TARGET
     detect_every_n: int = DEFAULT_DETECT_EVERY_N
     output_ema: float = DEFAULT_OUTPUT_EMA
+    primitive: str = DEFAULT_PRIMITIVE
 
     def to_dict(self) -> Dict[str, Any]:
         return dataclasses.asdict(self)
@@ -616,6 +632,8 @@ def _settings(raw: Any, notes: List[str]) -> GlobalSettings:
                                as_int=True),
         output_ema=_number(raw.get("output_ema"), "output_ema", *OUTPUT_EMA_RANGE,
                            DEFAULT_OUTPUT_EMA, notes),
+        primitive=_choice(raw.get("primitive"), "primitive", PRIMITIVES,
+                          DEFAULT_PRIMITIVE),
     )
 
 
@@ -647,6 +665,27 @@ def _honoured_note(targets: Tuple[Target, ...]) -> Optional[str]:
     )
 
 
+def _crop_note(settings: GlobalSettings, targets: Tuple[Target, ...]) -> Optional[str]:
+    """Say it when a plan asks for `crop` at more slots than crop can spend.
+
+    Crop gives one region the whole canvas, so a frame that selected six regions
+    would need six diffusion calls - the 5.87x issue #5 measured. The compositor
+    falls back to `masked` on such a frame rather than paying it, and the plan is
+    still perfectly renderable; what would not be all right is a producer asking
+    for the high-detail primitive, getting the low-detail one, and hearing nothing.
+    """
+    if settings.primitive != CROP:
+        return None
+    plural = [target for target in targets if target.max_instances > 1]
+    if not plural:
+        return None
+    return (
+        f"`{CROP}` gives one region the whole canvas, so it is honoured only on a "
+        f"frame that selected exactly one; {', '.join(t.id for t in plural)} ask "
+        f"for max_instances above 1 and those frames fall back to `{MASKED}`"
+    )
+
+
 def validate_plan(raw: Any, previous_version: int = INITIAL_PLAN_VERSION,
                   detector: Optional[DetectorVocabulary] = None) -> PlanValidation:
     """Turn anything into a `RenderPlan`, or into the reason it is not one.
@@ -666,6 +705,10 @@ def validate_plan(raw: Any, previous_version: int = INITIAL_PLAN_VERSION,
         honoured = _honoured_note(targets)
         if honoured:
             notes.append(honoured)
+        settings = _settings(raw.get(GLOBAL_KEY), notes)
+        crop = _crop_note(settings, targets)
+        if crop:
+            notes.append(crop)
         plan = RenderPlan(
             plan_version=int(previous_version) + 1,
             source_prompt=_text(raw.get("source_prompt"), "source_prompt"),
@@ -673,7 +716,7 @@ def validate_plan(raw: Any, previous_version: int = INITIAL_PLAN_VERSION,
             mode=_mode(raw.get("mode"), targets),
             targets=targets,
             background=_background(raw.get("background"), notes),
-            settings=_settings(raw.get(GLOBAL_KEY), notes),
+            settings=settings,
             confidence=_number(raw.get("confidence"), "confidence", *CONFIDENCE_RANGE,
                                DEFAULT_CONFIDENCE, notes),
             notes=_text(raw.get("notes"), "notes"),

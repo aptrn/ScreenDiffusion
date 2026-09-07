@@ -4,7 +4,7 @@ import tempfile, time, queue, random, threading, pathlib, subprocess, shutil, re
 from collections import deque
 from multiprocessing import get_context, Queue
 from multiprocessing.connection import Connection
-from typing import List, Literal, Dict, Mapping, NamedTuple, Optional, Deque, Any, Sequence, Union
+from typing import List, Literal, Dict, Mapping, NamedTuple, Optional, Deque, Any, Sequence, Tuple, Union
 import numpy as np
 from PIL import Image, ImageTk, ImageDraw
 import PIL.Image
@@ -41,12 +41,41 @@ from detector_worker import BackgroundDetector, UltralyticsDetector, frame_to_ar
 # blend itself runs on the device (issue #31), but `device_compositor` imports torch
 # inside the functions that need it, so this import costs the GUI process nothing.
 from region_scheduler import RegionScheduler
-from compositor import MASKED
-from device_compositor import DeviceCompositor
+from compositor import CROP, MASKED
+from device_compositor import DeviceCompositor, crop_to_canvas, to_canvas
 # Temporal stability (issue #32, spec 8.5): the plan's `seed_policy` applied to the
 # engine's latent noise. Stdlib here too - torch lives inside the methods that write
 # a tensor, so the GUI process pays nothing for this import either.
-from seeding import NoiseField
+from seeding import CanvasGeometry, NoiseField
+
+# The engine's canvas, and the capture geometry that is no longer the same thing
+# (issue #39, spec 8.2). Every TensorRT engine this app builds is 512x512 whatever
+# its directory name claims (spec 7.2), so the canvas is fixed and it is the
+# *capture* that moves: a 512x512 capture window is too small to get an object
+# into frame at all, and under the masked primitive a bigger one would only give
+# each object *fewer* diffusion pixels - which is why the capture size and the
+# plan's `primitive` are two halves of one change.
+DIFFUSION_CANVAS = 512
+
+# What the capture-size box offers. The default is the canvas, so the app out of
+# the box is the app every committed measurement was taken on.
+DEFAULT_CAPTURE = "512 x 512 (canvas)"
+CAPTURE_PRESETS: Dict[str, Tuple[int, int]] = {
+    DEFAULT_CAPTURE: (DIFFUSION_CANVAS, DIFFUSION_CANVAS),
+    "960 x 540": (960, 540),
+    "1280 x 720": (1280, 720),
+    "1920 x 1080": (1920, 1080),
+}
+
+
+def capture_size(label: str) -> Tuple[int, int]:
+    """The capture geometry a preset label names, or the canvas.
+
+    Unknown falls back rather than raising: the label reaches here from a widget
+    whose value a stale preference could have set, and starting the worker on the
+    size it has always used is a better answer than not starting it.
+    """
+    return CAPTURE_PRESETS.get(label, CAPTURE_PRESETS[DEFAULT_CAPTURE])
 
 APP_ROOT = (Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent)
 INTERNAL_DIR = APP_ROOT / "_internal"
@@ -683,13 +712,21 @@ def _monitor_rc_from_point(x: int, y: int):
     return r.left, r.top, r.right, r.bottom
 
 class FloatingCaptureWindow:
-    def __init__(self, master: tk.Tk, inner_size=512, border_px=8, handle_h=28):
+    """The on-screen rectangle the worker captures.
+
+    Two sides rather than one since issue #39: the capture geometry is no longer
+    the engine's square canvas, and a 512x512 window is exactly the problem that
+    issue was opened about - too small to get a whole object into frame.
+    """
+
+    def __init__(self, master: tk.Tk, inner_w=512, inner_h=512, border_px=8, handle_h=28):
         self.master = master
-        self.inner_size = int(inner_size)
+        self.inner_w = int(inner_w)
+        self.inner_h = int(inner_h)
         self.border_px = int(border_px)
         self.handle_h = int(handle_h)
-        total_w = self.inner_size + self.border_px * 2
-        total_h = self.handle_h + self.inner_size + self.border_px
+        total_w = self.inner_w + self.border_px * 2
+        total_h = self.handle_h + self.inner_h + self.border_px
         self.win = tk.Toplevel(master)
         self.win.overrideredirect(True)
         self.win.attributes("-topmost", True)
@@ -705,9 +742,9 @@ class FloatingCaptureWindow:
         self.handle_color = "#7f1d1d"
         self.canvas.create_rectangle(0, 0, total_w, self.handle_h, fill=self.handle_color, outline=self.handle_color)
         self.canvas.create_text(10, self.handle_h // 2, anchor="w", text="Capture 512×512", fill="#ffffff", font=("Segoe UI", 9, "bold"))
-        self.canvas.create_rectangle(0, self.handle_h, self.border_px, self.handle_h + self.inner_size + self.border_px, fill=self.border_color, outline=self.border_color)
-        self.canvas.create_rectangle(self.border_px + self.inner_size, self.handle_h, total_w, self.handle_h + self.inner_size + self.border_px, fill=self.border_color, outline=self.border_color)
-        self.canvas.create_rectangle(0, self.handle_h + self.inner_size, total_w, self.handle_h + self.inner_size + self.border_px, fill=self.border_color, outline=self.border_color)
+        self.canvas.create_rectangle(0, self.handle_h, self.border_px, self.handle_h + self.inner_h + self.border_px, fill=self.border_color, outline=self.border_color)
+        self.canvas.create_rectangle(self.border_px + self.inner_w, self.handle_h, total_w, self.handle_h + self.inner_h + self.border_px, fill=self.border_color, outline=self.border_color)
+        self.canvas.create_rectangle(0, self.handle_h + self.inner_h, total_w, self.handle_h + self.inner_h + self.border_px, fill=self.border_color, outline=self.border_color)
         self._apply_window_region(total_w, total_h)
         self._drag_start = None
         self.canvas.bind("<Button-1>", self._on_mouse_down)
@@ -723,11 +760,11 @@ class FloatingCaptureWindow:
     def _apply_window_region(self, total_w: int, total_h: int):
         try:
             region = CreateRectRgn(0, 0, total_w, self.handle_h)
-            left = CreateRectRgn(0, self.handle_h, self.border_px, self.handle_h + self.inner_size + self.border_px)
+            left = CreateRectRgn(0, self.handle_h, self.border_px, self.handle_h + self.inner_h + self.border_px)
             CombineRgn(region, region, left, RGN_OR); DeleteObject(left)
-            right = CreateRectRgn(self.border_px + self.inner_size, self.handle_h, total_w, self.handle_h + self.inner_size + self.border_px)
+            right = CreateRectRgn(self.border_px + self.inner_w, self.handle_h, total_w, self.handle_h + self.inner_h + self.border_px)
             CombineRgn(region, region, right, RGN_OR); DeleteObject(right)
-            bottom = CreateRectRgn(0, self.handle_h + self.inner_size, total_w, self.handle_h + self.inner_size + self.border_px)
+            bottom = CreateRectRgn(0, self.handle_h + self.inner_h, total_w, self.handle_h + self.inner_h + self.border_px)
             CombineRgn(region, region, bottom, RGN_OR); DeleteObject(bottom)
             SetWindowRgn(self.win.winfo_id(), region, True)
         except Exception:
@@ -758,7 +795,7 @@ class FloatingCaptureWindow:
         self.win.update_idletasks()
         x = int(self.win.winfo_rootx()) + self.border_px
         y = int(self.win.winfo_rooty()) + self.handle_h
-        return {"left": x, "top": y, "width": self.inner_size, "height": self.inner_size}
+        return {"left": x, "top": y, "width": self.inner_w, "height": self.inner_h}
 
 def _screen_capture_loop_dx(stop_evt: threading.Event, height: int, width: int, region_ref: Dict[str, Dict[str, int]], max_buffer: int, inputs_list: List[Any]):
     torch = PreloadedDependencies.get_torch()
@@ -860,7 +897,7 @@ def _load_stream_wrapper():
     spec.loader.exec_module(mod)
     return getattr(mod, "StreamDiffusionWrapper")
 
-def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Queue, status_queue: Queue, control_queue: Queue, debug_queue: Queue, t_index_list: List[int], model_path_dir: str, controlnet_paths: List[str], controlnet_scales: List[float], lora_dict: Optional[Dict[str, float]], use_lcm_lora: bool, lcm_lora_id: Optional[str], prompt: str, negative_prompt: str, frame_buffer_size: int, width: int, height: int, acceleration: Literal["none", "xformers", "tensorrt"], use_denoising_batch: bool, seed: int, cfg_type: Literal["none", "full", "self", "initialize"], guidance_scale: float, delta: float, do_add_noise: bool, enable_similar_image_filter: bool, similar_image_filter_threshold: float, similar_image_filter_max_skip_frame: float, monitor_receiver: Connection, offline: bool = True, engine_dir: Optional[str] = None) -> None:
+def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Queue, status_queue: Queue, control_queue: Queue, debug_queue: Queue, t_index_list: List[int], model_path_dir: str, controlnet_paths: List[str], controlnet_scales: List[float], lora_dict: Optional[Dict[str, float]], use_lcm_lora: bool, lcm_lora_id: Optional[str], prompt: str, negative_prompt: str, frame_buffer_size: int, width: int, height: int, acceleration: Literal["none", "xformers", "tensorrt"], use_denoising_batch: bool, seed: int, cfg_type: Literal["none", "full", "self", "initialize"], guidance_scale: float, delta: float, do_add_noise: bool, enable_similar_image_filter: bool, similar_image_filter_threshold: float, similar_image_filter_max_skip_frame: float, monitor_receiver: Connection, offline: bool = True, engine_dir: Optional[str] = None, canvas_width: int = DIFFUSION_CANVAS, canvas_height: int = DIFFUSION_CANVAS) -> None:
     import sys, os
     from pathlib import Path
     
@@ -908,7 +945,8 @@ def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Qu
             """
             wrapper = StreamDiffusionWrapper(
                 model_id_or_path=model_path_dir, t_index_list=list(steps),
-                frame_buffer_size=frame_buffer_size, width=width, height=height,
+                frame_buffer_size=frame_buffer_size,
+                width=canvas_width, height=canvas_height,
                 warmup=2, acceleration=acceleration, do_add_noise=do_add_noise,
                 enable_similar_image_filter=enable_similar_image_filter,
                 similar_image_filter_threshold=similar_image_filter_threshold,
@@ -1092,11 +1130,12 @@ def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Qu
                 # the capture as it stands, a full-frame render, or a full-frame
                 # render composited through a feathered mask.
                 selection = scheduler.select(tracks, frame_plan.plan, width, height)
-                render = compositor.frame(selection, width, height)
+                render = compositor.frame(selection, width, height,
+                                          frame_plan.plan.settings.primitive)
 
                 images = []
                 if render.diffuses:
-                    if render.action == MASKED:
+                    if render.action in (MASKED, CROP):
                         # Onto the capture the engine was given, never onto the
                         # previous output: outside the regions the frame has to be
                         # the captured pixels, byte for byte.
@@ -1105,13 +1144,28 @@ def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Qu
                         # the render where it was made, the blend runs beside it,
                         # and the frame makes one host copy - of uint8, after the
                         # mask, instead of float, before it.
-                        noise.apply(stream, selection)
-                        rendered = stream.img2img(batch, output_type="pt")
+                        #
+                        # What the engine is handed is the *canvas* (issue #39):
+                        # the whole capture squeezed onto it under `masked`, and
+                        # one region blown up to fill it under `crop` - one
+                        # diffusion call either way, spent in two different
+                        # places. The geometry is what maps the selection's
+                        # captured-pixel boxes onto that canvas for the noise.
+                        geometry = CanvasGeometry(width, height, canvas_width,
+                                                  canvas_height, render.crop)
+                        canvas = (to_canvas(batch, canvas_width, canvas_height)
+                                  if render.crop is None else
+                                  crop_to_canvas(batch, render.crop,
+                                                 canvas_width, canvas_height))
+                        noise.apply(stream, selection, geometry)
+                        rendered = stream.img2img(canvas, output_type="pt")
                         images = [Image.fromarray(frame) for frame
                                   in compositor.blend_device(batch, rendered,
-                                                             render.alpha)]
+                                                             render.alpha,
+                                                             render.crop)]
                     else:
-                        res = stream.img2img(batch)
+                        res = stream.img2img(
+                            to_canvas(batch, canvas_width, canvas_height))
                         if isinstance(res, Image.Image): images = [res]
                         elif isinstance(res, list): images = res
                 else:
@@ -1357,8 +1411,12 @@ class StreamGUI(ctk.CTk):
         self.target_var = ctk.StringVar(value="")
         self.style_var = ctk.StringVar(value="")
         self.seed_var = ctk.StringVar(value="1")
-        self.width_var = ctk.IntVar(value=512)
-        self.height_var = ctk.IntVar(value=512)
+        # The capture geometry, which since issue #39 is not the engine's canvas.
+        # `width_var`/`height_var` are what reaches the worker; `capture_var` is
+        # the label a user picks and the only one with a widget.
+        self.capture_var = ctk.StringVar(value=DEFAULT_CAPTURE)
+        self.width_var = ctk.IntVar(value=CAPTURE_PRESETS[DEFAULT_CAPTURE][0])
+        self.height_var = ctk.IntVar(value=CAPTURE_PRESETS[DEFAULT_CAPTURE][1])
         self.buffer_var = ctk.StringVar(value="1")
         self.accel_var = ctk.StringVar(value="xformers")
         # Ignored for sd-turbo (already 1-step). For SD1.5 this pulls
@@ -1763,6 +1821,15 @@ class StreamGUI(ctk.CTk):
             self._w_buffer_entry = ctk.CTkEntry(g2, textvariable=self.buffer_var, width=70)
             self._w_buffer_entry.grid(row=1, column=col, sticky="ew"); col += 1
             self._register_lockables(self._w_buffer_entry)
+        # Capture size. Not the engine's canvas: TensorRT builds every engine at
+        # 512x512 (spec 7.2), so this widens what is *grabbed* and the frame loop
+        # resizes onto the canvas. Locked while a run is live - the capture thread
+        # and the capture window are both sized at start.
+        ctk.CTkLabel(g2, text="Capture").grid(row=0, column=col, sticky="w")
+        self._w_capture_combo = ctk.CTkComboBox(
+            g2, values=list(CAPTURE_PRESETS), variable=self.capture_var, width=150)
+        self._w_capture_combo.grid(row=1, column=col, sticky="ew"); col += 1
+        self._register_lockables(self._w_capture_combo)
         if SHOW.get("acceleration", True):
             ctk.CTkLabel(g2, text="Acceleration").grid(row=0, column=col, sticky="w")
             self._w_accel_combo = ctk.CTkComboBox(g2, values=["none", "xformers", "tensorrt"], variable=self.accel_var, width=120)
@@ -2266,6 +2333,11 @@ class StreamGUI(ctk.CTk):
                     "Continue?"):
                     return
         controlnet_paths: List[str] = []; controlnet_scales: List[float] = []
+        # One reading of what was picked, for the worker, the capture thread and
+        # the capture window alike - three sizes that have to agree or the mask
+        # lands somewhere other than the object.
+        capture_w, capture_h = capture_size(self.capture_var.get())
+        self.width_var.set(capture_w); self.height_var.set(capture_h)
         self.proc_worker = ctx.Process(
             target=image_generation_process,
             args=(
@@ -2274,14 +2346,15 @@ class StreamGUI(ctk.CTk):
                 lora_dict, bool(self.use_lcm_lora_var.get()),
                 (LOCAL_LCM_LORA if os.path.isfile(LOCAL_LCM_LORA) else None),
                 self.prompt_txt.get("1.0", "end").strip(), self.neg_prompt_txt.get("1.0", "end").strip(), 
-                int(self.buffer_var.get()), int(self.width_var.get()), int(self.height_var.get()), 
+                int(self.buffer_var.get()), capture_w, capture_h, 
                 self.accel_var.get(), True, int(self.seed_var.get()), 
                 "none", 0.0, 0.5, True, False, 0.99, 10.0,  # <-- Changed the first 'False' to 'True' here!
-                self.monitor_receiver, True, str(resolve_engines_dir())
+                self.monitor_receiver, True, str(resolve_engines_dir()),
+                DIFFUSION_CANVAS, DIFFUSION_CANVAS,
             )
         )
         self.proc_worker.start()
-        self.capwin = FloatingCaptureWindow(self, inner_size=self.preview_dim, border_px=8, handle_h=28)
+        self.capwin = FloatingCaptureWindow(self, inner_w=capture_w, inner_h=capture_h, border_px=8, handle_h=28)
         try: self.monitor_sender.send(self._overlay_screen_rect())
         except Exception: pass
         self.running = True
