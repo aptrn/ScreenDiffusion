@@ -97,10 +97,13 @@ DEFAULT_PRIORITY = 1
 FPS_TARGET_RANGE: Tuple[int, int] = (1, 240)
 DEFAULT_FPS_TARGET = 30  # spec 7.1
 
-# Detect every Nth frame. 3 is what spec 7.1 budgets and what issue #4 measured
-# YOLO-World inside; past 30 the tracker is bridging a whole second on its own.
+# Detect every Nth frame. 5 is measured rather than budgeted: issue #23 swept
+# 2/3/5/8 through the shipped path and 5 was the *freshest* cadence that fit the
+# frame budget with headroom to spare, at no cost in image quality and none in
+# identity (spec 8.8). Issue #33 adopted it. Past 30 the tracker is bridging a
+# whole second on its own.
 DETECT_EVERY_N_RANGE: Tuple[int, int] = (1, 30)
-DEFAULT_DETECT_EVERY_N = 3
+DEFAULT_DETECT_EVERY_N = 5
 
 CONFIDENCE_RANGE: Tuple[float, float] = (0.0, 1.0)
 # The compiler that would have reported less than full confidence is cut from v1, so

@@ -161,6 +161,31 @@ def test_the_arms_rendered_the_same_amount_of_frame():
     assert check.comparable, check.statement
 
 
+def test_the_shipped_default_is_the_cadence_the_deploy_card_recommends():
+    """Issue #33. Issue #23 measured the recommendation and deliberately left the
+    default behind it, so that the two cards' committed baselines stayed at one
+    cadence; this issue moved the field, and the two are now one thing.
+
+    The rule rather than the number: a re-sweep that moves the recommendation fails
+    here, so `DEFAULT_DETECT_EVERY_N` is re-decided rather than quietly left where
+    the last measurement put it. Judged on the deploy card because a frame-budget
+    claim is a deploy-hardware claim (spec 7.4); a machine that wanted a different
+    cadence would be an argument for a per-machine default, and this is where it
+    would surface.
+    """
+    from render_plan import DEFAULT_DETECT_EVERY_N
+
+    deploy = [gpu for gpu in {gpu_of(result) for result in rows()}
+              if is_deploy_gpu(gpu)]
+    assert deploy, "no deploy-hardware arm to take a shipped default from"
+    for gpu in deploy:
+        recommendation = recommend_cadence(measured_on(rows(), gpu))
+        assert recommendation.detect_every_n == DEFAULT_DETECT_EVERY_N, (
+            f"{gpu} recommends detect_every_n {recommendation.detect_every_n} and "
+            f"render_plan ships {DEFAULT_DETECT_EVERY_N}: "
+            f"{recommendation.statement}")
+
+
 def test_the_recommendation_is_a_cadence_that_was_actually_measured():
     for gpu in {gpu_of(result) for result in rows()}:
         recommendation = recommend_cadence(measured_on(rows(), gpu))

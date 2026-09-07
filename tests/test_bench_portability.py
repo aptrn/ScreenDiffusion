@@ -20,6 +20,9 @@ from bench.portability import (
     FRAME_BUDGET_MS,
     REGIONS_TOLERANCE,
     TARGET_FPS,
+    box_age_note,
+    cadence_note,
+    cadence_of,
     comparability,
     composite_note,
     composite_path,
@@ -43,7 +46,8 @@ def a_selective_result(gpu_name=LAPTOP, finished="2026-09-06T20:25:15Z",
                        composite_ms=4.03, composite_path=None,
                        flicker=1.49, peak_vram_bytes=3923605504,
                        background_passed=True, coverage_bound=3, coverage_worst=2,
-                       clock_state="unlocked"):
+                       clock_state="unlocked", detect_every_n=3,
+                       mean_age_frames=None):
     """One selective record, cut down to the fields the portability report reads."""
     fingerprint = a_fingerprint(gpu_name=gpu_name,
                                 clock_lock=a_lock(state=clock_state)).to_dict()
@@ -54,7 +58,7 @@ def a_selective_result(gpu_name=LAPTOP, finished="2026-09-06T20:25:15Z",
         "clip": {"name": "people.mp4", "width": 1280, "height": 720,
                  "frames_used": 48},
         "plan": {"concept": "person", "region": "lower_half", "t_index": 40,
-                 "detect_every_n": 3, "max_instances": 6},
+                 "detect_every_n": detect_every_n, "max_instances": 6},
         "run": {
             "finished_utc": finished, "frames": 48, "diffusion_calls": 48,
             "engine_scenario": "img2img-tensorrt-512x512-b1",
@@ -69,6 +73,11 @@ def a_selective_result(gpu_name=LAPTOP, finished="2026-09-06T20:25:15Z",
             "mean_sm_clock_mhz": 1667.5,
         },
         "regions": {"regions_per_frame": regions_per_frame, "slots": 6},
+        "staleness": (None if mean_age_frames is None else {
+            "detect_every_n": detect_every_n, "mean_age_frames": mean_age_frames,
+            "mean_age_ms": round(mean_age_frames * ms_per_frame, 4),
+            "worst_age_frames": 5, "ticks": 10, "refreshes": 40,
+            "mean_refresh_iou": 0.98, "statement": "a staleness statement"}),
         "flicker": {"mean_abs_diff": flicker},
         "gate": {
             "passed": background_passed,
@@ -374,7 +383,7 @@ def test_the_spread_is_over_runs_that_blended_the_way_this_one_did():
                                             with_detection=24.11,
                                             composite_path="device"),
     }
-    spread = fps_spread(results, DEPLOY, composite="device")
+    spread = fps_spread(results, DEPLOY, like=results["device-2.json"])
     assert spread.runs == 2
     assert 41.0 < spread.lowest_fps < spread.highest_fps < 43.0
     assert "2 earlier" in spread.statement and "host" in spread.statement
@@ -384,3 +393,118 @@ def test_a_spread_with_nothing_excluded_reads_as_it_always_did():
     results = {"a.json": a_selective_result(DEPLOY, with_detection=32.35),
                "b.json": a_selective_result(DEPLOY, with_detection=31.88)}
     assert "earlier" not in fps_spread(results, DEPLOY).statement
+
+
+# --- the cadence the two runs were measured at (issue #33) -------------------
+
+
+def test_the_cadence_is_read_off_the_plan_the_run_rendered():
+    """What a run measured is what the plan carried, not what the default is now."""
+    assert cadence_of(a_selective_result(detect_every_n=3)) == 3
+
+
+def test_two_runs_at_one_cadence_are_compared_without_a_caveat():
+    note = cadence_note(a_selective_result(LAPTOP, detect_every_n=5),
+                        a_selective_result(DEPLOY, detect_every_n=5))
+    assert "not hardware ratios" not in note
+    assert "5" in note
+
+
+def test_the_report_says_which_rows_a_cadence_difference_confounds():
+    """Issue #33's first trap. Detection is the only cost the cadence moves, so the
+    three rows it moves are named and the rest of the table still stands."""
+    report = format_portability_report({
+        "laptop.json": a_selective_result(LAPTOP, detect_every_n=3),
+        "deploy.json": a_selective_result(DEPLOY, "2026-09-07T12:00:00Z",
+                                          ms_per_frame=16.89, with_detection=23.75,
+                                          detect_ms=20.58, detect_every_n=5),
+    })
+    assert "not hardware ratios" in report
+    assert "detect_every_n" in report and "issue #33" in report
+
+
+def test_a_confounded_row_prints_no_ratio_at_all():
+    """A ratio is the part someone quotes, so the cell says why it is absent rather
+    than dividing two cadences' figures - the same rule `comparability` applies to
+    two region counts."""
+    report = format_portability_report({
+        "laptop.json": a_selective_result(LAPTOP, detect_every_n=3),
+        "deploy.json": a_selective_result(DEPLOY, "2026-09-07T12:00:00Z",
+                                          ms_per_frame=16.89, with_detection=23.75,
+                                          detect_ms=20.58, detect_every_n=5),
+    })
+    rows = {line.split("|")[1].strip(): line.split("|")[4].strip()
+            for line in report.splitlines() if line.startswith("| ")}
+    assert rows["ms/detect"] == "n/a"
+    assert rows["ms/frame, with detection"] == "n/a"
+    assert rows["FPS"] == "n/a"
+    assert rows["ms/frame, frame path"].endswith("x"), (
+        "the frame path is flat across the sweep, so it is still a hardware ratio")
+    assert rows["flicker (static px)"].endswith("x")
+
+
+def test_at_one_cadence_every_ratio_is_printed():
+    report = format_portability_report({
+        "laptop.json": a_selective_result(LAPTOP, detect_every_n=5),
+        "deploy.json": a_selective_result(DEPLOY, "2026-09-07T12:00:00Z",
+                                          ms_per_frame=16.89, with_detection=23.75,
+                                          detect_ms=20.58, detect_every_n=5),
+    })
+    assert "n/a" not in report
+
+
+def test_the_verdict_names_the_cadence_it_was_measured_at():
+    """The Gate's third item: a 30 FPS verdict that does not say how often it
+    detected is not restatable at another cadence."""
+    verdict = criterion_verdict(a_selective_result(DEPLOY, detect_every_n=5))
+    assert verdict.detect_every_n == 5
+    assert "detect_every_n 5" in verdict.statement
+
+
+def test_the_spread_is_over_runs_at_the_cadence_this_one_measured():
+    """The same rule the composite path is filtered by: a run at another cadence is
+    another configuration, not run-to-run noise."""
+    results = {
+        "n3-1.json": a_selective_result(DEPLOY, "2026-09-07T10:00:00Z",
+                                        with_detection=23.75, detect_every_n=3),
+        "n3-2.json": a_selective_result(DEPLOY, "2026-09-07T10:10:00Z",
+                                        with_detection=24.11, detect_every_n=3),
+        "n5-1.json": a_selective_result(DEPLOY, "2026-09-07T12:00:00Z",
+                                        with_detection=20.10, detect_every_n=5),
+    }
+    spread = fps_spread(results, DEPLOY, like=results["n5-1.json"])
+    assert spread.runs == 1
+    assert "2 earlier" in spread.statement and "detect_every_n 3" in spread.statement
+
+
+# --- what the cadence costs, in the two currencies it is paid in ------------
+
+
+def test_the_box_age_cost_is_stated_in_frames_and_in_milliseconds():
+    """Issue #33's Gate: frames are portable and milliseconds are not, and the two
+    figures disagree by more than 2x - which is the whole reason the default is a
+    measurement on one card rather than a constant."""
+    note = box_age_note(
+        a_selective_result(LAPTOP, ms_per_frame=55.06, detect_every_n=5,
+                           mean_age_frames=2.88),
+        a_selective_result(DEPLOY, ms_per_frame=16.89, detect_every_n=5,
+                           mean_age_frames=2.88))
+    assert "2.9 frames" in note
+    assert "49 ms" in note and "159 ms" in note
+    assert "3.3x" in note
+
+
+def test_a_machine_whose_record_predates_the_staleness_block_says_so():
+    """The laptop baseline was written before issue #23 added it, so its box age is
+    projected from the frames the other machine measured - and labelled."""
+    note = box_age_note(
+        a_selective_result(LAPTOP, ms_per_frame=55.06, detect_every_n=5),
+        a_selective_result(DEPLOY, ms_per_frame=16.89, detect_every_n=5,
+                           mean_age_frames=2.88))
+    assert "projected" in note
+    assert "159 ms" in note
+
+
+def test_with_no_staleness_recorded_at_all_the_note_says_that_rather_than_zero():
+    note = box_age_note(a_selective_result(LAPTOP), a_selective_result(DEPLOY))
+    assert "not recorded" in note

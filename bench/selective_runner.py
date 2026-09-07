@@ -58,6 +58,7 @@ from bench.runner import (
     GpuSampler,
     build_stream,
     cooldown_gate,
+    occupancy_gate,
 )
 from bench.scenarios import SCENARIOS
 from bench.selective import (
@@ -274,6 +275,9 @@ def run_selective(
         detection.wait_for_tick(1, timeout=120.0)
 
     cooldown_record = cooldown_gate(cooldown, threshold_c, cap_s, poll_interval_s, log)
+    # After the cooldown and before the clock starts: the process is idle here,
+    # so the utilization this reads is the card's other tenants (issue #33).
+    occupancy_record = occupancy_gate(log)
 
     torch.cuda.synchronize()
     torch.cuda.reset_peak_memory_stats()
@@ -380,7 +384,8 @@ def run_selective(
                                     ms_per_frame=run.ms_per_frame),
         flicker=flicker_score(sources, outputs, masks),
         background=background, change=change, coverage=coverage, stall=stall,
-        cooldown=cooldown_record, hardware=fingerprint,
+        cooldown=cooldown_record, occupancy=occupancy_record,
+        hardware=fingerprint,
         clock_normalization=clock_normalization(
             fingerprint.clock_lock, sampler.samples,
             raw_ms_per_frame=run.ms_per_frame),

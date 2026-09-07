@@ -96,6 +96,24 @@ def flicker(result: dict) -> float:
     return float(result["flicker"]["mean_abs_diff"])
 
 
+def cadence_of(result: dict) -> int:
+    """The `detect_every_n` a run actually rendered at, off the plan it rendered.
+
+    The plan and not the shipped default: `validate_plan` clamps the field, the
+    default has moved once already (issue #33), and what a committed record
+    measured is what its own plan carried.
+    """
+    return int(result["plan"]["detect_every_n"])
+
+
+def mean_age_frames(result: dict) -> Optional[float]:
+    """How old the boxes a frame rendered were. `None` on a record predating the
+    staleness block (issue #23) - unmeasured, not zero."""
+    stale = result.get("staleness") or {}
+    value = stale.get("mean_age_frames")
+    return None if value is None else float(value)
+
+
 def peak_vram_mib(result: dict) -> float:
     return result["run"]["peak_vram_bytes"] / BYTES_PER_MIB
 
@@ -267,23 +285,30 @@ class Spread:
         return asdict(self)
 
 
+def configuration_of(result: dict) -> Tuple[str, int]:
+    """What a run measured beyond the hardware: where it blended, how often it
+    detected. Two runs that differ in either are two configurations."""
+    return composite_path(result), cadence_of(result)
+
+
 def fps_spread(results: Mapping[str, dict], gpu_name: str,
                target_fps: float = TARGET_FPS,
-               composite: Optional[str] = None) -> Spread:
+               like: Optional[dict] = None) -> Spread:
     """The FPS every committed run on `gpu_name` reached - all of them, not the newest.
 
-    `composite` narrows that to the runs that blended the way the run being judged
-    did. A spread answers "is this verdict inside the run-to-run noise", and runs of
-    a design this one replaced are history rather than noise - but they are also the
-    "before" the change is read against, so the ones left out are counted out loud
-    instead of vanishing (issue #31).
+    `like` narrows that to the runs measured in the same configuration as the run
+    being judged - the same composite path (issue #31), the same cadence (issue
+    #33). A spread answers "is this verdict inside the run-to-run noise", and runs
+    of a design or a setting this one replaced are history rather than noise - but
+    they are also the "before" the change is read against, so the ones left out are
+    counted out loud instead of vanishing.
     """
     counted: List[dict] = []
     excluded: List[dict] = []
     for result in results.values():
         if gpu_of(result) != gpu_name:
             continue
-        if composite is None or composite_path(result) == composite:
+        if like is None or configuration_of(result) == configuration_of(like):
             counted.append(result)
         else:
             excluded.append(result)
@@ -303,20 +328,34 @@ def fps_spread(results: Mapping[str, dict], gpu_name: str,
     statement = (
         f"{len(rates)} committed run{'' if len(rates) == 1 else 's'} on {gpu_name} "
         f"span {slowest:.1f}-{fastest:.1f} FPS, {side} the "
-        f"{target_fps:.0f} FPS target{caveat}{_excluded_phrase(excluded)}"
+        f"{target_fps:.0f} FPS target{caveat}{_excluded_phrase(excluded, like)}"
     )
     return Spread(gpu=gpu_name, runs=len(rates), lowest_fps=round(slowest, 4),
                   highest_fps=round(fastest, 4), target_fps=target_fps,
                   decisive=decisive, statement=statement)
 
 
-def _excluded_phrase(dropped: Sequence[dict]) -> str:
-    """What was left out of the spread, and where it blended. Empty when nothing was."""
-    if not dropped:
+def _differences(run: dict, like: dict) -> str:
+    """How one excluded run differs from the one being judged, in words."""
+    parts = []
+    if composite_path(run) != composite_path(like):
+        parts.append(f"blended on the {_where(composite_path(run))}")
+    if cadence_of(run) != cadence_of(like):
+        parts.append(f"ran at detect_every_n {cadence_of(run)}")
+    return " and ".join(parts)
+
+
+def _excluded_phrase(dropped: Sequence[dict], like: Optional[dict]) -> str:
+    """What was left out of the spread, and how it differed. Empty when nothing was.
+
+    The reasons are deduplicated rather than listed per run: five runs of one
+    superseded configuration are one fact about the spread, not five.
+    """
+    if not dropped or like is None:
         return ""
-    paths = ", ".join(sorted({_where(composite_path(run)) for run in dropped}))
+    reasons = ", or ".join(sorted({_differences(run, like) for run in dropped}))
     return (f" ({len(dropped)} earlier run{'' if len(dropped) == 1 else 's'} on the "
-            f"card blended on the {paths} and "
+            f"card {reasons} and "
             f"{'is' if len(dropped) == 1 else 'are'} not in this spread)")
 
 
@@ -329,6 +368,7 @@ class CriterionVerdict:
     ms_per_frame: float
     ms_per_frame_with_detection: float
     regions_per_frame: float
+    detect_every_n: int
     target_fps: float
     budget_ms: float
     over_budget_x: float
@@ -342,11 +382,14 @@ class CriterionVerdict:
 
 def criterion_verdict(result: dict,
                       target_fps: float = TARGET_FPS) -> CriterionVerdict:
-    """The verdict, with the region count and the clock regime attached to it.
+    """The verdict, with the region count, the cadence and the clock regime on it.
 
     Judged on `ms_per_frame_with_detection`. The frame path alone is not what a
     frame costs - the detector shares the SMs with the UNet - and quoting the
-    cheaper figure is how a budget goes missing.
+    cheaper figure is how a budget goes missing. Which makes `detect_every_n` part
+    of the verdict rather than context: the same path meets the budget by 1 ms at
+    one cadence and by 9 at another (issue #33), so a verdict that does not say how
+    often it detected cannot be restated at another cadence.
     """
     budget = 1000.0 / target_fps
     cost = ms_per_frame_with_detection(result)
@@ -359,11 +402,12 @@ def criterion_verdict(result: dict,
         f"{fps(result):.1f} FPS at {regions:.2f} regions/frame on {gpu_of(result)} - "
         f"{cost:.2f} ms per frame with detection amortised against the "
         f"{budget:.2f} ms a {target_fps:.0f} FPS budget allows, {margin}; "
-        f"clocks {clock_regime(result)}"
+        f"detect_every_n {cadence_of(result)}, clocks {clock_regime(result)}"
     )
     return CriterionVerdict(
         gpu=gpu_of(result), fps=fps(result), ms_per_frame=ms_per_frame(result),
         ms_per_frame_with_detection=cost, regions_per_frame=round(regions, 4),
+        detect_every_n=cadence_of(result),
         target_fps=target_fps, budget_ms=budget, over_budget_x=round(over, 4),
         met=met, clock_regime=clock_regime(result), statement=statement,
     )
@@ -476,6 +520,78 @@ MEASURES: Tuple[Tuple[str, Reader, int], ...] = (
 )
 
 
+# The rows detection drives, and so the rows two cadences make incomparable. Not
+# the frame path: issue #23's sweep measured it flat at 23.9-24.5 ms across
+# `detect_every_n` 2 to 8, so what a cadence moves is the detector and the figures
+# the detector amortises into.
+CADENCE_SENSITIVE: Tuple[str, ...] = ("ms/frame, with detection", "FPS", "ms/detect")
+
+# What a ratio cell says instead of a number when the two runs did not measure the
+# same thing. A ratio is the part someone quotes, so it is withheld rather than
+# footnoted.
+WITHHELD = "n/a"
+
+
+def cadence_note(baseline: dict, deploy: dict) -> str:
+    """Whether the detection rows above are a hardware comparison at all.
+
+    Issue #33's first trap: a table whose two rows were measured at different
+    detector cadences is not a comparison and looks exactly like one. Said in the
+    block, and the confounded ratios are withheld from the table itself, for the
+    reason `comparability` refuses a table across two region counts.
+    """
+    dev_cadence, deploy_cadence = cadence_of(baseline), cadence_of(deploy)
+    if dev_cadence == deploy_cadence:
+        return (f"Both machines detected every {dev_cadence} frames "
+                f"(`detect_every_n: {dev_cadence}`).")
+    return (f"**The {', '.join(f'`{row}`' for row in CADENCE_SENSITIVE)} rows are "
+            f"not hardware ratios**: {gpu_of(baseline)} was measured at "
+            f"`detect_every_n: {dev_cadence}` and {gpu_of(deploy)} at "
+            f"{deploy_cadence} (issue #33 moved the default), so those three "
+            f"figures are two settings as much as two cards and their ratios are "
+            f"withheld above. The rest of the table stands: issue #23's sweep "
+            f"measured the frame path flat across the cadence, so detection is the "
+            f"only cost that moved. One `python -m bench selective-people` on "
+            f"{gpu_of(baseline)} closes it.")
+
+
+def box_age_note(baseline: dict, deploy: dict) -> str:
+    """What the cadence costs, in the two currencies it is paid in (issue #33).
+
+    Box age is the whole price of a cadence - no pixel the diffusion produces
+    changes - and it is the one figure here whose *frames* travel between machines
+    and whose milliseconds do not. Both, because a default chosen on the deploy
+    card's milliseconds is being imposed on the dev machine's.
+    """
+    dev_frames, deploy_frames = mean_age_frames(baseline), mean_age_frames(deploy)
+    if dev_frames is None and deploy_frames is None:
+        return ("Box age is **not recorded** on either machine: both records "
+                "predate the staleness block (issue #23), so what the cadence "
+                "costs in freshness is unmeasured here - spec 8.8's sweep has it.")
+    measured = dev_frames if deploy_frames is None else deploy_frames
+    dev_ms = (dev_frames or measured) * ms_per_frame(baseline)
+    deploy_ms = (deploy_frames or measured) * ms_per_frame(deploy)
+    ratio = max(dev_ms, deploy_ms) / min(dev_ms, deploy_ms)
+    return (f"**What the cadence costs is box age, and only its frames travel.** "
+            f"{_age_phrase(baseline, dev_frames, measured)} and "
+            f"{_age_phrase(deploy, deploy_frames, measured)} - {dev_ms:.0f} ms "
+            f"against {deploy_ms:.0f} ms at their own frame paths, {ratio:.1f}x "
+            f"apart on the same setting. The frames are the portable figure; the "
+            f"milliseconds are what a viewer sees the mask lag the subject by, and "
+            f"they are the reason a cadence measured on the deploy card is a "
+            f"decision about the deploy card.")
+
+
+def _age_phrase(result: dict, frames: Optional[float], measured: float) -> str:
+    """One machine's box age, and whether it is its own measurement."""
+    if frames is None:
+        return (f"{measured:.1f} frames on {gpu_of(result)} (projected: that "
+                f"record predates the staleness block, so the frames are the other "
+                f"machine's)")
+    return (f"a frame rendered boxes {frames:.1f} frames old on {gpu_of(result)} "
+            f"at `detect_every_n: {cadence_of(result)}`")
+
+
 def composite_note(baseline: dict, deploy: dict) -> str:
     """Whether the `composite ms/frame` row above is a hardware comparison at all.
 
@@ -509,13 +625,24 @@ def _table(header: str, cells: Sequence[Sequence[str]]) -> str:
 
 
 def _measure_table(baseline: dict, deploy: dict) -> str:
+    """The side-by-side figures, and the ratio of each - where there is one to draw.
+
+    A row detection drives, measured at two cadences, has no hardware ratio in it;
+    `cadence_note` says so in words and the cell says it where it would be quoted.
+    """
+    confounded = cadence_of(baseline) != cadence_of(deploy)
     rows = []
     for label, read, digits in MEASURES:
         left, right = read(baseline), read(deploy)
         ratio = _ratio(right, left)
+        if confounded and label in CADENCE_SENSITIVE:
+            cell = WITHHELD
+        elif ratio is None:
+            cell = "-"
+        else:
+            cell = f"{ratio:.2f}x"
         rows.append([label, format_number(left, digits),
-                     format_number(right, digits),
-                     "-" if ratio is None else f"{ratio:.2f}x"])
+                     format_number(right, digits), cell])
     return _table(f"| measure | {gpu_of(baseline)} (dev) | "
                   f"{gpu_of(deploy)} (deploy) | deploy / dev |", rows)
 
@@ -523,6 +650,14 @@ def _measure_table(baseline: dict, deploy: dict) -> str:
 def _rows_table(rows: Sequence[PortabilityRow]) -> str:
     return _table("| Conclusion | Carried? | Evidence |",
                   [[row.conclusion, row.verdict, row.evidence] for row in rows])
+
+
+def _cadence_phrase(baseline: dict, deploy: dict) -> str:
+    """Whether the two runs detected at the same rate, said where the plan is."""
+    if cadence_of(baseline) == cadence_of(deploy):
+        return f" at `detect_every_n: {cadence_of(deploy)}`."
+    return (f" - but at `detect_every_n: {cadence_of(baseline)}` on "
+            f"{gpu_of(baseline)} and {cadence_of(deploy)} on {gpu_of(deploy)}.")
 
 
 def _preamble(baseline: dict, deploy: dict) -> str:
@@ -536,8 +671,24 @@ def _preamble(baseline: dict, deploy: dict) -> str:
         f"architecture, the same {clip['frames_used']} frames of `{clip['name']}` at "
         f"the app's {case['canvas']}x{case['canvas']} capture canvas, the same "
         f"`{deploy['plan']['concept']} / {deploy['plan']['region']} / "
-        f"t_index {deploy['plan']['t_index']}` plan."
+        f"t_index {deploy['plan']['t_index']}` plan"
+        f"{_cadence_phrase(baseline, deploy)}"
     )
+
+
+def _criterion_paragraph(results: Mapping[str, dict], deploy: dict,
+                         target_fps: float) -> str:
+    """Acceptance criterion 2, and whether the spread settles it.
+
+    A claim about one machine, so it is drawn from the deploy run alone and does
+    not depend on the comparison above it holding.
+    """
+    verdict = criterion_verdict(deploy, target_fps)
+    spread = fps_spread(results, gpu_of(deploy), target_fps, like=deploy)
+    return (f"**Acceptance criterion 2 ({target_fps:.0f} FPS): "
+            f"{'MET' if verdict.met else 'NOT MET'}"
+            f"{'' if spread.decisive else ', but not decisively'}.** "
+            f"{verdict.statement}. {spread.statement}.")
 
 
 def format_portability_report(results: Mapping[str, dict],
@@ -560,21 +711,23 @@ def format_portability_report(results: Mapping[str, dict],
     baseline, deploy = dev_runs[0], deploy_runs[0]
     check = comparability(baseline, deploy)
     if not check.comparable:
-        return (f"{_preamble(baseline, deploy)}\n\nThe two runs are **not "
-                f"comparable**, so no table is drawn: {check.statement}. Region "
-                f"count drives cost; re-run both arms at one region count.")
+        return "\n\n".join([
+            _preamble(baseline, deploy),
+            f"The two runs are **not comparable**, so no table is drawn: "
+            f"{check.statement}. Region count drives cost; re-run both arms at one "
+            f"region count.",
+            # The criterion is a deploy-hardware claim (spec 7.4), and the deploy
+            # run measured it whether or not there is a baseline beside it.
+            _criterion_paragraph(results, deploy, target_fps),
+        ])
 
-    verdict = criterion_verdict(deploy, target_fps)
-    spread = fps_spread(results, gpu_of(deploy), target_fps,
-                        composite=composite_path(deploy))
     return "\n\n".join([
         _preamble(baseline, deploy),
         _measure_table(baseline, deploy),
         composite_note(baseline, deploy),
-        f"**Acceptance criterion 2 ({target_fps:.0f} FPS): "
-        f"{'MET' if verdict.met else 'NOT MET'}"
-        f"{'' if spread.decisive else ', but not decisively'}.** "
-        f"{verdict.statement}. {spread.statement}.",
+        cadence_note(baseline, deploy),
+        box_age_note(baseline, deploy),
+        _criterion_paragraph(results, deploy, target_fps),
         "What carried across the move, measured:",
         _rows_table(portability_rows(baseline, deploy)),
         f"Comparable because {check.statement}.",

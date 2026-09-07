@@ -126,3 +126,24 @@ def test_the_fingerprint_carries_the_lock_state():
     )
     assert fp.clock_lock.state == UNLOCKED
     assert fp.to_dict()["clock_lock"]["max_sm_clock_mhz"] == pytest.approx(2100.0)
+
+
+# --- how busy the card is right now (issue #33) ------------------------------
+
+
+def test_the_utilization_meter_reads_the_field_the_gate_needs():
+    from bench.fingerprint import UTILIZATION_FIELD, read_utilization_pct
+
+    def run(command):
+        assert UTILIZATION_FIELD in " ".join(command), command
+        return "42\n"
+
+    assert read_utilization_pct(run=run) == pytest.approx(42.0)
+
+
+def test_a_card_that_cannot_report_utilization_reads_as_none():
+    """`None` is what `occupancy_verdict` turns into `unknown`, so an unreadable
+    meter must not arrive as a zero."""
+    from bench.fingerprint import read_utilization_pct
+
+    assert read_utilization_pct(run=lambda command: "[N/A]\n") is None

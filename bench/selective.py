@@ -36,6 +36,7 @@ from typing import Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 from bench import RESULT_SCHEMA_VERSION
 from bench.clocks import ClockNormalization
+from bench.contention import OccupancyRecord
 from bench.cooldown import CooldownRecord
 from bench.detector_results import LatencySummary
 from bench.fingerprint import Fingerprint
@@ -623,6 +624,10 @@ class SelectiveResult:
     cooldown: CooldownRecord
     hardware: Fingerprint
     staleness: Optional[StalenessSummary] = None
+    # Whether anything else was drawing on the card (issue #33). Optional
+    # because the fourteen records committed before the gate existed cannot
+    # answer it, and `None` says that rather than passing them.
+    occupancy: Optional[OccupancyRecord] = None
     clock_normalization: Optional[ClockNormalization] = None
     comparison_clip: str = ""
     comparison_still: str = ""
@@ -653,6 +658,8 @@ class SelectiveResult:
                 "stall": self.stall.to_dict(),
             },
             "cooldown": self.cooldown.to_dict(),
+            "occupancy": (None if self.occupancy is None
+                          else self.occupancy.to_dict()),
             "hardware": self.hardware.to_dict(),
             "clock_normalization": (None if self.clock_normalization is None
                                     else self.clock_normalization.to_dict()),
@@ -877,8 +884,46 @@ def _report_preamble(results: Sequence[dict], gpus: Sequence[str]) -> str:
             f"not this one's.{spanning}")
 
 
+def _staleness_line(result: dict) -> str:
+    """What the run's cadence cost, on the machine that paid it (issue #33).
+
+    The cadence is the one setting here whose price is not a millisecond, and the
+    price is not portable: the same box age in frames is 49 ms at one card's frame
+    path and 159 at another's, which is why the statement sits inside a per-machine
+    section rather than under the table. A record with no block predates the
+    measurement (issue #23) and says so - older than the question, not zero.
+    """
+    stale = result.get("staleness")
+    if not stale:
+        return ("What the cadence cost: **not recorded** - this run predates the "
+                "staleness block (issue #23).")
+    return f"What the cadence cost: {sentence_case(stale['statement'])}."
+
+
+def _occupancy_line(result: dict) -> Optional[str]:
+    """What the run was measured beside, but only when that is not "nothing".
+
+    `--require-idle-gpu` is opt-in, so a contended run can still reach
+    `bench/results/` - and issue #33's did, at 3.2x its own committed baseline.
+    A door that fires only at run time is not a door; the block that quotes the
+    number has to carry it too. `None` for a clear run and for the records written
+    before the gate existed, so a caveat that would always be there is not there
+    to be skipped over - the rule `GpuColumn` follows.
+    """
+    occupancy = result.get("occupancy")
+    if not occupancy or occupancy.get("clear"):
+        return None
+    utilization = occupancy.get("mean_utilization_pct")
+    seen = ("utilization unreadable" if utilization is None
+            else f"{utilization:.0f}% of the SMs in use before the timed region")
+    return (f"**This run was measured on a {occupancy['outcome']} GPU** - {seen}, "
+            f"against a {occupancy['threshold_pct']:.0f}% threshold. Something else "
+            f"was drawing on the card, so its milliseconds measure the neighbour as "
+            f"much as the change (issue #33).")
+
+
 def _gate_sections(results: Sequence[dict], gpus: Sequence[str]) -> List[str]:
-    """The Gate lines and the manual artefact, once per machine.
+    """The Gate lines, what the cadence cost, and the manual artefact, per machine.
 
     The table lists every case; these belong to the first case *on each machine*,
     because a Gate statement is a claim about one run and the run it came from is
@@ -890,6 +935,10 @@ def _gate_sections(results: Sequence[dict], gpus: Sequence[str]) -> List[str]:
         sections.append("The Gate, measured:" if len(gpus) == 1
                         else f"The Gate, measured on {gpu}:")
         sections.append("\n".join(_gate_lines(primary)))
+        sections.append(_staleness_line(primary))
+        occupancy = _occupancy_line(primary)
+        if occupancy:
+            sections.append(occupancy)
         if primary.get("comparison_clip"):
             sections.append(
                 f"Manual verification artefact: `{primary['comparison_clip']}` "

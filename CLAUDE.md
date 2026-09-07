@@ -111,10 +111,14 @@ one. It recommends the **freshest** cadence that fits the frame budget with 10%
 headroom, disqualifies any arm that broke background bit-identity, and says
 whether the recommendation is outside the run-to-run spread of the repeats.
 Measured on a 4090: `detect_every_n: 5`, 28.15 ms/frame with detection against
-33.33, at no cost in image quality. The shipped default is still 3 — spec 8.8
-says why. Every arm predates issue #31's device composite and none has been
-re-run, so read the recommendation as a bound: the ~7 ms it removes applies to
-every arm equally and can only move the pick to a *fresher* cadence.
+33.33, at no cost in image quality. That **is** the shipped default since issue
+#33, and a test holds the two together, so a re-sweep that moves the
+recommendation fails rather than leaving the field behind. Every arm predates
+issue #31's device composite and none has been re-run, so read the recommendation
+as a bound: the ~7 ms it removes applies to every arm equally and can only move
+the pick to a *fresher* cadence. **No committed `selective-people` baseline has
+been re-measured at 5** - both cards are outstanding - so the figures spec 7.4 and
+8.8 quote are a floor for the shipped configuration, not its margin.
 
 The same slot also takes a **plan-swap case** (`swap-target`, `swap-style`) —
 issue #30, acceptance criteria 1 and 3. That run renders the committed clip under
@@ -302,6 +306,20 @@ sends no plan at all, at start or ever, so an empty field cannot overwrite it.
   never get there. Every result carries a hardware fingerprint (GPU name, VRAM, driver,
   power limit, raw `nvidia-smi` with a timestamp): it identifies the machine and is the
   evidence the number was measured rather than invented.
+- **A card someone else is using measures the neighbour, not the change.** The
+  cooldown gate catches a hot GPU and nothing caught a shared one: issue #33's
+  first re-run measured 54.17 ms/frame against a committed 16.89 on the same 4090,
+  at 50 °C, while a live real-time app held ~45% of the SMs - and it passed the
+  fingerprint, the cooldown (`reached`) and the clock-regime doors, and was
+  appended to the tracked README. `bench/contention.py` is the door now. Every
+  selective record carries an `occupancy` block (`clear` / `busy` / `unknown`,
+  the mean of four readings taken *before* the timed region, while the bench
+  process is idle, so what it reads is the other tenants), and
+  `--require-idle-gpu` refuses a run that decides something, exactly as
+  `--require-locked-clocks` does; `unknown` refuses too. The harness cannot name
+  the offending process - `nvidia-smi` reports per-process memory but not
+  per-process SM time on consumer cards - so this is the one door that needs a
+  human to look at the machine.
 - **Cooling is not enough: a comparative sweep wants locked clocks.** The cooldown
   gate only cools *before* a rep, and under the 120 W limit this laptop falls from
   boost to its floor within about two seconds of a run starting — so a short call
