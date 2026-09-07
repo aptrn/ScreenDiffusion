@@ -174,9 +174,6 @@ class SwapCase:
         before = self.before.plan(previous_version=INITIAL_PLAN_VERSION)
         return before, self.after.plan(previous_version=before.plan_version)
 
-    def kind(self) -> str:
-        return swap_kind(*self.plans())
-
     def replace(self, **changes) -> "SwapCase":
         return dataclasses.replace(self, **changes)
 
@@ -554,7 +551,9 @@ def repeat_spread(results: Sequence[dict]) -> RepeatSpread:
     repeats = sum(len(runs) - 1 for runs in latencies.values())
     closest_latency = min(latency_margins, default=None)
     closest_stutter = min(stutter_margins, default=None)
-    decisive = bool(repeats) and (closest_latency or 0.0) > worst_latency         and (closest_stutter or 0.0) > worst_interval
+    decisive = bool(repeats) and (
+        closest_latency is not None and closest_latency > worst_latency
+        and closest_stutter is not None and closest_stutter > worst_interval)
     if not repeats:
         statement = (f"each of the {len(latencies)} swaps was measured once, so "
                      f"there is no run-to-run spread to judge these verdicts "

@@ -77,7 +77,7 @@ def frame(stream):
 
 @pytest.mark.parametrize("case_name", [STYLE_CASE, TARGET_CASE])
 def test_a_swap_moves_the_schedule_and_leaves_the_engine_where_it_was(
-        stream, frame, case_name):
+        stream, case_name):
     """Both kinds of swap, because both reach the engine through the same call -
     the vocabulary half happens on the detector's thread and changes nothing here.
     """

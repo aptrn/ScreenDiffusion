@@ -217,9 +217,9 @@ def _swap_case(case: SwapCase, args: argparse.Namespace) -> SwapCase:
 def resolve_target(args: argparse.Namespace) -> Tuple[str, Target]:
     """The scenario, detector or case `args.scenario` names, with overrides applied.
 
-    One positional slot for all three registries. A run measures one thing, the
+    One positional slot for all five registries. A run measures one thing, the
     kinds of name cannot collide, and someone holding a name should not have to know
-    which of three flags it belongs behind.
+    which of five flags it belongs behind.
 
     An unmodified name resolves to the registry's own object, so a caller can tell a
     plain run from an overridden one by identity.
@@ -516,8 +516,8 @@ def run_swap_target(args: argparse.Namespace, case: SwapCase) -> int:
     same engine-build guard - and the record lands in `bench/results/swaps/`,
     because the selective reports read every JSON beside them as a selective run.
     """
-    from bench.selective import ENGINE_SCENARIO
     from bench.plan_swap_runner import run_swap
+    from bench.selective import ENGINE_SCENARIO
 
     engine_build_guard(SCENARIOS[ENGINE_SCENARIO], allow_build=args.allow_engine_build)
     run_swap(

@@ -23,7 +23,6 @@ from bench.cooldown import REACHED, CooldownRecord
 from bench.detector_results import LatencySummary
 from bench.plan_swap import (
     CASES,
-    repeat_spread,
     CRITERION_1_BUDGET_MS,
     GUI_DEBOUNCE_MS,
     RUNTIME_SWAP,
@@ -40,12 +39,13 @@ from bench.plan_swap import (
     latest_per_swap,
     plan_swap_readme_row,
     rebuild_check,
+    repeat_spread,
     stutter_check,
     swap_kind,
     swap_timing,
 )
 from bench.primitive_results import ClipRecord
-from bench.selective import background_check
+from bench.selective import background_check, plan_record
 from test_bench_results import a_fingerprint
 
 DEPLOY_GPU = "NVIDIA GeForce RTX 4090"
@@ -294,7 +294,7 @@ def a_swap_result(**overrides) -> SwapResult:
     intervals = a_series(swap=25.0)
     fields = dict(
         case=case,
-        plan_before=_plan_record(before), plan_after=_plan_record(after),
+        plan_before=plan_record(before), plan_after=plan_record(after),
         clip=ClipRecord(name="people.mp4", sha256="abc", width=1280, height=720,
                         fps=25.0, total_frames=377, start_frame=0, frames_used=60),
         run=SwapRunMetrics(
@@ -323,12 +323,6 @@ def a_swap_result(**overrides) -> SwapResult:
     )
     fields.update(overrides)
     return SwapResult(**fields)
-
-
-def _plan_record(plan) -> dict:
-    from bench.selective import plan_record
-
-    return plan_record(plan)
 
 
 @pytest.fixture
@@ -377,8 +371,8 @@ def a_pair(**overrides):
     return {
         "swap-target-1.json": a_swap_result(**overrides).to_dict(),
         "swap-style-1.json": a_swap_result(
-            case=style, plan_before=_plan_record(before),
-            plan_after=_plan_record(after),
+            case=style, plan_before=plan_record(before),
+            plan_after=plan_record(after),
             timing=a_timing(kind=RUNTIME_SWAP, accepted_to_pixel_ms=25.0,
                             frames_to_pixel=1, unrestyled_frames=0,
                             detector_ticks_waited=0),

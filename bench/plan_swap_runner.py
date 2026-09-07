@@ -153,7 +153,8 @@ def run_swap(
     import torch
 
     from compositor import Compositor, painted_mask
-    from detection import EMPTY_TRACKS, is_detect_frame
+    from detection import is_detect_frame
+    from detector_worker import BackgroundDetector, frame_to_array
     from region_scheduler import RegionScheduler
     from render_plan import ActivePlan, t_index_for_denoise
 
@@ -178,7 +179,10 @@ def run_swap(
     log(f"building {scenario.name}")
     stream = build_stream(scenario.replace(prompt=before_plan.effective_prompt),
                           engines_root=engines_root)
-    t_index_list = [t_index_for_denoise(before_plan.effective_denoise)]
+    # Kept beside the live schedule, which `apply_plan` replaces: the rebuild check
+    # is the two of them either side of the swap.
+    t_index_before = [t_index_for_denoise(before_plan.effective_denoise)]
+    t_index_list = list(t_index_before)
     set_denoise(stream, t_index_list[0])
     engine_before, unet_before = engine_identity(stream)
     log(f"{kind} swap: {before_plan.honoured_target.concept} -> "
@@ -189,9 +193,8 @@ def run_swap(
     live = open_detector(models_root,
                          [target.concept for target in before_plan.targets], log)
     if live is None:
-        raise SystemExit("bench: the plan swap needs the detector; see the message above")
-    from detector_worker import BackgroundDetector
-
+        raise SystemExit("bench: the plan swap needs the detector; "
+                         "see the message above")
     detection = BackgroundDetector(live, log=log)
     detection.follow(before_plan)
     detection.start()
@@ -200,8 +203,6 @@ def run_swap(
     compositor = Compositor()
     tensors = [capture_tensor(frame, device=stream.device, dtype=stream.dtype)
                for frame in frames]
-    from detector_worker import frame_to_array
-
     sources = [frame_to_array(tensor) for tensor in tensors]
 
     # Warm the engine, the allocator and the detector's first vocabulary, so the
@@ -235,7 +236,8 @@ def run_swap(
                 # `plan_from_fields` and the validator. The debounce before it is
                 # a constant the record carries rather than a wait to sit out.
                 typed = time.perf_counter()
-                new_plan = case.after.plan(previous_version=active_plan.latest.plan_version)
+                new_plan = case.after.plan(
+                    previous_version=active_plan.latest.plan_version)
                 validate_ms = (time.perf_counter() - typed) * 1000.0
                 accepted_at = time.perf_counter()
                 active_plan.submit(new_plan)
@@ -245,7 +247,7 @@ def run_swap(
                                           t_index_list, log)
             if is_detect_frame(index, detect_every_n):
                 detection.offer(tensor, index)
-            tracks = detection.tracks if detection is not None else EMPTY_TRACKS
+            tracks = detection.tracks
             if tracks.ticks > seen_ticks:
                 seen_ticks = tracks.ticks
                 detector_ms.append(tracks.detector_ms)
@@ -256,7 +258,8 @@ def run_swap(
             finished_at.append(time.perf_counter())
             outputs.append(output)
             per_frame_ms.append(frame_ms)
-            diffusion_calls += 1 if render.diffuses else 0
+            if render.diffuses:
+                diffusion_calls += 1
             painted = (painted_mask(render.alpha) if render.alpha is not None
                        else np.zeros(output.shape[:2], dtype=bool))
             masks.append(painted)
@@ -276,6 +279,14 @@ def run_swap(
     pixel_index = first_pixel_frame(
         frame_records, after_plan.plan_version,
         [target.concept for target in after_plan.targets])
+    # A swap whose pixels never arrived has no window to judge steadiness over
+    # either, so the last frame stands in and the latency check fails the Gate.
+    last_index = len(frames) - 1
+    settled_index = last_index if pixel_index is None else pixel_index
+    # The frames between the swap and its pixels: the ones still showing the old
+    # instruction, and every frame to the end of the run if it never arrived.
+    waiting = frame_records[case.swap_frame:
+                            len(frames) if pixel_index is None else pixel_index]
     timing = swap_timing(
         swap_frame=case.swap_frame,
         plan_version_before=before_plan.plan_version,
@@ -289,17 +300,12 @@ def run_swap(
                            else applied_index - case.swap_frame + 1),
         frames_to_pixel=(None if pixel_index is None
                          else pixel_index - case.swap_frame + 1),
-        unrestyled_frames=sum(1 for frame in frame_records[case.swap_frame:
-                                                           pixel_index or len(frames)]
-                              if not frame["diffuses"]),
+        unrestyled_frames=sum(1 for frame in waiting if not frame["diffuses"]),
         detector_ticks_waited=(0 if pixel_index is None else
                                frame_records[pixel_index]["detector_ticks"]
                                - frame_records[case.swap_frame]["detector_ticks"]),
     )
-    # A swap whose pixels never arrived has no window to judge steadiness over
-    # either, so the last frame stands in and the latency check fails the Gate.
-    stutter = stutter_check(intervals, case.swap_frame,
-                            len(frames) - 1 if pixel_index is None else pixel_index,
+    stutter = stutter_check(intervals, case.swap_frame, settled_index,
                             warmup_frames=case.warmup_frames)
     background = background_check(
         background_changed,
@@ -307,8 +313,7 @@ def run_swap(
     rebuild = rebuild_check(
         engine_id_before=engine_before, engine_id_after=engine_after,
         unet_id_before=unet_before, unet_id_after=unet_after,
-        t_index_before=[t_index_for_denoise(before_plan.effective_denoise)],
-        t_index_after=t_index_list)
+        t_index_before=t_index_before, t_index_after=t_index_list)
 
     detect_latency = (LatencySummary.from_samples(detector_ms) if detector_ms
                       else None)
@@ -323,7 +328,9 @@ def run_swap(
         regions_per_frame_before=_mean_regions(frame_records, case.warmup_frames,
                                                case.swap_frame - 1),
         regions_per_frame_after=_mean_regions(
-            frame_records, (pixel_index or case.swap_frame) + 1, len(frames) - 1),
+            frame_records,
+            (case.swap_frame if pixel_index is None else pixel_index) + 1,
+            last_index),
         ms_per_frame=render_latency.mean_ms,
         mean_sm_clock_mhz=sampler.mean_sm_clock_mhz,
         max_temperature_c=sampler.max_temperature_c,
