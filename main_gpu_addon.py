@@ -4,7 +4,7 @@ import tempfile, time, queue, random, threading, pathlib, subprocess, shutil, re
 from collections import deque
 from multiprocessing import get_context, Queue
 from multiprocessing.connection import Connection
-from typing import List, Literal, Dict, Mapping, NamedTuple, Optional, Deque, Any, Sequence, Union
+from typing import List, Literal, Dict, Mapping, NamedTuple, Optional, Deque, Any, Sequence, Tuple, Union
 import numpy as np
 from PIL import Image, ImageTk, ImageDraw
 import PIL.Image
@@ -400,6 +400,8 @@ except Exception:
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 GD_DETERMINISTIC = bool(int(os.getenv('GD_DETERMINISTIC', '0')))
+# An override, and only that. Left empty the app looks for a model under its own
+# models root - see `resolve_local_model_path`, which is what the field starts on.
 LOCAL_MODEL_PATH = r""
 
 # `models/` (multi-GB downloads) and `engines/` (compiled TensorRT engines) are
@@ -462,6 +464,109 @@ def _cache_paths_banner(models_root: Path, engines_root: Path) -> str:
     return f"Cache roots: models={models_root} | engines={engines_root}"
 
 
+# --- what the app starts on (issue #40, step 1) ------------------------------
+#
+# Two settings the app could not run correctly without, both wrong by default and
+# both found by starting it rather than by reading it.
+
+# A diffusers folder is one with a `model_index.json`. A directory a cancelled
+# download left behind is not something the worker can load, and starting on one
+# fails minutes later inside another process.
+MODEL_INDEX = "model_index.json"
+
+# Preferred, in this order, before anything else under the models root: the
+# Download button writes `sd-turbo-fp16` there and `docs/second-machine.md` names
+# the same folder, so a machine set up either way is found without a guess.
+LOCAL_MODEL_NAMES = ("sd-turbo-fp16", "sd-turbo")
+
+
+def is_diffusers_dir(path: _PathArg) -> bool:
+    """Could the worker actually load this directory?"""
+    return bool(path) and (Path(path) / MODEL_INDEX).is_file()
+
+
+def resolve_local_model_path(explicit: _PathArg = None, models_root: _PathArg = None,
+                             environ: Optional[Mapping[str, str]] = None) -> str:
+    """The model folder the field starts on: `explicit`, else a local one, else "".
+
+    The app could not start until someone pasted an absolute path, and nothing said
+    so or said where to point it - while on most machines here a complete model
+    already sits under the models root. Returning "" when there is genuinely
+    nothing local is the old behaviour, which is what Browse and Download are for.
+    """
+    chosen = _unquoted_path(explicit)
+    if chosen:
+        return chosen
+    root = resolve_models_dir(environ=environ) if models_root is None else Path(models_root)
+    named = [root / name for name in LOCAL_MODEL_NAMES]
+    try:
+        rest = sorted(p for p in root.iterdir() if p.is_dir() and p not in named)
+    except OSError:
+        # No models root at all - a fresh worktree, or a machine before setup.
+        rest = []
+    for candidate in named + rest:
+        if is_diffusers_dir(candidate):
+            return str(candidate)
+    return ""
+
+
+# StreamDiffusion's three acceleration paths. `tensorrt` is the default because it
+# is the only one this repo has ever measured: every figure in spec 7, every
+# committed benchmark and the ~5 GB engine cache under `engines/` belong to that
+# path. Starting on `xformers` silently selected something slower than anything
+# anyone had benchmarked, and left the built engine unused.
+NO_ACCELERATION = "none"
+XFORMERS = "xformers"
+TENSORRT = "tensorrt"
+ACCELERATIONS = (NO_ACCELERATION, XFORMERS, TENSORRT)
+DEFAULT_ACCELERATION = TENSORRT
+
+# The batch size every committed benchmark and every cached engine was built at.
+DEFAULT_FRAME_BUFFER_SIZE = 1
+
+
+# --- what a change costs, said before it happens (issue #40, step 4) ---------
+
+# Measured at 512x512 on an RTX 3080 laptop: ~5.0 GB on disk, 15-25 minutes to
+# build (CLAUDE.md, spec 7.2). A user who changes one of these and then watches the
+# app go quiet for twenty minutes has been told nothing.
+ENGINE_BUILD_SIZE = "~5 GB"
+ENGINE_BUILD_TIME = "15-25 minutes"
+
+# The settings that key a distinct engine *and* have a control in this window.
+# Resolution keys one too and is not here: `wrapper.py` never forwards a resolution
+# to the builder, so every engine this app builds is 512x512 (spec 7.2) and no
+# widget changes it. A warning nothing can reach is a warning nobody ever sees.
+ENGINE_KEYED_SETTINGS = {
+    "step count": "The number of denoising steps is compiled in. Moving a step's "
+                  "value is a runtime update and costs nothing.",
+    "batch size": "The frame buffer size is compiled in.",
+    "LoRA set": "TensorRT fuses LoRA weights into the UNet before it compiles it, "
+                "so each combination of LoRAs and scales needs its own engine.",
+}
+
+# The standing version of the same fact, shown in the advanced section whether or
+# not anything is being changed.
+ENGINE_REBUILD_HINT = (
+    "⚠  Step count, batch size and LoRAs each key their own TensorRT engine: "
+    f"{ENGINE_BUILD_TIME} to build and {ENGINE_BUILD_SIZE} on disk, per combination."
+)
+
+
+def engine_rebuild_needed(acceleration: str) -> bool:
+    """Only the TensorRT path compiles an engine; the others merely run slower."""
+    return acceleration == TENSORRT
+
+
+def _engine_rebuild_warning(setting: str) -> str:
+    """What the user is asked before a change that keys a different engine."""
+    return (f"Changing the {setting} keys a different TensorRT engine.\n\n"
+            f"{ENGINE_KEYED_SETTINGS.get(setting, '')}\n\n"
+            f"There is no cached engine for the new {setting}, so one has to be "
+            f"built: about {ENGINE_BUILD_TIME}, and {ENGINE_BUILD_SIZE} on disk.\n\n"
+            "Continue?")
+
+
 # Offline mode blocks diffusers' repo-id lookup, so prefer a local copy of the
 # LCM-LoRA when one has been staged in the models root.
 LOCAL_LCM_LORA = str(resolve_models_dir() / "loras" / "lcm-lora-sdv1-5.safetensors")
@@ -474,7 +579,13 @@ def enforce_offline_mode():
     os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "0"
 
 def verify_local_model_path_dir(path: str):
-    if not path or not os.path.isdir(path):
+    if not path:
+        # Blank used to fail naming nothing, which is exactly the case where the
+        # user has no idea what to type. Say where a model would be.
+        raise FileNotFoundError(
+            "No model folder is set. Point it at a diffusers folder - "
+            f"'⬇ Download SD-Turbo' puts one under {resolve_models_dir()}.")
+    if not os.path.isdir(path):
         raise FileNotFoundError(f"Local model directory not found: {path}")
 
 def _frame_to_rgb(frame: np.ndarray, force_swap_rb: Optional[bool] = False) -> np.ndarray:
@@ -613,11 +724,15 @@ class PlanUpdate(NamedTuple):
     `set_plan` to put on `control_queue`, and it is None exactly when `reason`
     holds the validator's stated refusal. `status` is filled either way, because
     the user gets told what happened either way.
+
+    `notes` is what the validator changed on the way through, kept apart from the
+    rendered `status` line so the plan area can draw it on its own (issue #40).
     """
 
     status: str
     message: Optional[Dict[str, Any]] = None
     reason: str = ""
+    notes: Sequence[str] = ()
 
 def _plan_status_line(plan: RenderPlan, notes: Sequence[str] = ()) -> str:
     """The line the status bar carries for a plan the GUI just built.
@@ -655,14 +770,82 @@ def _plan_update_from_fields(target: str, style: str, prompt: str,
     if result.plan is None:
         return PlanUpdate(status=f"Plan rejected: {result.reason}", reason=result.reason)
     return PlanUpdate(status=_plan_status_line(result.plan, result.notes),
-                      message={"type": "set_plan", "plan": result.plan.to_dict()})
+                      message={"type": "set_plan", "plan": result.plan.to_dict()},
+                      notes=tuple(result.notes))
+
+
+# --- what the window says about the plan (issue #40, steps 3 and 5) ----------
+
+# Blank target is `mode: "global"` - the whole frame under one prompt, which is
+# what this app has always done. Saying only "detection off" would read as "nothing
+# is happening", so the line says what *is* happening first.
+GLOBAL_STATE = "Plan: global — the whole frame.  Detection: off (no target)."
+
+# A note is not an error. A refusal is drawn in `CUSTOM_COLORS["error"]`.
+PLAN_NOTE_COLOR = "gray70"
+
+
+def _plan_state_line(target: str, running: bool, payload: Any = None) -> str:
+    """Whether detection is running, on what concept, and how much it is holding.
+
+    Step 3 of issue #40. Until now the only sign the object-aware path was alive at
+    all was the dense tail of the FPS line; this says it in words, beside the field
+    that turns it on. `payload` is whatever the worker last put on the fps queue -
+    the same mapping `_format_fps` renders - so a bare number, or nothing yet,
+    reads as "there is nothing to report", not as an error.
+
+    The concept named is the detector's own, not the field's: a target edit is
+    debounced and then costs a vocabulary re-encode, so for a moment the two
+    disagree and the one worth showing is the one actually being detected.
+    """
+    fields = payload if isinstance(payload, dict) else {}
+    concept = target.strip()
+    if "detections" in fields:
+        detected = ", ".join(fields.get("concepts") or ()) or concept
+        held = fields["detections"]
+        plural = "" if held == 1 else "s"
+        return (f"Plan: selective — every {detected}."
+                f"  Detection: on, {held} object{plural} held, "
+                f"every {fields.get('detect_every_n')} frames.")
+    if not concept:
+        return GLOBAL_STATE
+    if not running:
+        return f"Plan: selective — every {concept}.  Detection: starts with generation."
+    return f"Plan: selective — every {concept}.  Detection: starting..."
+
+
+def _plan_note(update: PlanUpdate) -> Tuple[str, str]:
+    """The line under the two fields, and the colour to draw it in.
+
+    Step 5 of issue #40: the validator's refusal and its notes belong where the
+    user is looking. The status bar still gets them too, but it is shared with the
+    worker's own messages and the next one replaces whatever was there.
+    """
+    if update.message is None:
+        return f"Rejected: {update.reason}", CUSTOM_COLORS["error"]
+    if update.notes:
+        return "Adjusted: " + "; ".join(update.notes), PLAN_NOTE_COLOR
+    return "", PLAN_NOTE_COLOR
 
 SHOW = {
     "model_path": True, "prompt": True, "negative_prompt": True, "seed": True,
-    "frame_buffer_size": False, "acceleration": True, "use_denoising_batch": False,
+    "frame_buffer_size": True, "acceleration": True, "use_denoising_batch": False,
     "cfg_type": False, "guidance_scale": False, "delta": False, "similar_image_filter": False,
-    "offline": False, "lora": True, "use_lcm_lora": True,
+    "offline": False, "lora": True, "use_lcm_lora": True, "step_count": False,
 }
+
+# The engine knobs (issue #40, step 2). Each is a property of how the app runs
+# rather than of what it makes, and three of them key a distinct TensorRT engine.
+# They are built inside the collapsed "Advanced" section instead of beside the two
+# fields that *are* the product's interface. `SHOW` still decides whether one
+# exists at all, which is why `step_count` is False: changing the number of
+# denoising steps rebuilds the engine, while the sliders that set their values -
+# the live strength control - stay in the primary panel.
+ADVANCED = ("seed", "frame_buffer_size", "acceleration", "use_lcm_lora",
+            "use_denoising_batch", "step_count")
+
+ADVANCED_CLOSED = "▸  Advanced  —  engine settings"
+ADVANCED_OPEN = "▾  Advanced  —  engine settings"
 
 class RECT(ctypes.Structure):
     _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long), ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
@@ -1333,6 +1516,8 @@ class StreamGUI(ctk.CTk):
         self.minsize(1060, 760)
         self._set_window_icon()
         self.collapse_var = ctk.BooleanVar(value=False)
+        # The engine knobs start folded away (issue #40, step 2).
+        self.advanced_var = ctk.BooleanVar(value=False)
         self.collapse_btn = None
         self.left_panel = None
         self.prompts_row = None
@@ -1345,7 +1530,10 @@ class StreamGUI(ctk.CTk):
         self.out_q = self.fps_q = self.status_q = self.control_q = self.debug_q = self.close_q = None
         self.monitor_sender = self.monitor_receiver = None
         self.running = False
-        self.model_var = ctk.StringVar(value=LOCAL_MODEL_PATH)
+        # Blank unless someone set the override: the field starts on whatever
+        # complete model is under the models root, so a machine that has one can
+        # start without pasting a path (issue #40, step 1).
+        self.model_var = ctk.StringVar(value=resolve_local_model_path(LOCAL_MODEL_PATH))
         # Each entry: {"path": str, "scale": float}. Converted to StreamDiffusion's
         # lora_dict ({path: scale}) at start time.
         self.lora_items: List[Dict[str, Any]] = []
@@ -1354,13 +1542,20 @@ class StreamGUI(ctk.CTk):
         self.neg_prompt_var = ctk.StringVar(value="low quality, bad quality, blurry, low resolution")
         # The Render Plan's two fields (issue #22). Both start blank, which is
         # `mode: "global"` - the whole frame under the prompt box, as it always was.
+        # What is new (issue #40) is that the window now says so: `plan_state_var`
+        # carries whether detection is running and on what, and `plan_note_var`
+        # carries the validator's own words under the field that caused them.
         self.target_var = ctk.StringVar(value="")
         self.style_var = ctk.StringVar(value="")
+        self.plan_state_var = ctk.StringVar(value=GLOBAL_STATE)
+        self.plan_note_var = ctk.StringVar(value="")
+        # The newest fps payload, which is where detection's own state comes from.
+        self._fps_payload: Any = None
         self.seed_var = ctk.StringVar(value="1")
         self.width_var = ctk.IntVar(value=512)
         self.height_var = ctk.IntVar(value=512)
-        self.buffer_var = ctk.StringVar(value="1")
-        self.accel_var = ctk.StringVar(value="xformers")
+        self.buffer_var = ctk.StringVar(value=str(DEFAULT_FRAME_BUFFER_SIZE))
+        self.accel_var = ctk.StringVar(value=DEFAULT_ACCELERATION)
         # Ignored for sd-turbo (already 1-step). For SD1.5 this pulls
         # latent-consistency/lcm-lora-sdv1-5, which needs ~4 steps.
         self.use_lcm_lora_var = ctk.BooleanVar(value=False)
@@ -1619,6 +1814,14 @@ class StreamGUI(ctk.CTk):
                 self._download_process = None
         except Exception: pass
 
+    def _toggle_advanced(self):
+        """Fold the engine knobs in or out. Folded at start - issue #40, step 2."""
+        opening = not self.advanced_var.get()
+        self.advanced_var.set(opening)
+        self._w_advanced_toggle.configure(text=ADVANCED_OPEN if opening else ADVANCED_CLOSED)
+        if opening: self._advanced_body.grid()
+        else: self._advanced_body.grid_remove()
+
     def _toggle_collapse(self):
         if self.collapse_var.get():
             self.collapse_var.set(False)
@@ -1724,6 +1927,36 @@ class StreamGUI(ctk.CTk):
         left.grid_columnconfigure(0, weight=1)
         self.left_panel = left
         row = 0
+        # --- what to restyle: the Render Plan's producer (issue #22), leading ---
+        #
+        # These two fields are the product's interface in v1 - there is no LLM
+        # producer coming (spec 6) - and they used to sit below the preview among
+        # the engine knobs, with nothing anywhere saying whether detection was even
+        # running. Target text goes to the open-vocabulary detector, style text
+        # goes to StreamDiffusion. Both stay editable while generation runs:
+        # changing what is restyled must not mean stopping the run.
+        plan_frame = ctk.CTkFrame(left, corner_radius=10)
+        plan_frame.grid(row=row, column=0, sticky="ew", pady=(4, 8))
+        plan_frame.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(plan_frame, text="Restyle", font=ctk.CTkFont(size=16, weight="bold"), anchor="w").grid(row=0, column=0, sticky="ew", padx=10, pady=(8, 2))
+        ctk.CTkLabel(plan_frame, text="Target  —  what to restyle (blank: the whole frame)", anchor="w", text_color="gray70").grid(row=1, column=0, sticky="ew", padx=10)
+        self._w_target_entry = ctk.CTkEntry(plan_frame, textvariable=self.target_var)
+        self._w_target_entry.grid(row=2, column=0, sticky="ew", padx=10, pady=(2, 6))
+        self._w_target_entry.bind("<KeyRelease>", self._on_plan_field_changed)
+        # One style, not one per object: issue #5 chose the full-frame masked
+        # primitive, which is one prompt embedding per frame however many matched.
+        ctk.CTkLabel(plan_frame, text="Style  —  one style for every match (blank: the prompt below)", anchor="w", text_color="gray70").grid(row=3, column=0, sticky="ew", padx=10)
+        self._w_style_entry = ctk.CTkEntry(plan_frame, textvariable=self.style_var)
+        self._w_style_entry.grid(row=4, column=0, sticky="ew", padx=10, pady=(2, 6))
+        self._w_style_entry.bind("<KeyRelease>", self._on_plan_field_changed)
+        # Step 3: the plan's state in words, and step 5: the validator's, right
+        # under the field that produced them.
+        self._w_plan_state = ctk.CTkLabel(plan_frame, textvariable=self.plan_state_var, anchor="w", justify="left", wraplength=400)
+        self._w_plan_state.grid(row=5, column=0, sticky="ew", padx=10, pady=(0, 2))
+        self._w_plan_note = ctk.CTkLabel(plan_frame, textvariable=self.plan_note_var, anchor="w", justify="left", wraplength=400, text_color=PLAN_NOTE_COLOR)
+        self._w_plan_note.grid(row=6, column=0, sticky="ew", padx=10, pady=(0, 10))
+        self._w_plan_note.grid_remove()
+        row += 1
         if SHOW.get("model_path", True):
             ctk.CTkLabel(left, text="Model (diffusers folder):", anchor="w").grid(row=row, column=0, sticky="ew", pady=(4, 0))
             mp = ctk.CTkFrame(left); mp.grid(row=row+1, column=0, sticky="ew")
@@ -1750,7 +1983,38 @@ class StreamGUI(ctk.CTk):
             self._loras_holder.grid_columnconfigure(0, weight=1)
             self._build_loras_ui()
             row += 1
-        g2 = ctk.CTkFrame(left); g2.grid(row=row, column=0, sticky="ew", pady=(4,6))
+        # --- denoising strength: the live control, and it stays primary --------
+        #
+        # Moving a step's *value* is a runtime update (`set_t_index_list`); it is
+        # the step *count* that keys a new engine, and those two buttons are in
+        # the advanced section below with the rest of the engine knobs.
+        steps_frame = ctk.CTkFrame(left, fg_color="transparent")
+        steps_frame.grid(row=row, column=0, sticky="nsew", padx=10, pady=(4, 6))
+        step_header = ctk.CTkFrame(steps_frame, fg_color="transparent")
+        step_header.pack(fill="x", pady=(0, 5))
+        ctk.CTkLabel(step_header, text="Denoising Steps", font=ctk.CTkFont(weight="bold")).pack(side="left")
+        ctk.CTkLabel(step_header, text="higher index = less denoise", text_color="gray70").pack(side="right")
+        self._steps_holder = ctk.CTkFrame(steps_frame)
+        self._steps_holder.pack(fill="both", expand=True, pady=5)
+        self._build_steps_ui()
+        row += 1
+        # --- advanced: the engine knobs, folded away (issue #40, step 2) -------
+        #
+        # Everything in `ADVANCED` lives in here. None of it is a choice about
+        # what the app makes, and three of them cost a TensorRT rebuild, which is
+        # what the standing hint says before anything is touched.
+        adv = ctk.CTkFrame(left, corner_radius=10)
+        adv.grid(row=row, column=0, sticky="ew", pady=(4, 6))
+        adv.grid_columnconfigure(0, weight=1)
+        self._w_advanced_toggle = ctk.CTkButton(adv, text=ADVANCED_CLOSED, command=self._toggle_advanced, anchor="w", fg_color="transparent", hover_color=CUSTOM_COLORS["surface"])
+        self._w_advanced_toggle.grid(row=0, column=0, sticky="ew", padx=6, pady=6)
+        adv_body = ctk.CTkFrame(adv, fg_color="transparent")
+        adv_body.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 6))
+        adv_body.grid_columnconfigure(0, weight=1)
+        self._advanced_body = adv_body
+        self._advanced_body.grid_remove()
+        ctk.CTkLabel(adv_body, text=ENGINE_REBUILD_HINT, anchor="w", justify="left", wraplength=390, text_color="gray70").grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        g2 = ctk.CTkFrame(adv_body); g2.grid(row=1, column=0, sticky="ew", pady=(0,6))
         for i in range(6): g2.grid_columnconfigure(i, weight=1)
         col = 0
         if SHOW.get("seed", True):
@@ -1765,7 +2029,7 @@ class StreamGUI(ctk.CTk):
             self._register_lockables(self._w_buffer_entry)
         if SHOW.get("acceleration", True):
             ctk.CTkLabel(g2, text="Acceleration").grid(row=0, column=col, sticky="w")
-            self._w_accel_combo = ctk.CTkComboBox(g2, values=["none", "xformers", "tensorrt"], variable=self.accel_var, width=120)
+            self._w_accel_combo = ctk.CTkComboBox(g2, values=list(ACCELERATIONS), variable=self.accel_var, width=120)
             self._w_accel_combo.grid(row=1, column=col, sticky="ew"); col += 1
             self._register_lockables(self._w_accel_combo)
         if SHOW.get("use_lcm_lora", True):
@@ -1776,8 +2040,16 @@ class StreamGUI(ctk.CTk):
             self._w_denoise_switch = ctk.CTkSwitch(g2, text="Denoising batch", variable=self.denoise_batch_var)
             self._w_denoise_switch.grid(row=1, column=col, sticky="w"); col += 1
             self._register_lockables(self._w_denoise_switch)
-        row += 1
-        g3 = ctk.CTkFrame(left); g3.grid(row=row, column=0, sticky="ew", pady=(4,6)); g3.grid_remove()
+        if SHOW.get("step_count", False):
+            steps_row = ctk.CTkFrame(adv_body, fg_color="transparent")
+            steps_row.grid(row=2, column=0, sticky="ew", pady=(0, 6))
+            ctk.CTkLabel(steps_row, text="Denoising step count").pack(side="left")
+            self._w_step_add = ctk.CTkButton(steps_row, text="+ Add", width=50, command=self._add_step)
+            self._w_step_add.pack(side="right", padx=(5,0))
+            self._w_step_remove = ctk.CTkButton(steps_row, text="- Remove", width=60, command=self._remove_step)
+            self._w_step_remove.pack(side="right")
+            self._register_lockables(self._w_step_add, self._w_step_remove)
+        g3 = ctk.CTkFrame(adv_body); g3.grid(row=3, column=0, sticky="ew", pady=(0,6)); g3.grid_remove()
         for i in range(6): g3.grid_columnconfigure(i, weight=1)
         col = 0
         if SHOW.get("cfg_type", False):
@@ -1799,42 +2071,15 @@ class StreamGUI(ctk.CTk):
             self._w_offline_switch = ctk.CTkSwitch(g3, text="Offline", variable=self.offline_var)
             self._w_offline_switch.grid(row=1, column=col, sticky="w"); col += 1
             self._register_lockables(self._w_offline_switch)
-        row += 1
-        # --- SECTION 3: Step Sliders (Bottom - Takes up remaining space) ---
-        steps_frame = ctk.CTkFrame(left, fg_color="transparent")
-        # FIX: Use .grid() here to match g3 and sim!
-        steps_frame.grid(row=row, column=0, sticky="nsew", padx=10, pady=10) 
-
-        # Header row for the title and the buttons (These can use pack because they are INSIDE steps_frame)
-        step_header = ctk.CTkFrame(steps_frame, fg_color="transparent")
-        step_header.pack(fill="x", pady=(0, 5))
-
-        ctk.CTkLabel(step_header, text="Denoising Steps", font=ctk.CTkFont(weight="bold")).pack(side="left")
-
-        # Add Step Button
-        btn_add = ctk.CTkButton(step_header, text="+ Add", width=50, command=self._add_step)
-        btn_add.pack(side="right", padx=(5,0))
-        self._register_lockables(btn_add)
-
-        # Remove Step Button
-        btn_rm = ctk.CTkButton(step_header, text="- Remove", width=60, command=self._remove_step)
-        btn_rm.pack(side="right")
-        self._register_lockables(btn_rm)
-
-        # Container for the dynamic sliders
-        self._steps_holder = ctk.CTkFrame(steps_frame)
-        self._steps_holder.pack(fill="both", expand=True, pady=5)
-        self._build_steps_ui()
-        row += 1
         if SHOW.get("similar_image_filter", False):
-            sim = ctk.CTkFrame(left); sim.grid(row=row, column=0, sticky="ew", pady=(4,6))
+            sim = ctk.CTkFrame(adv_body); sim.grid(row=4, column=0, sticky="ew", pady=(0,6))
             sim.grid_columnconfigure(0, weight=0); sim.grid_columnconfigure(1, weight=1)
             ctk.CTkLabel(sim, text="Similar Image Filter").grid(row=0, column=0, sticky="w", pady=(0,4))
             self._w_sim_switch  = ctk.CTkSwitch(sim, text="Enable", variable=self.sim_filter_var); self._w_sim_switch.grid(row=1, column=0, sticky="w")
             self._w_sim_thresh  = ctk.CTkEntry(sim, textvariable=self.sim_thresh_var, width=80); self._w_sim_thresh.grid(row=2, column=1, sticky="w", padx=(6,0))
             self._w_sim_maxskip = ctk.CTkEntry(sim, textvariable=self.sim_maxskip_var, width=80); self._w_sim_maxskip.grid(row=3, column=1, sticky="w", padx=(6,0))
             self._register_lockables(self._w_sim_switch, self._w_sim_thresh, self._w_sim_maxskip)
-            row += 1
+        row += 1
         right = ctk.CTkFrame(self, corner_radius=12)
         right.grid(row=1, column=1, sticky="nsew", padx=(6, 12), pady=(6, 6))
         right.grid_rowconfigure(0, weight=0); right.grid_rowconfigure(1, weight=1); right.grid_rowconfigure(2, weight=0); right.grid_columnconfigure(0, weight=1)
@@ -1864,29 +2109,17 @@ class StreamGUI(ctk.CTk):
         prompts_row = ctk.CTkFrame(self)
         prompts_row.grid(row=2, column=0, columnspan=2, sticky="nsew", padx=12, pady=(0, 8))
         prompts_row.grid_columnconfigure(0, weight=1); prompts_row.grid_columnconfigure(1, weight=1)
-        prompts_row.grid_rowconfigure(0, weight=0); prompts_row.grid_rowconfigure(1, weight=1)
-        # The Render Plan's producer (issue #22). Target text goes to the
-        # open-vocabulary detector, style text goes to StreamDiffusion, and both are
-        # editable while generation runs - changing what is restyled must not mean
-        # stopping the run. One style, not one per object: issue #5 chose the
-        # full-frame masked primitive, which is one prompt embedding per frame.
-        plan_frame = ctk.CTkFrame(prompts_row, corner_radius=10)
-        plan_frame.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
-        plan_frame.grid_columnconfigure(0, weight=1); plan_frame.grid_columnconfigure(1, weight=1)
-        ctk.CTkLabel(plan_frame, text="Target  —  what to restyle (blank: the whole frame)", anchor="w").grid(row=0, column=0, sticky="ew", padx=10, pady=(8, 0))
-        ctk.CTkLabel(plan_frame, text="Style  —  one style for every match", anchor="w").grid(row=0, column=1, sticky="ew", padx=10, pady=(8, 0))
-        self._w_target_entry = ctk.CTkEntry(plan_frame, textvariable=self.target_var)
-        self._w_target_entry.grid(row=1, column=0, sticky="ew", padx=10, pady=(4, 10))
-        self._w_target_entry.bind("<KeyRelease>", self._on_plan_field_changed)
-        self._w_style_entry = ctk.CTkEntry(plan_frame, textvariable=self.style_var)
-        self._w_style_entry.grid(row=1, column=1, sticky="ew", padx=10, pady=(4, 10))
-        self._w_style_entry.bind("<KeyRelease>", self._on_plan_field_changed)
-        prompt_frame = ctk.CTkFrame(prompts_row, corner_radius=10); prompt_frame.grid(row=1, column=0, sticky="nsew", padx=(0, 6))
+        prompts_row.grid_rowconfigure(0, weight=1)
+        # Target and Style used to sit here, in a row of their own above these two
+        # boxes. They lead the left panel now (issue #40, step 2); what is left
+        # here is the global prompt, which is what a blank target restyles the
+        # whole frame with and what a blank style falls back to.
+        prompt_frame = ctk.CTkFrame(prompts_row, corner_radius=10); prompt_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
         prompt_frame.grid_rowconfigure(1, weight=1); prompt_frame.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(prompt_frame, text="Prompt", anchor="w").grid(row=0, column=0, sticky="ew", padx=10, pady=(8, 0))
         self.prompt_txt = ctk.CTkTextbox(prompt_frame, height=120); self.prompt_txt.grid(row=1, column=0, sticky="nsew", padx=10, pady=(4, 10))
         self.prompt_txt.delete("1.0", "end"); self.prompt_txt.insert("1.0", self.prompt_var.get()); self.prompt_txt.bind("<KeyRelease>", self._on_prompt_changed)
-        neg_frame = ctk.CTkFrame(prompts_row, corner_radius=10); neg_frame.grid(row=1, column=1, sticky="nsew", padx=(6, 0))
+        neg_frame = ctk.CTkFrame(prompts_row, corner_radius=10); neg_frame.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
         neg_frame.grid_rowconfigure(1, weight=1); neg_frame.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(neg_frame, text="Negative Prompt", anchor="w").grid(row=0, column=0, sticky="ew", padx=10, pady=(8, 0))
         self.neg_prompt_txt = ctk.CTkTextbox(neg_frame, height=120); self.neg_prompt_txt.grid(row=1, column=0, sticky="nsew", padx=10, pady=(4, 10))
@@ -1965,8 +2198,19 @@ class StreamGUI(ctk.CTk):
         else:
             self._set_state(self._lockables, "normal")
 
+    def _confirm_engine_rebuild(self, setting: str) -> bool:
+        """Ask before a change that keys a different TensorRT engine (issue #40).
+
+        True when the change may go ahead - including on the acceleration paths
+        that compile nothing at all, where there is no build to warn about.
+        """
+        if not engine_rebuild_needed(self.accel_var.get()): return True
+        return bool(messagebox.askokcancel("TensorRT engine build required",
+                                           _engine_rebuild_warning(setting)))
+
     def _add_step(self):
         if self.running: return
+        if not self._confirm_engine_rebuild("step count"): return
         # Automatically make the new step 10 less than the last one to prevent duplicates
         last_val = self.t_index_list[-1] if self.t_index_list else 40
         new_val = max(2, last_val - 10)
@@ -1979,6 +2223,7 @@ class StreamGUI(ctk.CTk):
 
     def _remove_step(self):
         if len(self.t_index_list) > 1:
+            if not self._confirm_engine_rebuild("step count"): return
             self.t_index_list.pop()
             self._build_steps_ui()
             if self.running: 
@@ -2049,8 +2294,34 @@ class StreamGUI(ctk.CTk):
             self.control_q.put_nowait({"type": "set_negative_prompt", "negative_prompt": txt})
         except Exception: pass
 
+    def _show_plan_note(self, note: str, colour: str):
+        """The validator's own words, under the field that caused them.
+
+        The row exists only while there is something to read in it - an empty
+        label would leave a hole under the two fields on every plan that went
+        through cleanly, which is nearly all of them.
+        """
+        self.plan_note_var.set(note)
+        try:
+            self._w_plan_note.configure(text_color=colour)
+            if note: self._w_plan_note.grid()
+            else: self._w_plan_note.grid_remove()
+        except Exception: pass
+
+    def _refresh_plan_state(self):
+        """Redraw the plan line from the fields and the newest fps payload.
+
+        Called from the poll loop, so it must not write a variable that has not
+        changed - a Tk write per 10 ms poll is a redraw per 10 ms poll.
+        """
+        line = _plan_state_line(self.target_var.get(), self.running, self._fps_payload)
+        if line != self.plan_state_var.get(): self.plan_state_var.set(line)
+
     def _on_plan_field_changed(self, _evt=None):
         """A target or style edit. Debounced hard - see `PLAN_DEBOUNCE_MS`."""
+        # Ahead of the running guard: what the plan *will* be is readable whether
+        # or not anything is generating, and it should not wait out the debounce.
+        self._refresh_plan_state()
         if not self.running: return
         if self._debounce_plan is not None:
             try: self.after_cancel(self._debounce_plan)
@@ -2070,9 +2341,11 @@ class StreamGUI(ctk.CTk):
             self.prompt_txt.get("1.0", "end"), self.neg_prompt_txt.get("1.0", "end"),
         )
         self.status_var.set(update.status)
+        self._show_plan_note(*_plan_note(update))
         if update.message is not None and getattr(self, "control_q", None):
             try: self.control_q.put_nowait(update.message)
             except Exception: pass
+        self._refresh_plan_state()
 
     def _overlay_screen_rect(self) -> Dict[str, int]:
         if self.capwin is not None: return self.capwin.inner_rect_screen()
@@ -2243,6 +2516,10 @@ class StreamGUI(ctk.CTk):
         if not self._validate_numeric_parameters(): return
         try: verify_local_model_path_dir(self.model_var.get())
         except Exception as e: messagebox.showerror("Paths error", str(e)); return
+        # The cached engine is a `DEFAULT_FRAME_BUFFER_SIZE` one; anything else
+        # builds its own, and start is the last moment to say so.
+        if int(self.buffer_var.get()) != DEFAULT_FRAME_BUFFER_SIZE:
+            if not self._confirm_engine_rebuild("batch size"): return
         ctx = get_context("spawn")
         self.proc_ctx = ctx
         self.out_q = ctx.Queue(maxsize=2); self.fps_q = ctx.Queue(); self.status_q = ctx.Queue()
@@ -2255,16 +2532,9 @@ class StreamGUI(ctk.CTk):
                 messagebox.showerror("LoRA error",
                     "These LoRA files no longer exist:\n\n" + "\n".join(missing))
                 return
-            if self.accel_var.get() == "tensorrt":
-                # LoRA weights are fused into the UNet before the TensorRT engine is
-                # compiled, so each distinct LoRA set needs its own engine build.
-                if not messagebox.askokcancel("TensorRT engine build required",
-                    "TensorRT bakes LoRA weights into the compiled engine.\n\n"
-                    "This LoRA combination has no cached engine yet, so the first "
-                    "start will take several minutes to build one. Changing a LoRA "
-                    "or its scale later triggers another build.\n\n"
-                    "Continue?"):
-                    return
+            # LoRA weights are fused into the UNet before the TensorRT engine
+            # is compiled, so each distinct LoRA set needs its own build.
+            if not self._confirm_engine_rebuild("LoRA set"): return
         controlnet_paths: List[str] = []; controlnet_scales: List[float] = []
         self.proc_worker = ctx.Process(
             target=image_generation_process,
@@ -2294,6 +2564,7 @@ class StreamGUI(ctk.CTk):
         # headless run rather than be overwritten by an empty field.
         if self.target_var.get().strip():
             self._push_plan_runtime()
+        self._refresh_plan_state()
 
     def _on_stop(self):
         if not self.running: return
@@ -2315,8 +2586,10 @@ class StreamGUI(ctk.CTk):
             finally:
                 self.capwin = None
             self.running = False
+            self._fps_payload = None
             self.start_btn.configure(state="normal"); self.stop_btn.configure(state="disabled")
             self._apply_running_state()
+            self._refresh_plan_state()
 
     def _on_capture_window_moved(self):
         if self.running: self._send_region_update()
@@ -2331,8 +2604,10 @@ class StreamGUI(ctk.CTk):
         if self.fps_q is not None:
             try:
                 while True:
-                    self.fps_var.set(_format_fps(self.fps_q.get_nowait()))
+                    self._fps_payload = self.fps_q.get_nowait()
+                    self.fps_var.set(_format_fps(self._fps_payload))
             except Exception: pass
+        self._refresh_plan_state()
         if self.status_q is not None:
             try:
                 while True:

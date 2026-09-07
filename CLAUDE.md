@@ -198,6 +198,25 @@ Two processes, and the split is load-bearing:
 - **Worker process** — `image_generation_process()` (`main_gpu_addon.py:594`) owns the
   model, the GPU, and a DXcam capture thread feeding a bounded deque.
 
+The window leads with what the product does and folds away how it runs (issue #40).
+**Target** and **Style** are at the top of the left panel; everything in `ADVANCED`
+- seed, buffer, acceleration, LCM-LoRA, denoising batch and the step *count* - is
+inside a collapsed **Advanced** section, and `SHOW` still decides whether a control
+exists at all. Under the two fields sits one sentence of plan state
+(`_plan_state_line`): global or selective, whether detection is running, on what
+concept, how many objects and at what cadence - taken from the fps payload, so the
+concept named is the detector's rather than the field's, which differ for as long as
+an edit is debounced. Two defaults are pinned there and not to be drifted back:
+`DEFAULT_ACCELERATION` is `tensorrt`, because that is the only path this repo has
+ever benchmarked and the only one that reads the engine cache, and the model field
+starts on `resolve_local_model_path()` - a diffusers folder (one with a
+`model_index.json`) under the models root - rather than on a blank string nothing
+could start from. Anything that keys a new TensorRT engine and has a control here -
+step count, batch size, LoRA set - goes through `_confirm_engine_rebuild`, which
+names the measured cost (~5 GB, 15-25 minutes) before the change, and only on the
+acceleration path that compiles one. `scripts/gui_screenshot.py` photographs the
+window; `docs/gui/` holds before and after.
+
 They talk only over `multiprocessing.Queue`s. Live changes reach the worker as
 `control_queue` messages (`set_prompt`, `set_region`, `set_t_index_list`, …); adding a
 runtime control means adding a message type there, not a shared object.
@@ -213,11 +232,11 @@ words — a value outside a fixed vocabulary, a number that is not a number, a
 duplicate target id, or a concept the active detector cannot serve. It assigns
 `plan_version` as `previous + 1`, so versions are monotonic in the worker rather than
 in whatever sent one. `plan_from_fields(target, style)` is the GUI's producer - the
-**Target** and **Style** fields beside the prompt boxes, debounced by
+**Target** and **Style** fields leading the left panel, debounced by
 `PLAN_DEBOUNCE_MS` because a target edit re-encodes the detector's vocabulary; a
 blank target is `global`, a blank style falls back to the prompt box, and a plan the
-GUI's own validator refuses is never sent, its reason going to the status area
-instead. There is no LLM in this path and none is coming in v1. The plan crosses the
+GUI's own validator refuses is never sent, its reason going to the status area and
+to a row under the fields themselves. There is no LLM in this path and none is coming in v1. The plan crosses the
 queue as a plain dict (`set_plan`); the worker validates it and holds it in an
 `ActivePlan`, whose `begin_frame()` is the frame loop's single read — a plan
 arriving mid-frame lands on the next frame. Only the *first* target's `prompt` and
