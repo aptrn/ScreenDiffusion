@@ -74,7 +74,8 @@ def test_the_noise_is_written_before_the_call_that_reads_it():
     """`init_noise` is added to the latent inside `img2img`, so a write after it is
     a write the frame renders without."""
     body = WORKER_TEXT
-    assert body.index("noise.apply(") < body.index("stream.img2img(canvas, output_type")
+    assert body.index("noise.apply(") < body.index(
+        "stream.img2img(frame_canvas, output_type")
 
 
 def test_the_noise_is_applied_once_per_frame():

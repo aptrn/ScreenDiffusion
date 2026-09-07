@@ -275,7 +275,7 @@ away from the code.
   ],
   "background": { "action": "passthrough", "prompt": "" },   // or "stylize"
   "global": { "fps_target": 30, "detect_every_n": 5, "output_ema": 0.0,   // 0.0-0.9, spec 8.5
-              "primitive": "masked" },                                 // "masked" | "crop", spec 8.2
+              "primitive": "masked" },                                    // "masked" | "crop", spec 8.2
   "confidence": 1.0,
   "notes": ""
 }

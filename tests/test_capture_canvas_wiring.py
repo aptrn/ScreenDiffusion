@@ -39,7 +39,6 @@ def _calls_named(node: ast.AST, name: str) -> list:
 
 
 WORKER = _function("image_generation_process")
-WORKER_TEXT = ast.get_source_segment(TEXT, WORKER)
 
 _symbols = load_symbols("main_gpu_addon.py",
                         ["DIFFUSION_CANVAS", "CAPTURE_PRESETS", "DEFAULT_CAPTURE",
@@ -104,15 +103,11 @@ def test_the_capture_thread_takes_the_capture_size_and_not_the_canvas():
     thread, = [call for call in _calls_named(WORKER, "Thread")
                if any(keyword.arg == "target"
                       and "capture" in ast.unparse(keyword.value)
-                      for keyword in thread_keywords(call))]
+                      for keyword in call.keywords)]
     args = ast.unparse([keyword.value for keyword in thread.keywords
                         if keyword.arg == "args"][0])
     assert "height, width" in args
     assert "canvas_" not in args
-
-
-def thread_keywords(call):
-    return call.keywords
 
 
 def test_the_scheduler_and_the_compositor_work_in_captured_pixels():

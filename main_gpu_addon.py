@@ -773,7 +773,7 @@ class FloatingCaptureWindow:
         self.border_color = "#ef4444"
         self.handle_color = "#7f1d1d"
         self.canvas.create_rectangle(0, 0, total_w, self.handle_h, fill=self.handle_color, outline=self.handle_color)
-        self.canvas.create_text(10, self.handle_h // 2, anchor="w", text="Capture 512×512", fill="#ffffff", font=("Segoe UI", 9, "bold"))
+        self.canvas.create_text(10, self.handle_h // 2, anchor="w", text=f"Capture {self.inner_w}×{self.inner_h}", fill="#ffffff", font=("Segoe UI", 9, "bold"))
         self.canvas.create_rectangle(0, self.handle_h, self.border_px, self.handle_h + self.inner_h + self.border_px, fill=self.border_color, outline=self.border_color)
         self.canvas.create_rectangle(self.border_px + self.inner_w, self.handle_h, total_w, self.handle_h + self.inner_h + self.border_px, fill=self.border_color, outline=self.border_color)
         self.canvas.create_rectangle(0, self.handle_h + self.inner_h, total_w, self.handle_h + self.inner_h + self.border_px, fill=self.border_color, outline=self.border_color)
@@ -1185,12 +1185,13 @@ def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Qu
                         # captured-pixel boxes onto that canvas for the noise.
                         geometry = CanvasGeometry(width, height, canvas_width,
                                                   canvas_height, render.crop)
-                        canvas = (to_canvas(batch, canvas_width, canvas_height)
-                                  if render.crop is None else
-                                  crop_to_canvas(batch, render.crop,
-                                                 canvas_width, canvas_height))
+                        frame_canvas = (
+                            to_canvas(batch, canvas_width, canvas_height)
+                            if render.crop is None else
+                            crop_to_canvas(batch, render.crop,
+                                           canvas_width, canvas_height))
                         noise.apply(stream, selection, geometry)
-                        rendered = stream.img2img(canvas, output_type="pt")
+                        rendered = stream.img2img(frame_canvas, output_type="pt")
                         images = [Image.fromarray(frame) for frame
                                   in compositor.blend_device(batch, rendered,
                                                              render.alpha,
@@ -1445,11 +1446,9 @@ class StreamGUI(ctk.CTk):
         self.detail_var = ctk.StringVar(value=DETAIL_ALL_OBJECTS)
         self.seed_var = ctk.StringVar(value="1")
         # The capture geometry, which since issue #39 is not the engine's canvas.
-        # `width_var`/`height_var` are what reaches the worker; `capture_var` is
-        # the label a user picks and the only one with a widget.
+        # The label is the state; `capture_size` reads the two numbers off it at
+        # start, so there is one place a capture size can come from.
         self.capture_var = ctk.StringVar(value=DEFAULT_CAPTURE)
-        self.width_var = ctk.IntVar(value=CAPTURE_PRESETS[DEFAULT_CAPTURE][0])
-        self.height_var = ctk.IntVar(value=CAPTURE_PRESETS[DEFAULT_CAPTURE][1])
         self.buffer_var = ctk.StringVar(value="1")
         self.accel_var = ctk.StringVar(value="xformers")
         # Ignored for sd-turbo (already 1-step). For SD1.5 this pulls
@@ -2380,7 +2379,6 @@ class StreamGUI(ctk.CTk):
         # the capture window alike - three sizes that have to agree or the mask
         # lands somewhere other than the object.
         capture_w, capture_h = capture_size(self.capture_var.get())
-        self.width_var.set(capture_w); self.height_var.set(capture_h)
         self.proc_worker = ctx.Process(
             target=image_generation_process,
             args=(

@@ -219,7 +219,7 @@ def arm_name(primitive: str, width: int, height: int) -> str:
 class StageCost:
     """Where one frame's milliseconds went, at one capture geometry.
 
-    Six numbers rather than one, because the Gate asks for the cost of the larger
+    Seven numbers rather than one, because the Gate asks for the cost of the larger
     capture *broken out per stage* - and because they move for different reasons:
     the resize and the copy scale with the capture's pixels, the diffusion call
     does not scale at all (the canvas is fixed), and the last two are paid in the
@@ -268,11 +268,11 @@ class DetailSummary:
 
 
 def detail_summary(primitive: str, region_px: float, capture_px: int,
-                   canvas_px: int = CANVAS) -> DetailSummary:
+                   canvas: int = CANVAS) -> DetailSummary:
     """What `primitive` spends on a region `region_px` across in a `capture_px` frame."""
     region_px = float(region_px)
-    diffused = (float(canvas_px) if primitive == CROP
-                else region_px * canvas_px / max(1, capture_px))
+    diffused = (float(canvas) if primitive == CROP
+                else region_px * canvas / max(1, capture_px))
     gain = diffused / region_px if region_px else 0.0
     return DetailSummary(
         region_px=round(region_px, 2), canvas_px=round(diffused, 2),
@@ -531,6 +531,11 @@ def arms_of(result: dict) -> List[dict]:
     return list(result["arms"])
 
 
+def capture_pixels(arm: dict) -> int:
+    """How many pixels one arm grabbed. What "a bigger capture" means, as a number."""
+    return arm["capture_width"] * arm["capture_height"]
+
+
 def broke_background(result: dict) -> List[dict]:
     """Arms that moved a non-target pixel. The Gate's first item, both ways."""
     return [arm for arm in arms_of(result) if not arm["background"]["passed"]]
@@ -589,10 +594,8 @@ def denoise_statement(result: dict) -> str:
     need different strengths for the same job: timing both at one of them would
     measure the primitive the strength was chosen for.
     """
-    lines = []
-    for arm in arms_of(result):
-        lines.append(f"- **{arm['name']}:** {arm['denoise']['statement']}")
-    return "\n".join(lines)
+    return "\n".join(f"- **{arm['name']}:** {arm['denoise']['statement']}"
+                     for arm in arms_of(result))
 
 
 def _expression(crop: dict, masked: dict) -> str:
@@ -606,7 +609,7 @@ def _expression(crop: dict, masked: dict) -> str:
     outcomes = [f"{name} {arm['identity']['became']}/"
                 f"{arm['identity']['frames_probed']}"
                 for name, arm in (("crop", crop), ("masked", masked))]
-    return (f"Read as the new identity in: {', '.join(outcomes)} frames.")
+    return f"Read as the new identity in: {', '.join(outcomes)} frames."
 
 
 def budget_statement(result: dict) -> str:
@@ -633,28 +636,27 @@ def budget_statement(result: dict) -> str:
 def scaling_statement(result: dict, primitive: str = MASKED) -> Optional[str]:
     """What the bigger capture cost the stages that are not the diffusion call."""
     arms = sorted([arm for arm in arms_of(result) if arm["primitive"] == primitive],
-                  key=lambda arm: arm["capture_width"] * arm["capture_height"])
+                  key=capture_pixels)
     if len(arms) < 2:
         return None
     small, large = arms[0], arms[-1]
-    pixels = ((large["capture_width"] * large["capture_height"])
-              / max(1, small["capture_width"] * small["capture_height"]))
+    pixels = capture_pixels(large) / max(1, capture_pixels(small))
 
-    def grew(field: str) -> str:
-        before = small["stages"][field]
-        after = large["stages"][field]
+    def grew(stage: str) -> str:
+        before = small["stages"][stage]
+        after = large["stages"][stage]
         ratio = after / before if before else 0.0
-        return (f"{field.replace('_ms', '').replace('_', ' ')} "
+        return (f"{stage.replace('_ms', '').replace('_', ' ')} "
                 f"{format_number(before, 2)} -> {format_number(after, 2)} ms "
                 f"({ratio:.1f}x)")
 
-    fields = ("resize_in_ms", "diffuse_ms", "composite_ms", "host_copy_ms",
+    stages = ("resize_in_ms", "diffuse_ms", "composite_ms", "host_copy_ms",
               "ipc_put_ms", "ipc_roundtrip_ms", "preview_ms")
     return (
         f"**What {small['capture_width']}x{small['capture_height']} -> "
         f"{large['capture_width']}x{large['capture_height']} ({pixels:.1f}x the "
         f"pixels) cost, per stage, under `{primitive}`:** "
-        + "; ".join(grew(field) for field in fields)
+        + "; ".join(grew(stage) for stage in stages)
         + ". The diffusion call is the one stage that *cannot* move - the canvas "
           "is fixed at 512x512 (spec 7.2), and a bare probe on this card measures "
           "it at 15.5 / 15.3 / 16.8 ms at the three geometries - so what the table "
@@ -711,15 +713,14 @@ def _field_of_view(best: dict, qualified: Sequence[dict]) -> str:
     about and the one thing no metric here scores. Said out loud, with what it
     costs, rather than left as an inference from a table.
     """
+    same_detail = round(best["detail"]["canvas_px"])
     bigger = [arm for arm in qualified
               if arm["primitive"] == best["primitive"]
-              and arm["capture_width"] * arm["capture_height"]
-              > best["capture_width"] * best["capture_height"]
-              and round(arm["detail"]["canvas_px"]) >= round(
-                  best["detail"]["canvas_px"])]
+              and capture_pixels(arm) > capture_pixels(best)
+              and round(arm["detail"]["canvas_px"]) >= same_detail]
     if not bigger:
         return ""
-    largest = max(bigger, key=lambda arm: arm["capture_width"] * arm["capture_height"])
+    largest = max(bigger, key=capture_pixels)
     cost = largest["stages"]["frame_path_ms"] - best["stages"]["frame_path_ms"]
     why = ("the object gets the whole canvas whatever is captured"
            if best["primitive"] == CROP else

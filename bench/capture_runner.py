@@ -157,23 +157,25 @@ def ipc_cost(queue, image) -> Tuple[float, float]:
     is what the worker's frame thread pays (the queue's feeder thread does the
     pickling), and the round trip is how long the frame takes to become available
     to the reader. Both grow with the capture, which is the trap this answers.
+
+    The frame that comes back is dropped rather than returned - reading it is what
+    closes the round trip, and it is the same frame that went in.
     """
     started = time.perf_counter()
     queue.put(image)
     put_ms = _elapsed_ms(started)
-    received = queue.get()
-    return put_ms, _elapsed_ms(started), received
+    queue.get()
+    return put_ms, _elapsed_ms(started)
 
 
 def preview_cost(image) -> float:
     """`StreamGUI._update_preview`'s own arithmetic, timed on this frame's size."""
-    import PIL
     from PIL import Image
 
     started = time.perf_counter()
     panel = Image.new("RGB", (PREVIEW_DIM, PREVIEW_DIM), (30, 30, 30))
     thumbnail = image.copy()
-    thumbnail.thumbnail((PREVIEW_DIM, PREVIEW_DIM), PIL.Image.BICUBIC)
+    thumbnail.thumbnail((PREVIEW_DIM, PREVIEW_DIM), Image.BICUBIC)
     panel.paste(thumbnail, ((PREVIEW_DIM - thumbnail.width) // 2,
                             (PREVIEW_DIM - thumbnail.height) // 2))
     return _elapsed_ms(started)
@@ -244,8 +246,6 @@ def sweep_denoise(stream, case: CaptureCase, primitive: str, tensors: Sequence,
     it runs on the *same* path the timed pass runs on, so the control it subtracts
     is the resize this arm actually pays rather than a copy of it.
     """
-    import numpy as np
-
     from compositor import painted_mask
 
     frames = [index for index, render in enumerate(renders) if render.diffuses]
@@ -320,25 +320,25 @@ def _arm(primitive: str, width: int, height: int,
 
 def renders_for(case: CaptureCase, plan, regions: Sequence[Sequence[Box]],
                 width: int, height: int, indices: Sequence[int]):
-    """The `FrameRender` each of `indices` produces, off a fresh scheduler.
+    """One pass's renders, and the compositor that built them.
 
-    Fresh, and walked in order, so a pass that only needs the renders does not
-    advance the rotation cursor the timed pass reads - and so every pass over the
-    same frames produces the same regions. The compositor's alpha cache means one
-    alpha map is built per frame rather than per read.
+    A fresh scheduler and compositor, walked in order, so a pass that only needs
+    the renders does not advance the rotation cursor the timed pass reads - and so
+    every pass over the same frames produces the same regions. The compositor comes
+    back beside them because its alpha cache and its EMA history belong to this
+    pass, and a caller that renders through these has to render through it.
     """
     from device_compositor import DeviceCompositor
     from region_scheduler import RegionScheduler
 
     scheduler, compositor = RegionScheduler(), DeviceCompositor()
-    built = []
+    renders = []
     for index in indices:
         selection = scheduler.select(tracks_for(regions[index], case.concept), plan,
                                      width, height)
-        built.append((selection, compositor.frame(selection, width, height,
-                                                  plan.settings.primitive),
-                      compositor))
-    return built
+        renders.append(compositor.frame(selection, width, height,
+                                        plan.settings.primitive))
+    return compositor, renders
 
 
 def run_capture(
@@ -445,13 +445,12 @@ def run_capture(
                 plan = plans[primitive]
 
                 # 1. the ladder, on its own scheduler and compositor.
-                swept = renders_for(case, plan, regions, width, height,
-                                    indices[:case.sweep_frames])
-                sweep_compositor = swept[0][2]
+                sweep_compositor, swept = renders_for(
+                    case, plan, regions, width, height,
+                    indices[:case.sweep_frames])
                 points = sweep_denoise(
-                    stream, case, primitive, tensors, sources,
-                    [render for _, render, _ in swept], sweep_compositor, CANVAS,
-                    identity_probe, log)
+                    stream, case, primitive, tensors, sources, swept,
+                    sweep_compositor, CANVAS, identity_probe, log)
                 chosen = required_denoise(points, case.kind)
                 set_denoise(stream, chosen.t_index)
                 log(f"denoise chosen for {arm_name(primitive, width, height)}: "
@@ -495,8 +494,9 @@ def run_capture(
                 # 3. the metric pass. Untimed, and off a fresh scheduler, so the
                 # same regions are asked about that were rendered.
                 masks, changed, control_change = [], [], []
-                for index, (_, render, metric_compositor) in enumerate(
-                        renders_for(case, plan, regions, width, height, indices)):
+                metric_compositor, metric_renders = renders_for(
+                    case, plan, regions, width, height, indices)
+                for index, render in enumerate(metric_renders):
                     if not render.diffuses:
                         masks.append(np.zeros(sources[index].shape[:2], dtype=bool))
                         changed.append(0)
@@ -601,7 +601,7 @@ def probe_stages(queue, frames: Sequence, device) -> Dict[str, float]:
     copies, puts, roundtrips, previews = [], [], [], []
     for frame in frames:
         image = Image.fromarray(frame)
-        put_ms, roundtrip_ms, _ = ipc_cost(queue, image)
+        put_ms, roundtrip_ms = ipc_cost(queue, image)
         puts.append(put_ms)
         roundtrips.append(roundtrip_ms)
         previews.append(preview_cost(image))
@@ -609,7 +609,6 @@ def probe_stages(queue, frames: Sequence, device) -> Dict[str, float]:
     return {"host_copy_ms": mean_ms(copies), "ipc_put_ms": mean_ms(puts),
             "ipc_roundtrip_ms": mean_ms(roundtrips),
             "preview_ms": mean_ms(previews)}
-
 
 
 def write_capture_artefacts(sources: Sequence, outputs: Dict[str, List],

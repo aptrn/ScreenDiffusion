@@ -681,7 +681,8 @@ def _crop_note(settings: GlobalSettings, targets: Tuple[Target, ...]) -> Optiona
         return None
     return (
         f"`{CROP}` gives one region the whole canvas, so it is honoured only on a "
-        f"frame that selected exactly one; {', '.join(t.id for t in plural)} ask "
+        f"frame that selected exactly one; "
+        f"{', '.join(target.id for target in plural)} ask "
         f"for max_instances above 1 and those frames fall back to `{MASKED}`"
     )
 

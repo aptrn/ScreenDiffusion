@@ -20,7 +20,6 @@ from bench.capture import (
     GEOMETRIES,
     PEOPLE_CASE,
     PRIMITIVES,
-    CaptureCase,
     arm_name,
     background_statement,
     compare_primitives,
@@ -35,8 +34,6 @@ from render_plan import CROP, MASKED
 
 
 # --- the shipped vocabulary, pinned ------------------------------------------
-
-
 
 
 def test_the_canvas_matches_the_apps_own_constant():
@@ -301,4 +298,4 @@ def test_the_record_round_trips_through_json():
 
 
 def test_a_case_can_be_shortened_for_development():
-    assert CaptureCase.replace(CASES[PEOPLE_CASE], frames=4).frames == 4
+    assert CASES[PEOPLE_CASE].replace(frames=4).frames == 4

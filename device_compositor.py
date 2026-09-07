@@ -95,6 +95,23 @@ def rendered_frames(rendered):
     return _as_bhwc(rendered).float().mul(255.0).round().to(torch.uint8)
 
 
+def _resample(planes, width: int, height: int):
+    """Float BCHW planes at a new size. Bilinear, antialiased only on the way down.
+
+    The one place the resampling rule is written: both directions of issue #39's
+    capture/canvas split go through it, so a render squeezed onto the canvas and a
+    render grown back off it cannot drift apart. Antialiasing costs nothing when
+    upscaling and is what stops a downscale aliasing, so it follows the direction
+    rather than being a flag a caller has to remember.
+    """
+    import torch
+
+    shrinking = width * height < planes.shape[-1] * planes.shape[-2]
+    return torch.nn.functional.interpolate(
+        planes, size=(height, width), mode="bilinear", align_corners=False,
+        antialias=shrinking)
+
+
 def resize_uint8(frames, width: int, height: int):
     """`frames`, uint8 BHWC on the device, at a new size. uint8 BHWC out.
 
@@ -116,10 +133,7 @@ def resize_uint8(frames, width: int, height: int):
     if frames.shape[1] == height and frames.shape[2] == width:
         return frames
     planes = frames.permute(0, 3, 1, 2).to(torch.float32)
-    shrinking = width * height < frames.shape[2] * frames.shape[1]
-    resized = torch.nn.functional.interpolate(
-        planes, size=(height, width), mode="bilinear", align_corners=False,
-        antialias=shrinking)
+    resized = _resample(planes, width, height)
     return resized.round().clamp(0.0, 255.0).to(torch.uint8).permute(0, 2, 3, 1)
 
 
@@ -132,14 +146,9 @@ def to_canvas(capture, width: int, height: int):
     that is not already the canvas is resized onto it here rather than by
     `preprocess_image`, which would want a host PIL image and a round trip.
     """
-    import torch
-
     if capture.shape[-2] == height and capture.shape[-1] == width:
         return capture
-    shrinking = width * height < capture.shape[-1] * capture.shape[-2]
-    return torch.nn.functional.interpolate(
-        capture, size=(height, width), mode="bilinear", align_corners=False,
-        antialias=shrinking)
+    return _resample(capture, width, height)
 
 
 def crop_to_canvas(capture, box: Box, width: int, height: int):
@@ -269,12 +278,12 @@ class DeviceCompositor(Compositor):
             # An alpha of nothing: the capture, exactly as `composite` returns it.
             return _to_host(source)
         smoothed = self.smooth_device(rendered_frames(rendered))
-        height, width = ((source.shape[1], source.shape[2]) if crop is None
-                         else (Box(*crop).height, Box(*crop).width))
+        box = None if crop is None else Box(*crop)
+        height, width = ((source.shape[1], source.shape[2]) if box is None
+                         else (box.height, box.width))
+        origin = (0, 0) if box is None else (box.x0, box.y0)
         placed = resize_uint8(smoothed, width, height)
-        origin = (0, 0) if crop is None else (Box(*crop).x0, Box(*crop).y0)
-        return _to_host(
-            composite_device(source, placed, weights, bounds, origin))
+        return _to_host(composite_device(source, placed, weights, bounds, origin))
 
     def _alpha_on(self, alpha: np.ndarray, device):
         """The alpha's non-zero rectangle as a device tensor, uploaded once.

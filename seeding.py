@@ -126,9 +126,9 @@ class CanvasGeometry:
 
     def region(self, box: Box) -> Box:
         """`box`, in captured pixels, as the canvas pixels the engine diffuses it at."""
-        if self.identity:
-            return Box(*box)
         box = Box(*box)
+        if self.identity:
+            return box
         source = (Box(0, 0, self.capture_width, self.capture_height)
                   if self.crop is None else Box(*self.crop))
         scale_x = self.canvas_width / max(1, source.width)

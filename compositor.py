@@ -285,8 +285,9 @@ class Compositor:
         # not a cost to pay by accident; `render_plan._crop_note` says so at the
         # moment a producer asks for a plan that will land here.
         if primitive == CROP and len(selection.regions) == 1:
-            return FrameRender(action=CROP, alpha=alpha,
-                               crop=selection.regions[0].box)
+            # The one box the alpha above was built from, so the render the engine
+            # returns covers every pixel the blend will read it for.
+            return FrameRender(action=CROP, alpha=alpha, crop=selection.boxes[0])
         return FrameRender(action=MASKED, alpha=alpha)
 
     @staticmethod
