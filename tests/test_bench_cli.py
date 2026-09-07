@@ -427,3 +427,64 @@ def test_the_cadence_report_reads_the_committed_arms_and_exits_zero():
     )
     assert result.returncode == 0, result.stderr
     assert "detect_every_n" in result.stdout
+
+
+# --- the plan swap (issue #30) -----------------------------------------------
+
+def test_a_swap_case_shares_the_positional_slot_too():
+    """A fifth registry, still one slot: the CLI works out the kind from the name."""
+    from bench.plan_swap import CASES, TARGET_CASE
+
+    kind, target = resolve_target(build_parser().parse_args([TARGET_CASE]))
+    assert kind == "swap" and target is CASES[TARGET_CASE]
+
+
+def test_a_swap_run_can_be_shortened_for_a_development_run():
+    """`--frames` shortens the clip and moves the swap with it, or a short run
+    would submit the new instruction after the last frame."""
+    from bench.plan_swap import TARGET_CASE
+
+    _, case = resolve_target(build_parser().parse_args([TARGET_CASE, "--frames", "12"]))
+    assert case.frames == 12
+    assert case.swap_frame < case.frames
+
+
+def test_list_names_both_swap_cases():
+    result = subprocess.run(
+        [sys.executable, "-m", "bench", "--list"],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "swap-target" in result.stdout and "swap-style" in result.stdout
+
+
+def test_the_swap_report_reads_the_committed_runs_and_exits_zero():
+    result = subprocess.run(
+        [sys.executable, "-m", "bench", "--swap-report"],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "criterion 1" in result.stdout.lower()
+
+
+def test_a_swap_run_gates_the_engine_it_renders_through(tmp_path, monkeypatch):
+    """Refused before `bench.plan_swap_runner` imports torch, like every other run."""
+    import bench.cli as cli
+    from bench.plan_swap import TARGET_CASE
+
+    monkeypatch.setattr(cli, "resolve_engines_dir", lambda: tmp_path)
+    with pytest.raises(SystemExit) as failure:
+        cli.main([TARGET_CASE])
+    assert "--allow-engine-build" in str(failure.value)
+
+
+def test_a_swap_lands_in_its_own_directory_rather_than_beside_the_selective_runs():
+    """The same routing rule the cadence arms have: `--selective-report` and
+    `--portability-report` read every JSON in `bench/results/selective/`, and a
+    swap record is not a selective one."""
+    from bench.paths import SELECTIVE_RESULTS_SUBDIR, SWAP_RESULTS_SUBDIR
+
+    assert SWAP_RESULTS_SUBDIR != SELECTIVE_RESULTS_SUBDIR
+    source = (ROOT / "bench" / "cli.py").read_text(encoding="utf-8")
+    body = source.split("def run_swap_target", 1)[1].split("\ndef ", 1)[0]
+    assert "SWAP_RESULTS_SUBDIR" in body

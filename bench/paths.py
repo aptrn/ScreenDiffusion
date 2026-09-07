@@ -42,6 +42,11 @@ SELECTIVE_RESULTS_DIR = RESULTS_DIR / SELECTIVE_RESULTS_SUBDIR
 # become the row spec 8.8 and 7.4 quote.
 CADENCE_RESULTS_SUBDIR = "cadence"
 CADENCE_RESULTS_DIR = RESULTS_DIR / CADENCE_RESULTS_SUBDIR
+# Plan swaps (issue #30) are a third record shape again - two plans, an interval
+# series and the two acceptance criteria they answer - so they get their own
+# directory rather than sitting where the selective reports reduce and quote.
+SWAP_RESULTS_SUBDIR = "swaps"
+SWAP_RESULTS_DIR = RESULTS_DIR / SWAP_RESULTS_SUBDIR
 
 SD_MODELS_DIR_ENV = "SD_MODELS_DIR"
 SD_ENGINES_DIR_ENV = "SD_ENGINES_DIR"
