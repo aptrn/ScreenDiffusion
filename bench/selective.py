@@ -483,8 +483,10 @@ SELECTIVE_README_INTRO = (
     "the rendered regions identical to the capture, on every frame. `flicker` is the\n"
     "mean absolute difference between consecutive outputs over pixels static in the\n"
     "source and painted in both, lower is steadier.\n\n"
-    "Absolute figures belong to the GPU in the row (spec 7.4). 30 FPS is not a gate\n"
-    "here and cannot be judged on this laptop at all.\n"
+    "Absolute figures belong to the GPU in the row (spec 7.4), and rows from two GPUs\n"
+    "are two answers rather than one superseding the other. Whether 30 FPS is met is\n"
+    "a deploy-hardware question: `python -m bench --portability-report` answers it\n"
+    "from these rows, and spec 7.4 carries the answer.\n"
 )
 SELECTIVE_README_HEADER = (
     "| finished (UTC) | case | GPU | clip | plan | regions/frame | ms/frame |"
@@ -541,12 +543,20 @@ def load_selective_results(results_dir: Path) -> Dict[str, dict]:
     return load_records(results_dir)
 
 
-def latest_per_case(results: Mapping[str, dict]) -> Dict[str, dict]:
-    """One result per case: the most recently finished run of each."""
-    return latest_per(results, lambda result: result["case"]["name"])
+def latest_per_case_and_gpu(results: Mapping[str, dict]) -> Dict[str, dict]:
+    """One result per case *and machine*: the most recently finished run of each.
+
+    Per machine, because issue #24 measured the same case on the deploy card. The
+    same case on two GPUs is two answers - spec 7.4 is the section that says the
+    absolute figures are not the same number - and keying on the case alone would
+    have let the deploy run silently delete the laptop baseline from the spec.
+    """
+    return latest_per(
+        results,
+        lambda result: f"{result['case']['name']}@{result['hardware']['gpu_name']}")
 
 
-REPORT_HEADER = ("| case | plan | regions/frame | diffusion calls/frame |"
+REPORT_HEADER = ("| case | GPU | plan | regions/frame | diffusion calls/frame |"
                  " ms/frame | +detect | FPS | flicker (static px) | gate |")
 REPORT_SEPARATOR = "|" + "---|" * (REPORT_HEADER.count("|") - 1)
 
@@ -565,6 +575,7 @@ def _report_rows(results: Sequence[dict]) -> List[str]:
         run, plan = result["run"], result["plan"]
         rows.append("| " + " | ".join([
             result["case"]["name"],
+            result["hardware"]["gpu_name"],
             f"{plan['concept']} / {plan['region']} / t_index {plan['t_index']}",
             format_number(result["regions"]["regions_per_frame"], 2),
             format_number(run["diffusion_calls"] / max(1, run["frames"]), 2),
@@ -595,27 +606,29 @@ def format_selective_report(results: Mapping[str, dict]) -> str:
     7.2, 8.1 and 8.2 are: a table pasted into Markdown drifts the moment the case is
     re-measured and nothing notices.
     """
-    ordered = sorted(latest_per_case(results).values(),
-                     key=lambda result: result["case"]["name"])
+    ordered = sorted(latest_per_case_and_gpu(results).values(),
+                     key=lambda result: (result["case"]["name"],
+                                         result["run"]["finished_utc"]))
     if not ordered:
         return "no selective render run committed yet"
 
-    # The case the prose details: the table lists every case, the preamble
-    # and the Gate lines belong to the first of them.
-    primary = ordered[0]
+    # One row per case per machine, and the prose belongs to the newest run of
+    # any of them - a Gate line is one run's, so the block has to say whose.
+    primary = max(ordered, key=lambda result: result["run"]["finished_utc"])
     hardware = primary["hardware"]
     preamble = (
-        f"Measured on {hardware['gpu_name']}, {primary['run']['engine_scenario']}, "
+        f"Measured through {primary['run']['engine_scenario']} over "
         f"{primary['clip']['frames_used']} consecutive frames of "
         f"`{primary['clip']['name']}` resized to the app's "
-        f"{primary['case']['canvas']}x{primary['case']['canvas']} capture canvas. "
-        f"Clocks {hardware['clock_lock']['state']}; absolute figures belong to this "
-        f"GPU (spec 7.4), and 30 FPS is M2's gate, not this one's."
+        f"{primary['case']['canvas']}x{primary['case']['canvas']} capture canvas, "
+        f"one row per machine. Clocks {hardware['clock_lock']['state']}; absolute "
+        f"figures belong to the GPU in the row, and whether 30 FPS is met is a "
+        f"deploy-hardware question answered in spec 7.4, not here."
     )
     sections = [
         preamble,
         "\n".join([REPORT_HEADER, REPORT_SEPARATOR] + _report_rows(ordered)),
-        "The Gate, measured:",
+        f"The Gate, measured on {hardware['gpu_name']}:",
         "\n".join(_gate_lines(primary)),
     ]
     if primary.get("comparison_clip"):

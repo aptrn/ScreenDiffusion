@@ -47,8 +47,8 @@ against the upstream project instead of yours. Nothing warns you until it happen
 
 | | why | what to do on the new machine |
 |---|---|---|
-| `models/` (5.4 GB) | gitignored | copy it across, or let the app and bench re-download; point `SD_MODELS_DIR` at wherever it lands |
-| `engines/` | gitignored **and** GPU-specific | **rebuild.** Ampere engines do not load on Ada. ~5.1 GB and 15-25 min each |
+| `models/` | gitignored | copy it across, or fetch it - see below. The bench does **not** fetch it for you; point `SD_MODELS_DIR` at wherever it lands |
+| `engines/` | gitignored **and** GPU-specific | **rebuild.** Ampere engines do not load on Ada. ~5.1 GB and 15-25 min each (measured ~5 min on a 4090); pass `--allow-engine-build` |
 | `.sandcastle/.env` | secrets | recreate |
 | `.venv/`, `node_modules/` | build artefacts | `setup.bat` (installs uv + Python 3.11 + syncs), then `npm install` |
 | uv itself | not part of the repo | `setup.bat` installs it, then **use a new terminal** |
@@ -58,12 +58,38 @@ Committed results, reference clips and box tracks **do** travel, so comparisons 
 reproducible across machines. Every result carries a hardware fingerprint, so 3080 and
 4090 rows coexist in `bench/results/` without ambiguity (spec §7.4).
 
+### Filling `models/` from scratch
+
+`resolve_model_path` falls back to the *name* `sd-turbo-fp16` when there is no local
+directory, and that is not a Hugging Face repo id - so nothing downloads it on your
+behalf and the failure surfaces as a confusing load error. Fetch it explicitly. The
+`--exclude` list drops the fp32 duplicates, exactly as the GUI's downloader does:
+
+```sh
+huggingface-cli download stabilityai/sd-turbo --local-dir "$SD_MODELS_DIR/sd-turbo-fp16" \
+  --exclude sd_turbo.safetensors unet/diffusion_pytorch_model.safetensors \
+  vae/diffusion_pytorch_model.safetensors text_encoder/model.safetensors
+curl -L -o "$SD_MODELS_DIR/detectors/yolov8s-worldv2.pt" \
+  https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8s-worldv2.pt
+```
+
+That is 2.5 GB and 26 MB. The 338 MB CLIP text checkpoint YOLO-World needs is fetched
+by ultralytics on the first `set_concepts`, into `$SD_MODELS_DIR/detectors`. The
+detector bench's evidence photographs are separate again and only arrive behind
+`python -m bench yolo-world-s-640 --allow-download`; without them four GPU tests skip
+rather than fail.
+
 ## On the 4090 specifically
 
-- Remove the `hold` label from the deploy-validation issue. It is the only thing that
-  tests the 30 FPS acceptance criterion, and it has never run.
+- ~~Remove the `hold` label from the deploy-validation issue.~~ Done: issue #24 ran
+  on 2026-09-07 and acceptance criterion 2 is met at 30.9-31.4 FPS, by about 1 ms of
+  a 33.33 ms frame. Spec §7.4 carries the comparison.
 - The frame-budget issue produces far more meaningful numbers here than on the laptop,
-  where nothing came within 2x of the budget.
+  where nothing came within 2x of the budget - and it now has a measured baseline to
+  optimise against rather than an assumed one.
+- **Do not benchmark in the process that built the engine.** The first 4090 run
+  measured 29.5 FPS and every cold-started run since has measured 30.9-31.4. Build
+  the engine, let the process exit, then measure.
 - Clock locking still needs an elevated shell. A desktop card throttles less than a
   120 W laptop, but `--require-locked-clocks` is still the door for a run that decides
   something.

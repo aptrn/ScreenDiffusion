@@ -373,6 +373,16 @@ def test_the_selective_report_reads_the_committed_runs_and_exits_zero():
     assert "selective-people" in result.stdout
 
 
+def test_the_portability_report_reads_the_same_runs_and_exits_zero():
+    """Issue #24: the dev-vs-deploy block spec 7.4 carries, off the selective runs."""
+    result = subprocess.run(
+        [sys.executable, "-m", "bench", "--portability-report"],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "Acceptance criterion 2" in result.stdout
+
+
 def test_a_selective_run_gates_the_engine_it_renders_through(tmp_path, monkeypatch):
     """Refused before `bench.selective_runner` imports torch, like every other run."""
     import bench.cli as cli
