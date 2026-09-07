@@ -37,9 +37,12 @@ from detection import fps_payload, is_detect_frame
 from detector_worker import BackgroundDetector, UltralyticsDetector, frame_to_array
 
 # The selective render path (issue #8, spec 5.1 C5/C7): which regions this frame
-# renders, and how they are blended back onto the capture. Stdlib and numpy.
+# renders, and how they are blended back onto the capture. Stdlib and numpy - the
+# blend itself runs on the device (issue #31), but `device_compositor` imports torch
+# inside the functions that need it, so this import costs the GUI process nothing.
 from region_scheduler import RegionScheduler
-from compositor import MASKED, Compositor
+from compositor import MASKED
+from device_compositor import DeviceCompositor
 
 APP_ROOT = (Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent)
 INTERNAL_DIR = APP_ROOT / "_internal"
@@ -953,10 +956,11 @@ def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Qu
         detection.start()
         tracks = detection.tracks
         # The selective render path (issue #8). The scheduler holds the round-robin
-        # cursor across frames and the compositor holds the last alpha map, so a
-        # frame between two detector ticks builds neither.
+        # cursor across frames and the compositor holds the last alpha map - and the
+        # copy of it it uploaded (issue #31) - so a frame between two detector ticks
+        # builds neither and copies nothing.
         scheduler = RegionScheduler()
-        compositor = Compositor()
+        compositor = DeviceCompositor()
         if demo_plan_requested():
             # Step 4: the priority case, hardcoded, so the whole path can be driven
             # before a widget exists to drive it. Submitted rather than installed,
@@ -1072,19 +1076,23 @@ def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Qu
 
                 images = []
                 if render.diffuses:
-                    res = stream.img2img(batch)
-                    if isinstance(res, Image.Image): images = [res]
-                    elif isinstance(res, list): images = res
                     if render.action == MASKED:
                         # Onto the capture the engine was given, never onto the
                         # previous output: outside the regions the frame has to be
                         # the captured pixels, byte for byte.
-                        images = [
-                            Image.fromarray(compositor.blend(
-                                frame_to_array(batch[index]), np.asarray(im),
-                                render.alpha))
-                            for index, im in enumerate(images)
-                        ]
+                        #
+                        # And on the device (issue #31). `output_type="pt"` leaves
+                        # the render where it was made, the blend runs beside it,
+                        # and the frame makes one host copy - of uint8, after the
+                        # mask, instead of float, before it.
+                        rendered = stream.img2img(batch, output_type="pt")
+                        images = [Image.fromarray(frame) for frame
+                                  in compositor.blend_device(batch, rendered,
+                                                             render.alpha)]
+                    else:
+                        res = stream.img2img(batch)
+                        if isinstance(res, Image.Image): images = [res]
+                        elif isinstance(res, list): images = res
                 else:
                     # A selective plan that found nothing to restyle. There is no
                     # pixel anyone asked to change, so the frame costs no diffusion

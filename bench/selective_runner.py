@@ -2,7 +2,7 @@
 
 Issue #8, step 5. What runs here is the **shipped** path, not a copy of it:
 `detector_worker.BackgroundDetector` on its own thread, `detection.Tracker`,
-`region_scheduler.RegionScheduler`, `compositor.Compositor`, and the plan
+`region_scheduler.RegionScheduler`, `device_compositor.DeviceCompositor`, and the plan
 `render_plan.priority_case_plan()` the worker itself starts on behind
 `SD_DEMO_PLAN`. The only thing this module supplies is the frame source - a
 committed clip instead of a screen - and the clock.
@@ -118,8 +118,15 @@ def render_frame(stream, tensor, compositor, render, source):
     """One frame of the shipped path: diffuse, then composite through the mask.
 
     Returns the output frame and the milliseconds the frame path spent, split into
-    the whole call and the composite alone - the composite is the part this issue
-    adds to the loop, and it has to be readable next to the diffusion it rides on.
+    the whole call and the composite alone - the composite is the part issue #8
+    added to the loop, and it has to be readable next to the diffusion it rides on.
+
+    Since issue #31 the masked frame is blended **on the device**: the engine is
+    asked for `output_type="pt"`, so the render never comes home, and the frame's
+    one device-to-host copy happens inside the composite instead of inside the
+    engine call. The composite figure therefore now carries that copy, which the
+    host figure it is compared against did not - the comparison is conservative in
+    the direction that matters.
     """
     import numpy as np
     import torch
@@ -131,15 +138,14 @@ def render_frame(stream, tensor, compositor, render, source):
     if not render.diffuses:
         # Nothing to restyle: the capture itself, which is what the worker emits.
         output = source
+    elif render.action == MASKED:
+        rendered = stream.img2img(tensor, output_type="pt")
+        torch.cuda.synchronize()
+        composite_started = time.perf_counter()
+        output = compositor.blend_device(tensor, rendered, render.alpha)[-1]
+        composite_ms = (time.perf_counter() - composite_started) * 1000.0
     else:
-        rendered = np.asarray(stream.img2img(tensor))
-        if render.action == MASKED:
-            torch.cuda.synchronize()
-            composite_started = time.perf_counter()
-            output = compositor.blend(source, rendered, render.alpha)
-            composite_ms = (time.perf_counter() - composite_started) * 1000.0
-        else:
-            output = rendered
+        output = np.asarray(stream.img2img(tensor))
     torch.cuda.synchronize()
     return output, (time.perf_counter() - started) * 1000.0, composite_ms
 
@@ -198,8 +204,9 @@ def run_selective(
     import numpy as np
     import torch
 
-    from compositor import Compositor, painted_mask
+    from compositor import painted_mask
     from detection import EMPTY_TRACKS, is_detect_frame
+    from device_compositor import DEVICE, DeviceCompositor
     from detector_worker import BackgroundDetector, frame_to_array
     from region_scheduler import RegionScheduler
     from render_plan import t_index_for_denoise
@@ -241,7 +248,10 @@ def run_selective(
         detection.start()
 
     scheduler = RegionScheduler()
-    compositor = Compositor()
+    # The shipped compositor, blend and all: since issue #31 the frame loop's C7 is
+    # the device one, so measuring the host one here would measure a path the app
+    # no longer takes.
+    compositor = DeviceCompositor()
     tensors = [capture_tensor(frame, device=stream.device, dtype=stream.dtype)
                for frame in frames]
     # What the frame loop composites onto: the capture as the detector's own
@@ -347,6 +357,7 @@ def run_selective(
         fps=round(1000.0 / with_detection, 4) if with_detection else 0.0,
         mean_sm_clock_mhz=sampler.mean_sm_clock_mhz,
         max_temperature_c=sampler.max_temperature_c,
+        composite_path=DEVICE,
         peak_vram_bytes=peak_vram_bytes, gpu_samples=sampler.samples,
     )
 

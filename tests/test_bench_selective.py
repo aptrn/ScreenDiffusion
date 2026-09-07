@@ -428,6 +428,26 @@ def test_a_cadence_the_validator_clamps_is_the_clamped_one_that_is_recorded():
     assert plan.settings.detect_every_n == 30
 
 
+def test_a_record_says_where_its_blend_ran():
+    """A composite measured on the host and one measured on the device are two
+    designs as much as two numbers, and spec 7.4 compares them across machines
+    (issue #31). Records written before it ran on the host, and say so."""
+    from bench.selective import HOST_COMPOSITE
+
+    assert a_selective_result().to_dict()["run"]["composite_path"] == HOST_COMPOSITE
+
+
+def test_the_two_places_a_blend_can_run_are_the_shipped_module_s_own_names():
+    """`bench.selective` spells them itself, because the shipped modules are
+    imported inside its functions. One pair of values, or a record would name a
+    path nothing reads back."""
+    import device_compositor
+    from bench.selective import DEVICE_COMPOSITE, HOST_COMPOSITE
+
+    assert (HOST_COMPOSITE, DEVICE_COMPOSITE) == (device_compositor.HOST,
+                                                  device_compositor.DEVICE)
+
+
 def test_the_wire_key_the_cadence_override_writes_is_the_plan_s_own():
     """`bench.selective` spells `global` itself rather than importing it, because
     the shipped modules are imported inside its functions. One value, or a cadence

@@ -30,6 +30,7 @@ from dataclasses import asdict, dataclass
 from typing import Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from bench.results import BYTES_PER_MIB, format_number, latest_per
+from bench.selective import DEVICE_COMPOSITE, HOST_COMPOSITE
 
 # How one figure is read off one record. The side-by-side table and the evidence
 # cells share these, so a measure is read the same way wherever it appears.
@@ -124,6 +125,24 @@ def detect_ms(result: dict) -> Optional[float]:
 
 def composite_ms(result: dict) -> Optional[float]:
     return _nested_ms(result, "composite")
+
+
+def composite_path(result: dict) -> str:
+    """Which implementation of C7 produced that figure (issue #31).
+
+    A record with no field ran on the host: the device path post-dates every one of
+    them. An answer, not a gap.
+    """
+    return str(result["run"].get("composite_path", HOST_COMPOSITE))
+
+
+# How each recorded composite path reads in a sentence.
+COMPOSITE_PATHS = {HOST_COMPOSITE: "host (numpy)", DEVICE_COMPOSITE: "device (torch)"}
+
+
+def _where(path: str) -> str:
+    """A recorded composite path, in words. An unknown one speaks for itself."""
+    return COMPOSITE_PATHS.get(path, path)
 
 
 def clock_held_fraction(result: dict) -> Optional[float]:
@@ -249,10 +268,26 @@ class Spread:
 
 
 def fps_spread(results: Mapping[str, dict], gpu_name: str,
-               target_fps: float = TARGET_FPS) -> Spread:
-    """The FPS every committed run on `gpu_name` reached - all of them, not the newest."""
-    rates = sorted(fps(result) for result in results.values()
-                   if gpu_of(result) == gpu_name)
+               target_fps: float = TARGET_FPS,
+               composite: Optional[str] = None) -> Spread:
+    """The FPS every committed run on `gpu_name` reached - all of them, not the newest.
+
+    `composite` narrows that to the runs that blended the way the run being judged
+    did. A spread answers "is this verdict inside the run-to-run noise", and runs of
+    a design this one replaced are history rather than noise - but they are also the
+    "before" the change is read against, so the ones left out are counted out loud
+    instead of vanishing (issue #31).
+    """
+    counted: List[dict] = []
+    excluded: List[dict] = []
+    for result in results.values():
+        if gpu_of(result) != gpu_name:
+            continue
+        if composite is None or composite_path(result) == composite:
+            counted.append(result)
+        else:
+            excluded.append(result)
+    rates = sorted(fps(result) for result in counted)
     if not rates:
         return Spread(gpu=gpu_name, runs=0, lowest_fps=0.0, highest_fps=0.0,
                       target_fps=target_fps, decisive=False,
@@ -268,11 +303,21 @@ def fps_spread(results: Mapping[str, dict], gpu_name: str,
     statement = (
         f"{len(rates)} committed run{'' if len(rates) == 1 else 's'} on {gpu_name} "
         f"span {slowest:.1f}-{fastest:.1f} FPS, {side} the "
-        f"{target_fps:.0f} FPS target{caveat}"
+        f"{target_fps:.0f} FPS target{caveat}{_excluded_phrase(excluded)}"
     )
     return Spread(gpu=gpu_name, runs=len(rates), lowest_fps=round(slowest, 4),
                   highest_fps=round(fastest, 4), target_fps=target_fps,
                   decisive=decisive, statement=statement)
+
+
+def _excluded_phrase(dropped: Sequence[dict]) -> str:
+    """What was left out of the spread, and where it blended. Empty when nothing was."""
+    if not dropped:
+        return ""
+    paths = ", ".join(sorted({_where(composite_path(run)) for run in dropped}))
+    return (f" ({len(dropped)} earlier run{'' if len(dropped) == 1 else 's'} on the "
+            f"card blended on the {paths} and "
+            f"{'is' if len(dropped) == 1 else 'are'} not in this spread)")
 
 
 @dataclass(frozen=True)
@@ -431,6 +476,24 @@ MEASURES: Tuple[Tuple[str, Reader, int], ...] = (
 )
 
 
+def composite_note(baseline: dict, deploy: dict) -> str:
+    """Whether the `composite ms/frame` row above is a hardware comparison at all.
+
+    It is the row issue #31 exists because of - 4.03 ms against 2.75, host code that
+    a faster GPU did not shrink - and the moment one machine's run blends on the
+    device it stops being two cards and becomes two designs. Said out loud rather
+    than left for a reader to notice, for the reason `comparability` refuses a table
+    across two region counts.
+    """
+    baseline_path, deploy_path = composite_path(baseline), composite_path(deploy)
+    if baseline_path == deploy_path:
+        return f"The composite ran on the {_where(baseline_path)} on both machines."
+    return ("**The `composite ms/frame` row is not a hardware ratio**: the blend ran "
+            f"on the {_where(baseline_path)} on {gpu_of(baseline)} and on the "
+            f"{_where(deploy_path)} on {gpu_of(deploy)} (issue #31), so those two "
+            f"figures are two designs as much as two cards.")
+
+
 def _table(header: str, cells: Sequence[Sequence[str]]) -> str:
     """One Markdown table: header, separator, rows.
 
@@ -502,10 +565,12 @@ def format_portability_report(results: Mapping[str, dict],
                 f"count drives cost; re-run both arms at one region count.")
 
     verdict = criterion_verdict(deploy, target_fps)
-    spread = fps_spread(results, gpu_of(deploy), target_fps)
+    spread = fps_spread(results, gpu_of(deploy), target_fps,
+                        composite=composite_path(deploy))
     return "\n\n".join([
         _preamble(baseline, deploy),
         _measure_table(baseline, deploy),
+        composite_note(baseline, deploy),
         f"**Acceptance criterion 2 ({target_fps:.0f} FPS): "
         f"{'MET' if verdict.met else 'NOT MET'}"
         f"{'' if spread.decisive else ', but not decisively'}.** "

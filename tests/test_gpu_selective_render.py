@@ -8,7 +8,7 @@ Issue #8's Verification, the two items only a GPU can answer:
 - with more tracks than slots, every track is rendered inside `ceil(N/K)` frames.
 
 What runs is the shipped path - `UltralyticsDetector`, `Tracker`,
-`RegionScheduler`, the cached 512x512 TensorRT engine, `Compositor` - under
+`RegionScheduler`, the cached 512x512 TensorRT engine, `DeviceCompositor` - under
 `priority_case_plan()`, the plan the worker itself starts on. Detection is driven
 synchronously here so the frames are the same on every run; the *threaded* detector
 is what `bench selective-people` measures and what issue #7's GPU tier covers.
@@ -27,8 +27,9 @@ from bench.cli import engine_dir_name
 from bench.paths import resolve_engines_dir, resolve_models_dir
 from bench.scenarios import SCENARIOS
 from bench.selective import ENGINE_SCENARIO, VISIBLE_CHANGE, coverage_check, with_slots
-from compositor import Compositor, painted_mask
-from detection import Tracker, Tracks, is_detect_frame
+from compositor import composite, painted_mask
+from device_compositor import DeviceCompositor
+from detection import Box, Track, Tracker, Tracks, is_detect_frame
 from region_scheduler import RegionScheduler
 from render_plan import plan_from_fields, priority_case_plan, t_index_for_denoise
 
@@ -102,7 +103,7 @@ def run(stream, detector, frames, plan):
 
     tracker = Tracker()
     scheduler = RegionScheduler()
-    compositor = Compositor()
+    compositor = DeviceCompositor()
     tracks = Tracks()
     sources, outputs, masks, snapshots, selections = [], [], [], [], []
     for index, frame in enumerate(frames):
@@ -187,7 +188,7 @@ def test_a_frame_with_nothing_detected_comes_out_as_the_capture(stream, frames):
 
     absent = plan_from_fields("giraffe", "a charcoal drawing").plan
     selection = RegionScheduler().select(Tracks(), absent, CANVAS, CANVAS)
-    compositor = Compositor()
+    compositor = DeviceCompositor()
     render = compositor.frame(selection, CANVAS, CANVAS)
     assert render.diffuses is False
 
@@ -195,6 +196,40 @@ def test_a_frame_with_nothing_detected_comes_out_as_the_capture(stream, frames):
     source = frame_to_array(tensor)
     output, _, _ = render_frame(stream, tensor, compositor, render, source)
     assert np.array_equal(output, source)
+
+
+def test_the_device_blend_and_the_host_blend_render_the_same_frame(stream, frames,
+                                                                  plan):
+    """Issue #31's step 3, end to end rather than on synthetic arrays: the same
+    engine output, blended both ways, byte for byte.
+
+    `tests/test_gpu_device_compositor.py` holds the two implementations to each
+    other on inputs a test made up. This one holds them to each other on the two
+    things the frame loop actually hands over - a real capture tensor and a real
+    diffusion - because that is where the conversions the equality rests on live.
+    """
+    import torch
+    from bench.selective_runner import capture_tensor
+    from detector_worker import frame_to_array
+
+    scheduler = RegionScheduler()
+    compositor = DeviceCompositor()
+    tracks = Tracks(tracks=(Track(track_id=0, box=Box(120, 180, 300, 460),
+                                  concept="person", confidence=0.9),), ticks=1)
+    render = compositor.frame(scheduler.select(tracks, plan, CANVAS, CANVAS),
+                              CANVAS, CANVAS)
+    assert render.alpha is not None
+
+    tensor = capture_tensor(frames[0], device=stream.device, dtype=stream.dtype)
+    source = frame_to_array(tensor)
+    with torch.no_grad():
+        on_device = compositor.blend_device(
+            tensor, stream.img2img(tensor, output_type="pt"), render.alpha)[-1]
+        on_host = composite(source, np.asarray(stream.img2img(tensor)),
+                            render.alpha)
+    assert np.array_equal(on_device, on_host), (
+        f"{int(np.count_nonzero(np.any(on_device != on_host, axis=-1)))} pixels "
+        f"differ between the device blend and the numpy one")
 
 
 def test_the_plan_that_drives_this_is_the_one_the_worker_starts_on(plan):

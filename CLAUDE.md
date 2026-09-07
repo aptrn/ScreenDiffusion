@@ -87,7 +87,7 @@ match by a test.
 
 The same slot also takes an **end-to-end selective case** (`selective-people`).
 That run drives the *shipped* modules — detector on its thread, tracker, region
-scheduler, engine, compositor — under `render_plan.priority_case_plan()` over a
+scheduler, engine, device compositor — under `render_plan.priority_case_plan()` over a
 committed clip resized to the app's capture canvas, and writes to
 `bench/results/selective/`: one JSON, one README row, a source|render comparison
 mp4 and a full-resolution still, which are the Gate's manual-verification
@@ -112,7 +112,9 @@ headroom, disqualifies any arm that broke background bit-identity, and says
 whether the recommendation is outside the run-to-run spread of the repeats.
 Measured on a 4090: `detect_every_n: 5`, 28.15 ms/frame with detection against
 33.33, at no cost in image quality. The shipped default is still 3 — spec 8.8
-says why.
+says why. Every arm predates issue #31's device composite and none has been
+re-run, so read the recommendation as a bound: the ~7 ms it removes applies to
+every arm equally and can only move the pick to a *fresher* cadence.
 
 The same slot also takes a **plan-swap case** (`swap-target`, `swap-style`) —
 issue #30, acceptance criteria 1 and 3. That run renders the committed clip under
@@ -232,6 +234,20 @@ region's edge, so outside the regions the output is the captured pixel byte for
 byte. That is asserted, not asserted-ish: `bench/results/selective/` holds a run
 where 48/48 frames were bit-identical outside the mask.
 
+`device_compositor.py` is that blend **on the GPU** (issue #31). `DeviceCompositor`
+*is* a `Compositor` - it inherits the actions, the feather, the alpha cache and the
+numpy blend, so every rule the GPU-free tier holds the reference implementation to
+is a rule about the shipped object - and adds `blend_device`: the engine is asked
+for `output_type="pt"`, the capture and the render are blended where they already
+are, and the frame pays one device-to-host copy, of uint8 after the mask rather
+than of float before it. Measured on a 4090, 2.75 ms -> 0.63 ms of composite and
+24.81 -> 16.89 ms/frame, because what went with it was the whole round trip. The
+numpy path is not deleted and must not be: it is what the merge gate tests and what
+the device path is held to, byte for byte, in `tests/test_gpu_device_compositor.py`
+and `tests/test_gpu_selective_render.py`. torch is imported inside the two methods
+that need it, so the module stays importable in the GUI process and in the GPU-free
+tier.
+
 The plan's `denoise` reaches the engine through `render_plan.t_index_for_denoise`,
 which picks the schedule index whose noise amplitude is nearest — the amplitudes
 are computed from SD-Turbo's own beta schedule in stdlib and pinned to issue #5's
@@ -261,12 +277,15 @@ sends no plan at all, at start or ever, so an empty field cannot overwrite it.
   targets RTX 3090 Ti / 4090. Curve shapes and relative rankings carry across; absolute
   ms/frame, VRAM ceilings and engine build times do not. Any 30 FPS claim is a
   deploy-hardware claim. Measured on both (issue #24, spec 7.4): the selective path
-  runs 2.3x faster on a 4090 and meets 30 FPS at 5.04 regions/frame **by ~1 ms**,
+  runs 2.3x faster on a 4090 and met 30 FPS at 5.04 regions/frame **by ~1 ms**,
   while everything that is not a millisecond — the selection, the call count, the
   round-robin bound, the flicker, the bit-identity — came across unchanged. The
-  composite is the exception in the other direction: it is host numpy, so it barely
-  moved (0.68x where the frame path went to 0.45x) and is now a larger share of the
-  frame than it was on the laptop.
+  composite was the exception in the other direction: host numpy, so it barely
+  moved (0.68x where the frame path went to 0.45x) and became a larger share of the
+  frame than it was on the laptop — which is why issue #31 moved it onto the device.
+  The margin is now 9.58 ms, and the laptop row in spec 7.4 is still a
+  host-composite measurement, so that row is two designs as much as two cards until
+  the laptop is re-run. The generated block says so itself.
 - **Engines are per GPU architecture, and must be rebuilt, never copied.** An Ampere
   build will not load on Ada. A second machine needs its own `models/` (2.5 GB once
   the fp32 duplicates are excluded; `huggingface-cli download stabilityai/sd-turbo
@@ -373,7 +392,10 @@ sends no plan at all, at start or ever, so an empty field cannot overwrite it.
   the alpha ramp climbs inwards from the region's own edge and is exactly 0 one
   pixel outside it. Anything that softens the mask symmetrically - a blur, a
   dilation, a Gaussian - fails the gate `tests/test_compositor.py` and
-  `tests/test_gpu_selective_render.py` hold.
+  `tests/test_gpu_selective_render.py` hold. On either device: the blend runs on
+  the GPU now, and `tests/test_gpu_device_compositor.py` holds it to the numpy one
+  byte for byte, which is the only reason the criterion can still be checked in a
+  tier with no CUDA.
 
 ## Working agreement
 

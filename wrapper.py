@@ -469,7 +469,8 @@ class StreamDiffusionWrapper:
         return image
 
     def img2img(
-        self, image: Union[str, Image.Image, torch.Tensor], prompt: Optional[str] = None
+        self, image: Union[str, Image.Image, torch.Tensor], prompt: Optional[str] = None,
+        output_type: Optional[str] = None
     ) -> Union[Image.Image, List[Image.Image], torch.Tensor, np.ndarray]:
         """
         Performs img2img.
@@ -478,6 +479,11 @@ class StreamDiffusionWrapper:
         ----------
         image : Union[str, Image.Image, torch.Tensor]
             The image to generate from.
+        output_type : Optional[str]
+            This call's output type, overriding the wrapper's own. The selective
+            render path asks for "pt" per call (issue #31): a masked frame is
+            blended on the device and comes home once, afterwards, while every
+            other frame still wants the PIL image the caller displays.
 
         Returns
         -------
@@ -491,7 +497,8 @@ class StreamDiffusionWrapper:
             image = self.preprocess_image(image)
 
         image_tensor = self.stream(image)
-        image = self.postprocess_image(image_tensor, output_type=self.output_type)
+        image = self.postprocess_image(
+            image_tensor, output_type=output_type or self.output_type)
 
         if self.use_safety_checker:
             safety_checker_input = self.feature_extractor(
@@ -544,10 +551,15 @@ class StreamDiffusionWrapper:
         Union[Image.Image, List[Image.Image]]
             The postprocessed image.
         """
+        # `pt` is the device path (issue #31): the caller blends the frame where it
+        # already is and pays one host copy after the mask rather than before it, so
+        # moving the tensor here would be the round trip that change exists to
+        # remove. Every other output type is a host object and has to come home.
+        tensor = image_tensor if output_type == "pt" else image_tensor.cpu()
         if self.frame_buffer_size > 1:
-            return postprocess_image(image_tensor.cpu(), output_type=output_type)
+            return postprocess_image(tensor, output_type=output_type)
         else:
-            return postprocess_image(image_tensor.cpu(), output_type=output_type)[0]
+            return postprocess_image(tensor, output_type=output_type)[0]
 
     def _load_model(
         self,

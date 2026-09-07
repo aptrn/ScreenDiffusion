@@ -35,6 +35,7 @@ from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 from bench.portability import (
     FRAME_BUDGET_MS,
     TARGET_FPS,
+    composite_path,
     criterion_verdict,
     detect_ms,
     fps_spread,
@@ -339,7 +340,11 @@ def baseline_statement(baseline: Optional[Mapping[str, dict]]) -> str:
     if not deploy:
         return NO_BASELINE
     verdict = criterion_verdict(deploy[0])
-    spread = fps_spread(baseline, verdict.gpu)
+    # The spread of the design the verdict is about, not of every run the card ever
+    # produced: since issue #31 the same case has been measured on both sides of a
+    # composite that moved to the device, and one span across the two is not noise.
+    spread = fps_spread(baseline, verdict.gpu,
+                        composite=composite_path(deploy[0]))
     if verdict.met:
         finding = ("so **there is no gap to close by lowering the resolution, and "
                    "no lower-resolution engine was built** - a 384x384 or 256x256 "
