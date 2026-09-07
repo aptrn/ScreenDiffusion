@@ -290,11 +290,26 @@ Design rules:
   one strength per frame. The other targets keep their own values in the schema, and
   the validator says out loud when they differ from the first.
 
-What the worker does with a plan **today** is the `global` case of it: the plan's
-effective prompt over the whole frame, which is what the app already did and what
-`set_prompt` still does. `mode`, `region`, `box_scale`, `max_instances`,
-`seed_policy` and `background` are the schema the selective render path consumes,
-and that path is issues #7 (detector and tracks) and #8 (regions and compositing).
+**The producer, as built** (issue #22). `StreamGUI` carries two fields beside the
+prompt boxes - **Target** and **Style** - and an edit to either debounces for
+`PLAN_DEBOUNCE_MS` (400 ms, well past the prompt box's 150: a target edit changes
+the detector's vocabulary and §8.1 measured that at a ~108 ms throwaway detect) and
+then sends `plan_from_fields(target, style)` as `set_plan`. Three rules make the two
+fields safe to leave blank:
+
+- **A blank target is `global`**, the whole frame under one prompt, which is what
+  this app has always done. Clearing the target is how a user goes back to it.
+- **A blank style falls back to the prompt box**, so naming a target never hands the
+  engine an empty embedding and calls it a style.
+- **A refused plan is never sent.** The GUI validates first and puts the validator's
+  stated reason in the status area, where the field was typed; the worker validates
+  the same plan again, because it owns the version. Accepted, the validator's `notes`
+  land in the same place (§8.7).
+
+The fields stay editable while generation runs - changing what is restyled must not
+mean stopping the run - and `SD_DEMO_PLAN=1` still starts the worker on the hardcoded
+priority case, so a headless run is unaffected: a blank target sends nothing at all
+rather than overwriting it.
 
 ---
 
@@ -932,6 +947,13 @@ What does the user see when the plan asks for something impossible ("turn the
 music into a bird")? Proposal: the plan carries `confidence` and `notes`; low
 confidence surfaces as a non-blocking banner, and the previous plan keeps
 rendering. Never a black screen, never a crash.
+
+**Built** (issue #22), for the half a two-field producer can reach. A plan the
+validator refuses is never sent, and its reason - in words, from the validator -
+goes to the GUI status area beside the field that caused it; a plan it accepts
+carries its `notes` to the same place. What the worker refuses, it says on the
+status queue and keeps rendering the plan in force. `confidence` is carried and
+nothing reads it yet: with no LLM in the path there is nothing to be unconfident.
 
 ### 8.8 Does the selective path work end to end? — **yes, measured**
 
