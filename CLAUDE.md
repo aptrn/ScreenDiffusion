@@ -236,13 +236,13 @@ in whatever sent one. `plan_from_fields(target, style)` is the GUI's producer - 
 `PLAN_DEBOUNCE_MS` because a target edit re-encodes the detector's vocabulary; a
 blank target is `global`, a blank style falls back to the prompt box, and a plan the
 GUI's own validator refuses is never sent, its reason going to the status area and
-to a row under the fields themselves. There is no LLM in this path and none is coming in v1. The plan crosses the
-queue as a plain dict (`set_plan`); the worker validates it and holds it in an
-`ActivePlan`, whose `begin_frame()` is the frame loop's single read — a plan
-arriving mid-frame lands on the next frame. Only the *first* target's `prompt` and
-`denoise` reach the engine, because issue #5 chose the full-frame masked primitive
-and that is one embedding per frame; the rest are carried and the validator says
-when they differ.
+to a row under the fields themselves. There is no LLM in this path and none is
+coming in v1. The plan crosses the queue as a plain dict (`set_plan`); the worker
+validates it and holds it in an `ActivePlan`, whose `begin_frame()` is the frame
+loop's single read — a plan arriving mid-frame lands on the next frame. Only the
+*first* target's `prompt` and `denoise` reach the engine, because issue #5 chose
+the full-frame masked primitive and that is one embedding per frame; the rest are
+carried and the validator says when they differ.
 
 `detection.py` is the **tracker** — spec §5.1 C4 and §8.5. Stdlib only, like
 `render_plan.py`. `Tracker.update` takes one detector tick and returns tracks with

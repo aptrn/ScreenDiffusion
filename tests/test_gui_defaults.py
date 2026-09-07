@@ -10,16 +10,13 @@ top-level functions executed straight out of `main_gpu_addon.py`; where they rea
 the widgets is read off the source, like every other GUI wiring test here.
 """
 
-import ast
 import os
 from pathlib import Path
 
 import pytest
 
+from guisource import assignment_to, calls_named, gui_method, mentions
 from sourceloader import load_symbols
-
-SOURCE = Path(__file__).resolve().parent.parent / "main_gpu_addon.py"
-TREE = ast.parse(SOURCE.read_text(encoding="utf-8-sig"), filename=str(SOURCE))
 
 FAKE_APP_ROOT = Path(r"C:\Program Files\Screen Diffusion")
 
@@ -60,36 +57,6 @@ _engine_rebuild_warning = _symbols["_engine_rebuild_warning"]
 engine_rebuild_needed = _symbols["engine_rebuild_needed"]
 is_diffusers_dir = _symbols["is_diffusers_dir"]
 resolve_local_model_path = _symbols["resolve_local_model_path"]
-
-
-def _class(name: str) -> ast.ClassDef:
-    for node in ast.walk(TREE):
-        if isinstance(node, ast.ClassDef) and node.name == name:
-            return node
-    raise AssertionError(f"main_gpu_addon.py defines no class {name}")
-
-
-GUI = _class("StreamGUI")
-
-
-def _method(name: str) -> ast.FunctionDef:
-    for node in GUI.body:
-        if isinstance(node, ast.FunctionDef) and node.name == name:
-            return node
-    raise AssertionError(f"StreamGUI defines no {name}")
-
-
-def _mentions(node: ast.AST, name: str) -> bool:
-    return any(getattr(n, "attr", getattr(n, "id", None)) == name for n in ast.walk(node))
-
-
-def _assignment_to(method: ast.FunctionDef, attribute: str) -> ast.Assign:
-    for node in ast.walk(method):
-        if isinstance(node, ast.Assign) and any(
-            isinstance(t, ast.Attribute) and t.attr == attribute for t in node.targets
-        ):
-            return node
-    raise AssertionError(f"{method.name} assigns no self.{attribute}")
 
 
 def _a_model_in(root: Path, name: str) -> Path:
@@ -154,8 +121,8 @@ def test_the_models_root_is_the_shared_one_when_no_root_is_given(tmp_path):
 
 
 def test_the_gui_starts_its_model_field_from_the_resolution():
-    assign = _assignment_to(_method("__init__"), "model_var")
-    assert _mentions(assign, "resolve_local_model_path"), \
+    assign = assignment_to(gui_method("__init__"), "model_var")
+    assert mentions(assign, "resolve_local_model_path"), \
         "the model field is still seeded from a constant that starts blank"
 
 
@@ -171,15 +138,15 @@ def test_the_default_is_one_of_the_offered_values():
 
 
 def test_the_gui_starts_its_acceleration_field_from_that_default():
-    assign = _assignment_to(_method("__init__"), "accel_var")
-    assert _mentions(assign, "DEFAULT_ACCELERATION"), \
+    assign = assignment_to(gui_method("__init__"), "accel_var")
+    assert mentions(assign, "DEFAULT_ACCELERATION"), \
         "the acceleration field is seeded from a literal, which is how it drifted"
 
 
 def test_the_combo_offers_exactly_the_known_accelerations():
-    build = _method("_build_ui")
-    combo = _assignment_to(build, "_w_accel_combo")
-    assert _mentions(combo, "ACCELERATIONS"), \
+    build = gui_method("_build_ui")
+    combo = assignment_to(build, "_w_accel_combo")
+    assert mentions(combo, "ACCELERATIONS"), \
         "the combo's values are spelt a second time and can disagree with the default"
 
 
@@ -214,26 +181,23 @@ def test_only_the_path_that_compiles_an_engine_warns():
 
 
 def test_the_confirmation_goes_through_that_rule_and_asks_the_user():
-    confirm = _method("_confirm_engine_rebuild")
-    assert _mentions(confirm, "engine_rebuild_needed"), \
+    confirm = gui_method("_confirm_engine_rebuild")
+    assert mentions(confirm, "engine_rebuild_needed"), \
         "the warning fires on paths that build no engine, or not on the one that does"
-    assert _mentions(confirm, "_engine_rebuild_warning")
-    assert _mentions(confirm, "askokcancel")
+    assert mentions(confirm, "_engine_rebuild_warning")
+    assert mentions(confirm, "askokcancel")
 
 
 @pytest.mark.parametrize("handler", ["_add_step", "_remove_step"])
 def test_changing_the_step_count_asks_before_it_happens(handler):
     """The step *count* keys a distinct engine; a step's *value* is a runtime update."""
-    assert _mentions(_method(handler), "_confirm_engine_rebuild")
+    assert mentions(gui_method(handler), "_confirm_engine_rebuild")
 
 
 def test_the_loras_and_the_batch_size_ask_at_start():
     """Neither is editable while running, so start is before the build either way."""
-    start = _method("_on_start")
-    asked = [node for node in ast.walk(start)
-             if isinstance(node, ast.Call)
-             and getattr(node.func, "attr", None) == "_confirm_engine_rebuild"]
-    settings = {node.args[0].value for node in asked if node.args}
+    asked = calls_named(gui_method("_on_start"), "_confirm_engine_rebuild")
+    settings = {call.args[0].value for call in asked if call.args}
     assert {"LoRA set", "batch size"} <= settings, f"only warned about {settings}"
 
 

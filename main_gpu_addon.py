@@ -2341,7 +2341,8 @@ class StreamGUI(ctk.CTk):
             self.prompt_txt.get("1.0", "end"), self.neg_prompt_txt.get("1.0", "end"),
         )
         self.status_var.set(update.status)
-        self._show_plan_note(*_plan_note(update))
+        note, colour = _plan_note(update)
+        self._show_plan_note(note, colour)
         if update.message is not None and getattr(self, "control_q", None):
             try: self.control_q.put_nowait(update.message)
             except Exception: pass

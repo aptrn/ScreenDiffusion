@@ -8,20 +8,18 @@ they lead, the engine knobs move behind a collapsed "Advanced" section, and the
 plan's state is a sentence rather than the tail of the FPS line.
 
 The sentences are pure functions and are executed; where they reach the widgets is
-read off the source, because `StreamGUI` cannot be instantiated in this tier.
+read off the source through `guisource`, because `StreamGUI` cannot be instantiated
+in this tier.
 """
 
 import ast
-from pathlib import Path
 from typing import Any, Dict, NamedTuple, Optional, Sequence
 
 import pytest
 from render_plan import plan_from_fields
 
+from guisource import assignment_to, calls_named, gui_method, mentions
 from sourceloader import load_symbols
-
-SOURCE = Path(__file__).resolve().parent.parent / "main_gpu_addon.py"
-TREE = ast.parse(SOURCE.read_text(encoding="utf-8-sig"), filename=str(SOURCE))
 
 CUSTOM_COLORS = {"success": "#10B981", "error": "#EF4444", "surface": "#374151"}
 
@@ -43,42 +41,6 @@ _plan_update_from_fields = _symbols["_plan_update_from_fields"]
 PROMPT = "flip book animation, black and white rough sketch"
 
 
-def _class(name: str) -> ast.ClassDef:
-    for node in ast.walk(TREE):
-        if isinstance(node, ast.ClassDef) and node.name == name:
-            return node
-    raise AssertionError(f"main_gpu_addon.py defines no class {name}")
-
-
-GUI = _class("StreamGUI")
-
-
-def _method(name: str) -> ast.FunctionDef:
-    for node in GUI.body:
-        if isinstance(node, ast.FunctionDef) and node.name == name:
-            return node
-    raise AssertionError(f"StreamGUI defines no {name}")
-
-
-def _calls_named(node: ast.AST, name: str) -> list:
-    return [call for call in ast.walk(node)
-            if isinstance(call, ast.Call)
-            and getattr(call.func, "attr", getattr(call.func, "id", None)) == name]
-
-
-def _mentions(node: ast.AST, name: str) -> bool:
-    return any(getattr(n, "attr", getattr(n, "id", None)) == name for n in ast.walk(node))
-
-
-def _assignment_to(method: ast.FunctionDef, attribute: str) -> ast.Assign:
-    for node in ast.walk(method):
-        if isinstance(node, ast.Assign) and any(
-            isinstance(t, ast.Attribute) and t.attr == attribute for t in node.targets
-        ):
-            return node
-    raise AssertionError(f"{method.name} assigns no self.{attribute}")
-
-
 def _first_arg(call: ast.AST) -> str:
     """A Tk widget's parent is its first positional argument, by name."""
     assert isinstance(call, ast.Call) and call.args, ast.dump(call)
@@ -87,7 +49,7 @@ def _first_arg(call: ast.AST) -> str:
 
 def _parent_of(method: ast.FunctionDef, attribute: str) -> str:
     """The name of the frame `self.<attribute>` was built into."""
-    return _first_arg(_assignment_to(method, attribute).value)
+    return _first_arg(assignment_to(method, attribute).value)
 
 
 # The local name `_build_ui` gives the collapsible frame the engine knobs live in.
@@ -181,17 +143,17 @@ def test_a_bare_number_on_the_fps_queue_does_not_take_the_line_down():
 
 
 def test_the_line_is_refreshed_from_the_newest_payload():
-    poll = _method("_poll_queues")
-    assert _calls_named(poll, "_refresh_plan_state"), \
+    poll = gui_method("_poll_queues")
+    assert calls_named(poll, "_refresh_plan_state"), \
         "the plan line is never redrawn, so it can only be as old as the last edit"
-    refresh = _method("_refresh_plan_state")
-    assert _calls_named(refresh, "_plan_state_line")
+    refresh = gui_method("_refresh_plan_state")
+    assert calls_named(refresh, "_plan_state_line")
 
 
 def test_typing_updates_the_line_before_the_debounced_send():
     """Reading what the plan will be must not wait 400 ms behind the queue write."""
-    handler = _method("_on_plan_field_changed")
-    refreshes = _calls_named(handler, "_refresh_plan_state")
+    handler = gui_method("_on_plan_field_changed")
+    refreshes = calls_named(handler, "_refresh_plan_state")
     assert refreshes, "the line only moves once the plan has been sent"
     guards = [node for node in ast.walk(handler)
               if isinstance(node, (ast.If, ast.Return))]
@@ -202,7 +164,7 @@ def test_typing_updates_the_line_before_the_debounced_send():
 
 def test_starting_and_stopping_redraw_it():
     for name in ("_on_start", "_on_stop"):
-        assert _calls_named(_method(name), "_refresh_plan_state"), \
+        assert calls_named(gui_method(name), "_refresh_plan_state"), \
             f"{name} leaves the detection state saying whatever it said before"
 
 
@@ -237,17 +199,19 @@ def test_the_update_carries_the_notes_rather_than_only_a_rendered_line():
 
 
 def test_the_push_writes_the_note_where_the_fields_are():
-    push = _method("_push_plan_runtime")
-    assert _calls_named(push, "_plan_note")
-    assert _calls_named(push, "_show_plan_note"),         "the refusal is only in the shared status bar"
-    assert _mentions(push, "status_var"), "the status bar stopped carrying the outcome"
-    assert _mentions(_method("_show_plan_note"), "plan_note_var")
+    push = gui_method("_push_plan_runtime")
+    assert calls_named(push, "_plan_note")
+    assert calls_named(push, "_show_plan_note"), \
+        "the refusal is only in the shared status bar"
+    assert mentions(push, "status_var"), "the status bar stopped carrying the outcome"
+    assert mentions(gui_method("_show_plan_note"), "plan_note_var")
 
 
 def test_the_note_row_is_not_there_when_there_is_nothing_to_say():
-    show = _method("_show_plan_note")
-    assert _calls_named(show, "grid_remove"),         "an empty note leaves a hole under the two fields on every clean plan"
-    assert _calls_named(show, "grid")
+    show = gui_method("_show_plan_note")
+    assert calls_named(show, "grid_remove"), \
+        "an empty note leaves a hole under the two fields on every clean plan"
+    assert calls_named(show, "grid")
 
 
 # --- step 2: what leads, and what is demoted ---------------------------------
@@ -268,44 +232,58 @@ def test_the_step_count_is_off_by_default_and_the_sliders_are_not():
 
 
 def test_the_two_fields_are_built_before_any_engine_knob():
-    build = _method("_build_ui")
-    target = _assignment_to(build, "_w_target_entry").lineno
+    build = gui_method("_build_ui")
+    target = assignment_to(build, "_w_target_entry").lineno
     for knob in ("_w_model_entry", "_w_seed_entry", "_w_accel_combo"):
-        assert target < _assignment_to(build, knob).lineno, \
+        assert target < assignment_to(build, knob).lineno, \
             f"{knob} is still built above the field that says what to restyle"
 
 
-@pytest.mark.parametrize("knob", ["_w_seed_entry", "_w_buffer_entry",
-                                  "_w_accel_combo", "_w_lcm_switch"])
-def test_the_engine_knobs_are_built_inside_the_advanced_section(knob):
-    build = _method("_build_ui")
+# The widget each name in `ADVANCED` is built as. Without this the constant could
+# only be checked against `SHOW`, which is another list of names - the point is
+# where the window actually puts the control.
+ADVANCED_WIDGETS = {
+    "seed": "_w_seed_entry",
+    "frame_buffer_size": "_w_buffer_entry",
+    "acceleration": "_w_accel_combo",
+    "use_lcm_lora": "_w_lcm_switch",
+    "use_denoising_batch": "_w_denoise_switch",
+    "step_count": "_w_step_add",
+}
+
+
+@pytest.mark.parametrize("control", ADVANCED)
+def test_the_engine_knobs_are_built_inside_the_advanced_section(control):
+    knob = ADVANCED_WIDGETS.get(control)
+    assert knob, f"`ADVANCED` demotes {control}, which no widget here maps to"
+    build = gui_method("_build_ui")
     holder = _parent_of(build, knob)
     assert _is_inside(build, holder, ADVANCED_BODY), \
         f"{knob} sits in `{holder}`, which is not inside the advanced section"
 
 
 def test_the_advanced_section_starts_collapsed():
-    build = _method("_build_ui")
-    hides = [call for call in _calls_named(build, "grid_remove")
-             if _mentions(call, "_advanced_body")]
+    build = gui_method("_build_ui")
+    hides = [call for call in calls_named(build, "grid_remove")
+             if mentions(call, "_advanced_body")]
     assert hides, "the engine knobs are visible at start, which is the demotion undone"
 
 
 def test_the_advanced_section_can_be_opened_again():
-    toggle = _method("_toggle_advanced")
-    assert _calls_named(toggle, "grid"), "nothing shows the knobs once they are hidden"
-    assert _mentions(toggle, "advanced_var")
+    toggle = gui_method("_toggle_advanced")
+    assert calls_named(toggle, "grid"), "nothing shows the knobs once they are hidden"
+    assert mentions(toggle, "advanced_var")
 
 
 def test_the_advanced_section_says_what_a_rebuild_costs():
     """Step 4's standing half: the warning is there before anything is touched."""
-    build = _method("_build_ui")
-    assert _mentions(build, "ENGINE_REBUILD_HINT")
+    build = gui_method("_build_ui")
+    assert mentions(build, "ENGINE_REBUILD_HINT")
 
 
 def test_the_fields_still_stay_editable_while_generation_runs():
     """Unchanged from issue #22, and the promotion must not have re-locked them."""
-    build = _method("_build_ui")
-    for call in _calls_named(build, "_register_lockables"):
+    build = gui_method("_build_ui")
+    for call in calls_named(build, "_register_lockables"):
         for widget in ("_w_target_entry", "_w_style_entry"):
-            assert not _mentions(call, widget), f"{widget} is disabled while running"
+            assert not mentions(call, widget), f"{widget} is disabled while running"
