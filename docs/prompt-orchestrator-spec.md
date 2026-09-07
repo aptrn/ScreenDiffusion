@@ -221,6 +221,18 @@ endpoints are exact in floating point; and only the bounding rectangle of the
 non-zero alpha is written at all. Colour matching and the temporal EMA are not
 built — they are M2 levers (§8.5).
 
+**And on the device** (issue #31): `device_compositor.DeviceCompositor` **is** a
+`Compositor` — the actions, the feather, the alpha cache and the numpy blend are
+inherited, so every rule the merge gate holds the reference implementation to is a
+rule about the shipped object. What it adds is `blend_device`: the engine is asked
+for `output_type="pt"`, the capture and the render are blended where they already
+are, and the frame pays **one** device-to-host copy, of uint8 after the mask rather
+than of float before it. The arithmetic is not equivalent to the numpy path, it is
+the same operations in the same order — `tests/test_gpu_device_compositor.py` and
+`tests/test_gpu_selective_render.py` hold the two to each other byte for byte, on
+synthetic inputs and through the real engine. numpy stays the reference: it is what
+the GPU-free tier tests and what anything without a device can still use.
+
 ---
 
 ## 6. The Render Plan (control-plane ⇄ data-plane contract)
@@ -327,7 +339,7 @@ what M0 has actually put on the clock so far:
 | Tracking            | every frame     | < 1               | not yet measured          | CPU                       |
 | Preprocess crops    | every frame     | 1–2               | not yet measured          | resize + normalise on GPU |
 | **Diffusion**       | every frame     | **15–20**         | **54.8–58.4** @ 512² TRT b1 | the dominant term         |
-| Composite + present | every frame     | 2–3               | not yet measured          |                           |
+| Composite + present | every frame     | 2–3               | **4.03** @ 512², host composite | §8.8 — 0.63 on a 4090 since the blend moved onto the device (#31) |
 | Headroom            |                 | ~5                | —                         |                           |
 
 Diffusion is over budget by roughly 3×, and on its own is ~1.7× the entire
@@ -624,7 +636,8 @@ What survives the move from laptop to desktop:
 | Relative ranking of the §8.2 primitives        | Yes                                                |
 | What the selective path selects, and in how many calls | Yes — **measured**, identical on both cards |
 | Bit-identity of non-target pixels              | Yes — **measured**, 48/48 frames on both           |
-| Absolute ms/frame, and whether 30 FPS is met   | **No** — **measured**, 2.3× apart; re-measure on the deploy GPU |
+| Absolute ms/frame, and whether 30 FPS is met   | **No** — **measured**, 2.3× apart on one design; re-measure on the deploy GPU |
+| Where the frame path's cost sits (host vs device) | **No** — **measured**, the host composite was 7.3% of a laptop frame and 11.1% of a 4090 one (issue #31) |
 | VRAM ceilings and OOM thresholds               | **No** — a laptop OOM says nothing about 24 GB     |
 | Engine build times                             | **No**                                             |
 
@@ -665,16 +678,18 @@ until it is regenerated.
 |---|---|---|---|
 | regions/frame | 5.04 | 5.04 | 1.00x |
 | diffusion calls/frame | 1.00 | 1.00 | 1.00x |
-| ms/frame, frame path | 55.06 | 24.81 | 0.45x |
-| ms/frame, with detection | 74.73 | 32.35 | 0.43x |
-| FPS | 13.4 | 30.9 | 2.31x |
-| ms/detect | 59.03 | 22.62 | 0.38x |
-| composite ms/frame | 4.03 | 2.75 | 0.68x |
+| ms/frame, frame path | 55.06 | 16.89 | 0.31x |
+| ms/frame, with detection | 74.73 | 23.75 | 0.32x |
+| FPS | 13.4 | 42.1 | 3.15x |
+| ms/detect | 59.03 | 20.58 | 0.35x |
+| composite ms/frame | 4.03 | 0.63 | 0.16x |
 | flicker (static px) | 1.49 | 1.49 | 1.00x |
-| peak VRAM (MiB) | 3742 | 3738 | 1.00x |
-| mean SM clock (MHz) | 1668 | 2715 | 1.63x |
+| peak VRAM (MiB) | 3742 | 3744 | 1.00x |
+| mean SM clock (MHz) | 1668 | 2730 | 1.64x |
 
-**Acceptance criterion 2 (30 FPS): MET.** 30.9 FPS at 5.04 regions/frame on NVIDIA GeForce RTX 4090 - 32.35 ms per frame with detection amortised against the 33.33 ms a 30 FPS budget allows, 0.98 ms to spare; clocks unlocked. 5 committed runs on NVIDIA GeForce RTX 4090 span 30.9-31.4 FPS, clear of the 30 FPS target.
+**The `composite ms/frame` row is not a hardware ratio**: the blend ran on the host (numpy) on NVIDIA GeForce RTX 3080 Laptop GPU and on the device (torch) on NVIDIA GeForce RTX 4090 (issue #31), so those two figures are two designs as much as two cards.
+
+**Acceptance criterion 2 (30 FPS): MET.** 42.1 FPS at 5.04 regions/frame on NVIDIA GeForce RTX 4090 - 23.75 ms per frame with detection amortised against the 33.33 ms a 30 FPS budget allows, 9.58 ms to spare; clocks unlocked. 5 committed runs on NVIDIA GeForce RTX 4090 span 41.5-42.3 FPS, clear of the 30 FPS target (5 earlier runs on the card blended on the host (numpy) and are not in this spread).
 
 What carried across the move, measured:
 
@@ -684,33 +699,36 @@ What carried across the move, measured:
 | How much of the frame the scheduler picks: regions and calls per frame | Yes | 5.04 dev -> 5.04 deploy regions/frame, 1.00 dev -> 1.00 deploy calls/frame |
 | The ceil(N/K) round-robin bound | Yes | worst gap 2 of 3 allowed dev -> 2 of 3 deploy |
 | Flicker over pixels static in the source | Yes | 1.49 dev -> 1.49 deploy |
-| Absolute ms/frame on the frame path | **No** | 55.06 ms dev -> 24.81 ms deploy |
-| Whether the 30 FPS criterion is met | **No** | 13.4 FPS dev -> 30.9 FPS deploy |
-| What one detect costs beside the diffusion | **No** | 59.03 ms dev -> 22.62 ms deploy |
-| Peak VRAM the path allocates | Yes | 3742 MiB dev -> 3738 MiB deploy |
-| The clock the card holds under load, against its own maximum | **No** | 79% of maximum dev (120 W limit) -> 86% deploy (500 W) |
+| Absolute ms/frame on the frame path | **No** | 55.06 ms dev -> 16.89 ms deploy |
+| Whether the 30 FPS criterion is met | **No** | 13.4 FPS dev -> 42.1 FPS deploy |
+| What one detect costs beside the diffusion | **No** | 59.03 ms dev -> 20.58 ms deploy |
+| Peak VRAM the path allocates | Yes | 3742 MiB dev -> 3744 MiB deploy |
+| The clock the card holds under load, against its own maximum | **No** | 79% of maximum dev (120 W limit) -> 87% deploy (500 W) |
 
 Comparable because NVIDIA GeForce RTX 3080 Laptop GPU rendered 5.04 regions/frame and NVIDIA GeForce RTX 4090 rendered 5.04, the same selection to within 5%.
 <!-- END DEPLOY HARDWARE -->
 
 Four things the block does not say for itself.
 
-**The criterion is met, and the margin is one millisecond.** 32.35 ms against a
-33.33 ms budget on the slowest of five runs, 31.88 ms on the fastest. That clears
-the gate and is nobody's idea of headroom: it is 5.04 regions on one 512² frame at
-`detect_every_n: 3` with nothing else on the card, while the app also has a capture
-thread, a GUI process and a real screen to feed. §8.8's two known costs — detection
-contention and a host-side composite — are the levers. Issue #23 pulled the first
-of them and left the second: raising the cadence to 5 measures **28.15 ms, 5.18 ms
-of headroom**, at no cost in image quality and one extra frame of box age (§8.8's
-cadence block). Because there was no gap, **no lower-resolution engine was built.**
-This verdict is a floor to optimise from, not a finish line.
+**The criterion is met, and the margin is now nine milliseconds — it was one.**
+The block above is the *second* measurement of this card. Issue #24 measured
+32.35 ms against a 33.33 ms budget on the slowest of five runs, 31.88 ms on the
+fastest: it cleared the gate and was nobody's idea of headroom. §8.8's two known
+costs — detection contention and a host-side composite — were the levers, and both
+have now been pulled. Issue #23 raised the cadence (5.18 ms, at one extra frame of
+box age, not adopted as the default); issue #31 moved the composite onto the
+device, which costs nothing anyone can see and is what the block above measures:
+**23.75 ms with detection, 9.58 ms of headroom, at the shipped `detect_every_n: 3`.**
+Because there was never a gap, **no lower-resolution engine was built.** The five
+host-composite runs stay in `bench/results/selective/` as the before, and are named
+out of the FPS spread above rather than averaged into it.
 
-**The first run on this card measured 29.5 FPS and is not among the five.** It was
-the run that compiled the engine, and it diffused in a process still holding the
-TensorRT builder's state. The five committed runs are cold-started against the
-cached engine, which is what the app does; the excluded one is recorded here rather
-than in `bench/results/` because it measured a condition the product never enters.
+**The first run on this card measured 29.5 FPS and is not among issue #24's five.**
+It was the run that compiled the engine, and it diffused in a process still holding
+the TensorRT builder's state. Every committed run on this card - the five with the
+host composite and the five with the device one - is cold-started against the cached
+engine, which is what the app does; the excluded one is recorded here rather than in
+`bench/results/` because it measured a condition the product never enters.
 
 **Everything that is not a millisecond carried exactly.** Same regions, same calls,
 the same round-robin bound, the same flicker to three figures, and the same 48/48
@@ -720,10 +738,19 @@ feathered composite — did not need re-taking. Peak VRAM matched too, but read 
 narrowly: what the path *allocates* is a property of the path, and the VRAM
 *ceiling* remains untested, because nothing here came near either card's.
 
-**The composite is the part that did not scale.** The frame path came down to 0.45×
-and one detect to 0.38×, but the numpy blend only reached 0.68× — it is host code,
-and a faster GPU does not make it faster. It was 7.3% of the laptop's frame path and
-it is 11.1% of the 4090's. On this card the ranking of what to optimise has changed.
+**The composite was the part that did not scale, and that is why it moved.** Issue
+#24 measured the frame path down to 0.45× and one detect to 0.38×, while the numpy
+blend only reached 0.68× — host code, which a faster GPU does not make faster. It
+was 7.3% of the laptop's frame path and 11.1% of the 4090's, so on this card the
+ranking of what to optimise had changed. Issue #31 acted on that: the blend now runs
+on the device and the same measurement reads **0.63 ms against 2.75**, which is why
+that row's ratio above carries a caveat rather than a conclusion — it is two designs
+as much as two cards. The frame path fell further than the 2.75 ms it removed
+(24.81 → 16.89 ms), because the round trip it removed was the whole of it: the
+render used to come home as float32 and be rebuilt as a PIL image before a host
+blend, and that cost was charged to the engine call rather than to the composite.
+The laptop row is still a host-composite measurement; re-running it there is what
+would make this row a hardware ratio again.
 
 Clocks were unlocked on both machines: `nvidia-smi --lock-gpu-clocks` needs an
 elevated shell the agent loop does not have (issue #13), and the 4090 refused it
@@ -1064,7 +1091,7 @@ the pipeline — and does everything else come out untouched?
 It is measured through the *shipped* modules rather than a harness copy of them.
 `python -m bench selective-people` drives `detector_worker.BackgroundDetector` on
 its own thread, `detection.Tracker`, `region_scheduler.RegionScheduler`, the cached
-512×512 TensorRT engine and `compositor.Compositor` over a committed clip resized
+512×512 TensorRT engine and `device_compositor.DeviceCompositor` over a committed clip resized
 to the app's own capture canvas, under `render_plan.priority_case_plan()` — the
 same hardcoded plan the worker starts on behind `SD_DEMO_PLAN`. The block below is
 generated from the committed record; re-run the case and the merge gate fails until
@@ -1076,7 +1103,7 @@ Measured on NVIDIA GeForce RTX 3080 Laptop GPU, NVIDIA GeForce RTX 4090, img2img
 | case | GPU | plan | regions/frame | diffusion calls/frame | ms/frame | +detect | FPS | flicker (static px) | gate |
 |---|---|---|---|---|---|---|---|---|---|
 | selective-people | NVIDIA GeForce RTX 3080 Laptop GPU | person / lower_half / t_index 40 | 5.04 | 1.00 | 55.1 | 74.7 | 13.4 | 1.49 | pass |
-| selective-people | NVIDIA GeForce RTX 4090 | person / lower_half / t_index 40 | 5.04 | 1.00 | 24.8 | 32.4 | 30.9 | 1.49 | pass |
+| selective-people | NVIDIA GeForce RTX 4090 | person / lower_half / t_index 40 | 5.04 | 1.00 | 16.9 | 23.7 | 42.1 | 1.49 | pass |
 
 The Gate, measured on NVIDIA GeForce RTX 3080 Laptop GPU:
 
@@ -1092,9 +1119,9 @@ The Gate, measured on NVIDIA GeForce RTX 4090:
 - **Non-target pixels bit-identical** - yes. 48/48 frames left every pixel outside the rendered regions exactly as captured (164676 background pixels on the frame with the most painted).
 - **The region is visibly restyled** - yes. The rendered regions changed by 11.8/255 against the capture - 11.8 net of the 0.00/255 the capture's own round trip costs - against a 8/255 threshold.
 - **No track starved by the round robin** - yes. With 6 tracks over 2 slots no track waited more than 2 frames to be rendered, against a ceil(N/K) bound of 3.
-- **The loop never stalls** - yes. 48/48 frames produced an output; the worst frame spent 0.015 ms offering the capture to the detector (budget 5 ms), and 0 frames had nothing to restyle and passed the capture through.
+- **The loop never stalls** - yes. 48/48 frames produced an output; the worst frame spent 0.014 ms offering the capture to the detector (budget 5 ms), and 0 frames had nothing to restyle and passed the capture through.
 
-Manual verification artefact: `selective-people-20260907-101106Z-comparison.mp4` (source | selective render) and `selective-people-20260907-101106Z-comparison.jpg`.
+Manual verification artefact: `selective-people-20260907-115310Z-comparison.mp4` (source | selective render) and `selective-people-20260907-115310Z-comparison.jpg`.
 <!-- END SELECTIVE PATH -->
 
 The table carries one row per machine. Issue #24 re-ran the case on the deploy
@@ -1112,13 +1139,18 @@ The contention is not a laptop artefact: the 4090 pays it too, at ~23 ms against
 §8.1's resident-but-idle figure. Raising the cadence is the cheap lever and is a
 plan field already; spending it is M2's decision, not this one's.
 
-**The composite is ~4 ms/frame of numpy** — the bounding rectangle of the regions,
-blended on the host, on a frame that is otherwise entirely on the GPU. The
-interface (an alpha map and a blend) is the same on either device, so moving it is
-an M2 optimisation and not a redesign. It is also the only cost here that barely
-moved on the faster card (§7.4): 2.75 ms against 4.03, where the frame path around
-it came down to 0.45× — so it is a *larger* share of a 4090 frame than of a laptop
-one, 11.1% against 7.3%.
+**The composite was ~4 ms/frame of numpy, and is now 0.63 ms on the device.**
+The bounding rectangle of the regions used to be blended on the host, on a frame
+that was otherwise entirely on the GPU — and it was the only cost here that barely
+moved on the faster card (§7.4): 2.75 ms against the laptop's 4.03, where the frame
+path around it came down to 0.45×, so it was a *larger* share of a 4090 frame than
+of a laptop one, 11.1% against 7.3%. Issue #31 moved it, and the interface really
+was "an alpha map and a blend" on either device: `DeviceCompositor` inherits the
+whole of the numpy one and adds the blend. The 4090 row above is the device path,
+the laptop row is still the host one, and the frame path fell by more than the
+composite cost (24.81 → 16.89 ms) because what went with it was the round trip —
+the render used to come home as float32 and be rebuilt as a PIL image first. The
+five host-composite runs stay in `bench/results/selective/` as the before.
 
 **Flicker is 1.49 where §8.2 measured 1.43 on the same clip.** The two are not the
 same measurement — this one renders detected boxes at the app's capture geometry,
@@ -1152,7 +1184,7 @@ twice, cold-started, and the block is generated with
 `uv run python -m bench --cadence-report` from `bench/results/cadence/`.
 
 <!-- BEGIN CADENCE SWEEP -->
-Step 1, taken from issue #24's committed baseline rather than re-derived: 30.9 FPS at 5.04 regions/frame on NVIDIA GeForce RTX 4090 - 32.35 ms per frame with detection amortised against the 33.33 ms a 30 FPS budget allows, 0.98 ms to spare; clocks unlocked. 5 committed runs on NVIDIA GeForce RTX 4090 span 30.9-31.4 FPS, clear of the 30 FPS target - so **there is no gap to close by lowering the resolution, and no lower-resolution engine was built** - a 384x384 or 256x256 engine would trade what the model can see for speed nobody needs.
+Step 1, taken from issue #24's committed baseline rather than re-derived: 42.1 FPS at 5.04 regions/frame on NVIDIA GeForce RTX 4090 - 23.75 ms per frame with detection amortised against the 33.33 ms a 30 FPS budget allows, 9.58 ms to spare; clocks unlocked. 5 committed runs on NVIDIA GeForce RTX 4090 span 41.5-42.3 FPS, clear of the 30 FPS target (5 earlier runs on the card blended on the host (numpy) and are not in this spread) - so **there is no gap to close by lowering the resolution, and no lower-resolution engine was built** - a 384x384 or 256x256 engine would trade what the model can see for speed nobody needs.
 
 `detect_every_n` swept over 2, 3, 5, 8 on NVIDIA GeForce RTX 4090, through the shipped selective path: the same img2img-tensorrt-512x512-b1 engine, the same 48 frames of `people.mp4` at the app's 512x512 capture canvas, the same `person / lower_half / t_index 40` plan. Only the cadence moves, so no pixel the diffusion produces changes - what a higher cadence spends is the freshness of the boxes, which is the right half of the table.
 
@@ -1193,10 +1225,21 @@ millisecond figure shows that. It is the `ids/objects` column, and it is the
 reason the recommendation is the *freshest* setting that fits rather than the
 cheapest one.
 
-**The remaining lever is the composite.** §7.4 measured it at 2.75 ms of host
-numpy that a faster GPU does not shrink — 11.1% of a 4090 frame and now, at the
-recommended cadence, ~10% of a 28 ms one. Moving it to the device is the next
-optimisation and is real work, not a flag.
+**The remaining lever was the composite, and it has since been pulled.** §7.4
+measured it at 2.75 ms of host numpy that a faster GPU did not shrink — 11.1% of a
+4090 frame and, at the recommended cadence, ~10% of a 28 ms one. Issue #31 moved
+the blend onto the device: 0.63 ms, and 23.75 ms/frame with detection at the
+*shipped* `detect_every_n: 3`, which is 4.4 ms cheaper than this sweep's best arm
+was at a cadence it had to spend box freshness to reach.
+
+**So the sweep above is measured on a frame path that has since got faster**, and
+its arms are not re-run here — every arm predates issue #31 and the table says what
+it said when it was measured. What that changes is only which arm the rule picks,
+and it can only pick a *fresher* one: every arm loses the same ~7 ms, so the n=2
+arm's −2.76 ms of headroom becomes a surplus and the recommendation moves towards
+the shipped default of 3 rather than away from it. Re-running the sweep is issue
+#23's ground, not #31's; until it is, read the recommendation as a bound and the
+staleness half of the table — which no composite touches — as measured.
 
 **The recommendation is not the shipped default, deliberately.**
 `DEFAULT_DETECT_EVERY_N` is still 3. Two reasons, both about what a default is.
@@ -1269,6 +1312,14 @@ cheaply — which is the point of ordering them this way.
    path measures 35.5 FPS with 5.18 ms of headroom and no cost in image quality —
    §8.8's cadence block. The shipped default is still 3; adopting 5 is a plan
    field, not a rebuild.
+   **Widened again, measured (issue #31, 2026-09-07):** with the composite moved
+   off the host the same path measures **41.5–42.3 FPS over five runs, 23.75 ms
+   with detection against the 33.33 ms budget — 9.58 ms of headroom — at the
+   shipped `detect_every_n: 3`**, and still 48/48 frames bit-identical outside the
+   rendered regions. Unlike the cadence lever this one costs no box freshness and
+   nothing else anyone can see. The margin is no longer the thing to watch here;
+   what the criterion has never been measured with is a real screen, a capture
+   thread and a GUI process beside it.
 3. Typing a new instruction swaps behaviour with **no stutter** in the output
    stream and **no TensorRT rebuild**.
 4. Non-target pixels are bit-identical to the capture (verifiable).

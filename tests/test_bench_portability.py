@@ -21,6 +21,8 @@ from bench.portability import (
     REGIONS_TOLERANCE,
     TARGET_FPS,
     comparability,
+    composite_note,
+    composite_path,
     criterion_verdict,
     format_portability_report,
     fps_spread,
@@ -38,7 +40,8 @@ DEPLOY = "NVIDIA GeForce RTX 4090"
 def a_selective_result(gpu_name=LAPTOP, finished="2026-09-06T20:25:15Z",
                        ms_per_frame=55.06, with_detection=74.73,
                        regions_per_frame=5.04, detect_ms=59.03,
-                       composite_ms=4.03, flicker=1.49, peak_vram_bytes=3923605504,
+                       composite_ms=4.03, composite_path=None,
+                       flicker=1.49, peak_vram_bytes=3923605504,
                        background_passed=True, coverage_bound=3, coverage_worst=2,
                        clock_state="unlocked"):
     """One selective record, cut down to the fields the portability report reads."""
@@ -60,6 +63,8 @@ def a_selective_result(gpu_name=LAPTOP, finished="2026-09-06T20:25:15Z",
             "fps": round(1000.0 / with_detection, 4),
             "detect": {"mean_ms": detect_ms},
             "composite": {"mean_ms": composite_ms},
+            **({} if composite_path is None
+               else {"composite_path": composite_path}),
             "peak_vram_bytes": peak_vram_bytes,
             "mean_sm_clock_mhz": 1667.5,
         },
@@ -320,3 +325,62 @@ def test_an_incomparable_pair_is_refused_in_the_report_itself():
     })
     assert "not comparable" in report
     assert "| measure |" not in report, "an incomparable pair still printed a table"
+
+
+# --- where the blend ran (issue #31) ----------------------------------------
+
+
+def test_a_record_written_before_the_device_path_ran_on_the_host():
+    """No field is the answer, not a missing answer: every composite measured
+    before issue #31 was numpy on the host."""
+    assert composite_path(a_selective_result()) == "host"
+
+
+def test_the_report_says_when_the_composite_row_is_not_a_hardware_ratio():
+    """The one row a device blend makes incomparable across machines. Loudly,
+    because 0.68x was the finding that started issue #31 and a reader comparing
+    2.75 ms of numpy against 0.3 ms of torch would read it as a faster card."""
+    report = format_portability_report({
+        "laptop.json": a_selective_result(LAPTOP, composite_path="host"),
+        "deploy.json": a_selective_result(DEPLOY, "2026-09-07T12:00:00Z",
+                                          composite_ms=0.31,
+                                          composite_path="device"),
+    })
+    assert "not a hardware ratio" in report
+    assert "issue #31" in report
+
+
+def test_two_runs_that_blended_the_same_way_are_compared_without_a_caveat():
+    both = composite_note(a_selective_result(LAPTOP, composite_path="device"),
+                          a_selective_result(DEPLOY, composite_path="device"))
+    assert "not a hardware ratio" not in both
+    assert "device" in both
+
+
+def test_the_spread_is_over_runs_that_blended_the_way_this_one_did():
+    """A spread answers "is this verdict inside the run-to-run noise", and runs of
+    a superseded design are history rather than noise. They are counted out loud
+    rather than quietly, because they are also the "before" this change is read
+    against (issue #31)."""
+    results = {
+        "host-1.json": a_selective_result(DEPLOY, "2026-09-07T10:00:00Z",
+                                          with_detection=32.35),
+        "host-2.json": a_selective_result(DEPLOY, "2026-09-07T10:10:00Z",
+                                          with_detection=31.88),
+        "device-1.json": a_selective_result(DEPLOY, "2026-09-07T12:00:00Z",
+                                            with_detection=23.63,
+                                            composite_path="device"),
+        "device-2.json": a_selective_result(DEPLOY, "2026-09-07T12:05:00Z",
+                                            with_detection=24.11,
+                                            composite_path="device"),
+    }
+    spread = fps_spread(results, DEPLOY, composite="device")
+    assert spread.runs == 2
+    assert 41.0 < spread.lowest_fps < spread.highest_fps < 43.0
+    assert "2 earlier" in spread.statement and "host" in spread.statement
+
+
+def test_a_spread_with_nothing_excluded_reads_as_it_always_did():
+    results = {"a.json": a_selective_result(DEPLOY, with_detection=32.35),
+               "b.json": a_selective_result(DEPLOY, with_detection=31.88)}
+    assert "earlier" not in fps_spread(results, DEPLOY).statement

@@ -67,6 +67,13 @@ RECORD_KIND = "selective"
 # imported inside functions in this file, and a test holds the two to one value.
 GLOBAL_KEY = "global"
 
+# Where a run's blend ran - `device_compositor.HOST` / `.DEVICE`, spelt here for the
+# reason `GLOBAL_KEY` is, and held to those values by a test. A composite measured on
+# the host and one measured on the device are two designs as much as two numbers, and
+# spec 7.4 compares them across machines (issue #31).
+HOST_COMPOSITE = "host"
+DEVICE_COMPOSITE = "device"
+
 # The one cached engine the path is rendered through - the same 512x512 batch-1
 # engine issue #5 compared both primitives on, so a millisecond here is comparable
 # with a millisecond there.
@@ -585,6 +592,10 @@ class SelectiveRunMetrics:
     mean_sm_clock_mhz: Optional[float]
     max_temperature_c: Optional[float]
     peak_vram_bytes: int
+    # Which implementation of C7 produced `composite`. Defaulted rather than
+    # required: every run committed before issue #31 blended on the host, so the
+    # absent field is an answer and not a gap.
+    composite_path: str = HOST_COMPOSITE
     gpu_samples: List[List[Optional[float]]] = field(default_factory=list)
 
     def to_dict(self) -> dict:

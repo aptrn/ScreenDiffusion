@@ -52,11 +52,12 @@ def test_the_selective_modules_are_imported_at_module_scope():
     """Both are stdlib-or-numpy; neither drags torch into the GUI process."""
     imported = {alias.name for node in ast.walk(TREE)
                 if isinstance(node, ast.ImportFrom)
-                and node.module in ("region_scheduler", "compositor", "detector_worker",
+                and node.module in ("region_scheduler", "compositor",
+                                    "device_compositor", "detector_worker",
                                     "render_plan")
                 for alias in node.names}
     assert "RegionScheduler" in imported
-    assert {"Compositor", "MASKED"} <= imported
+    assert {"DeviceCompositor", "MASKED"} <= imported
     assert "frame_to_array" in imported, "the capture never becomes an array to blend"
     assert {"priority_case_plan", "t_index_for_denoise"} <= imported
 
@@ -73,24 +74,49 @@ def test_the_scheduler_is_asked_once_per_frame_for_the_frames_own_plan():
 
 def test_the_compositor_decides_what_the_frame_costs():
     assert len(_calls_named(WORKER, "frame")) == 1
-    assert len(_calls_named(WORKER, "blend")) == 1
+    assert len(_calls_named(WORKER, "blend_device")) == 1
 
 
 def test_a_frame_with_nothing_to_restyle_costs_no_diffusion_call():
     """The compositor's `diffuses` guards the engine call, so a selective plan
-    that found nothing passes the capture through instead of restyling it."""
-    img2img, = _calls_named(WORKER, "img2img")
-    guards = [node for node in ast.walk(WORKER)
-              if isinstance(node, ast.If)
-              and "diffuses" in ast.unparse(node.test)
-              and img2img in list(ast.walk(node))]
-    assert guards, "the diffusion call is not behind the compositor's verdict"
+    that found nothing passes the capture through instead of restyling it.
+
+    Every engine call, not one of them: the masked frame and the full-frame one
+    ask for different output types (issue #31) and both are the same decision."""
+    calls = _calls_named(WORKER, "img2img")
+    assert calls
+    for img2img in calls:
+        guards = [node for node in ast.walk(WORKER)
+                  if isinstance(node, ast.If)
+                  and "diffuses" in ast.unparse(node.test)
+                  and img2img in list(ast.walk(node))]
+        assert guards, "a diffusion call is not behind the compositor's verdict"
 
 
 def test_the_render_is_composited_onto_the_capture_itself():
-    """Not onto the previous output: the gate is bit-identity with the capture."""
-    blend, = _calls_named(WORKER, "blend")
-    assert "frame_to_array" in ast.unparse(blend.args[0])
+    """Not onto the previous output: the gate is bit-identity with the capture.
+
+    The capture is now the tensor the engine was given rather than an array made
+    from it - the blend runs on the device, so the frame it is composited onto is
+    the one that never left."""
+    blend, = _calls_named(WORKER, "blend_device")
+    assert ast.unparse(blend.args[0]) == "batch"
+
+
+def test_the_masked_render_never_comes_home_before_the_blend():
+    """Issue #31's step 2: the engine hands back a device tensor, the composite
+    runs where it is, and the frame pays one host copy afterwards. Asking for the
+    PIL image here would be the round trip the change exists to remove."""
+    blend, = _calls_named(WORKER, "blend_device")
+    rendered = ast.unparse(blend.args[1])
+    masked = [call for call in _calls_named(WORKER, "img2img")
+              if any(keyword.arg == "output_type"
+                     and keyword.value.value == "pt" for keyword in call.keywords)]
+    assert len(masked) == 1, "the masked branch does not ask the engine for a tensor"
+    bound = [ast.unparse(node.targets[0]) for node in ast.walk(WORKER)
+             if isinstance(node, ast.Assign) and masked[0] in list(ast.walk(node))]
+    assert bound == [rendered], (
+        f"the blend takes `{rendered}`, not what the engine left on the device")
 
 
 def test_the_plans_denoise_reaches_the_engine_without_an_engine_rebuild():
