@@ -53,6 +53,9 @@ from bench.results import (
     timestamp_from,
     write_record,
 )
+# What a build actually costs, in the one place the window and the harness both
+# read it from (issue #38).
+from engine_cache import ENGINE_BUILD_SIZE, ENGINE_BUILD_TIME
 
 RECORD_KIND = "style"
 
@@ -332,6 +335,12 @@ class DeliveryRecommendation:
 
 def _styled_arm(records: Mapping[str, dict], acceleration: str,
                 style: Optional[str]) -> Optional[dict]:
+    """The newest arm on one accelerator with (or without) one style fused.
+
+    Reduced first, like every other reader of a results directory: two runs of one
+    configuration are two honest records and a table wants the later one.
+    """
+    records = latest_per(records, lambda record: record["scenario"]["name"])
     for record in records.values():
         scenario = record["scenario"]
         if (scenario["acceleration"] == acceleration
@@ -374,8 +383,9 @@ def delivery_recommendation(step_records: Mapping[str, dict],
             f"{tensorrt_ms:.2f} ms/call against {torch_ms:.2f} ms without one - "
             f"{torch_ms / tensorrt_ms:.2f}x - and against a {budget_ms:.2f} ms "
             f"budget, {fits}. What the engine costs is that it *is* an engine: "
-            f"each distinct style and scale keys its own ~5 GB, 15-25 minute build "
-            f"(`create_prefix` puts the fused-LoRA fingerprint in the cache key), "
+            f"each distinct style and scale keys its own build - "
+            f"{ENGINE_BUILD_SIZE} on disk and {ENGINE_BUILD_TIME}, because "
+            f"`create_prefix` puts the fused-LoRA fingerprint in the cache key - "
             f"so styles are a release-time set rather than something a user types. "
             f"The `none` path swaps a style for a model reload and no compile, "
             f"which is what LoRA *experimentation* needs."),
@@ -422,21 +432,31 @@ def _preamble(result: Mapping, gpus: Sequence[str]) -> str:
     )
 
 
-def _machine_section(result: dict) -> List[str]:
-    arms = arms_of(result)
-    verdicts = [verdict for verdict in (style_verdict(arm) for arm in arms)
-                if verdict is not None]
+def verdicts_of(result: Mapping) -> List[StyleVerdict]:
+    """The judged arms - every one but the control, which has no LoRA to judge."""
+    return [verdict for verdict in (style_verdict(arm) for arm in arms_of(result))
+            if verdict is not None]
+
+
+def _machine_section(result: dict, prefix: str) -> str:
+    """One run's headline, its per-arm verdicts, and what to look at.
+
+    The headline is a paragraph and the verdicts are a list under it, which is why
+    this returns the rendered section rather than lines for a caller to guess the
+    joins for.
+    """
+    verdicts = verdicts_of(result)
     passed = [verdict for verdict in verdicts if verdict.passed]
-    lines = [f"**{len(passed)} of {len(verdicts)} style LoRAs loaded and visibly "
-             f"changed the output.**"]
-    lines += [f"- {verdict.statement}." for verdict in verdicts]
+    headline = (f"{prefix}**{len(passed)} of {len(verdicts)} style LoRAs loaded "
+                f"and visibly changed the output.**")
+    bullets = [f"- {verdict.statement}." for verdict in verdicts]
     artefacts = [f"`{result[key]}`" for key in ("comparison_still",
                                                 "comparison_clip")
                  if result.get(key)]
     if artefacts:
-        lines.append(f"The artefact a human judges this by, source | base | one "
-                     f"panel per style: {', '.join(artefacts)}.")
-    return lines
+        bullets.append(f"The artefact a human judges this by, source | base | one "
+                       f"panel per style: {', '.join(artefacts)}.")
+    return "\n\n".join([headline, "\n".join(bullets)])
 
 
 def format_style_report(results: Mapping[str, dict],
@@ -457,9 +477,8 @@ def format_style_report(results: Mapping[str, dict],
     sections.append("\n".join([header, table_separator(header)] + rows))
     for gpu in gpus:
         for result in measured_on(ordered, gpu):
-            machine = "" if len(gpus) == 1 else f"**{gpu}.** "
-            lines = _machine_section(result)
-            sections.append(machine + lines[0] + "\n\n" + "\n".join(lines[1:]))
+            sections.append(_machine_section(
+                result, "" if len(gpus) == 1 else f"{gpu}: "))
     recommendation = delivery_recommendation(step_records or {})
     if recommendation is not None:
         sections.append(recommendation.statement)

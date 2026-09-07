@@ -30,7 +30,27 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Mapping, Optional
 
+from bench.cadence import background_passed
 from bench.paths import resolve_models_dir
+from bench.portability import (
+    FRAME_BUDGET_MS,
+    criterion_verdict,
+    flicker,
+    fps,
+    ms_per_frame,
+    ms_per_frame_with_detection,
+    regions_per_frame,
+)
+from bench.results import (
+    GpuColumn,
+    distinct_gpus,
+    format_number,
+    gpu_of,
+    latest_per,
+    measured_on,
+    sentence_case,
+    table_separator,
+)
 from bench.scenarios import ScenarioConfig
 
 # Where a downloaded LoRA is staged, under the shared models root. The app's own
@@ -172,18 +192,7 @@ MODEL_REPORT_HEADER = ("| base model | steps | regions/frame | ms/frame |"
                        " background | 30 FPS |")
 
 
-def _model_row(result: dict, column) -> str:
-    from bench.cadence import background_passed
-    from bench.portability import (
-        FRAME_BUDGET_MS,
-        flicker,
-        fps,
-        ms_per_frame,
-        ms_per_frame_with_detection,
-        regions_per_frame,
-    )
-    from bench.results import format_number
-
+def _model_row(result: dict, column: GpuColumn) -> str:
     cost = ms_per_frame_with_detection(result)
     return column.row([
         f"`{base_model_of(result)}`",
@@ -209,18 +218,6 @@ def format_model_report(results: Mapping[str, dict]) -> str:
     decided by the function spec 7.4's verdict comes from rather than by a second
     reading of the same numbers.
     """
-    from bench.cadence import background_passed
-    from bench.portability import criterion_verdict
-    from bench.results import (
-        GpuColumn,
-        distinct_gpus,
-        gpu_of,
-        latest_per,
-        measured_on,
-        sentence_case,
-        table_separator,
-    )
-
     reduced = latest_per(results, lambda result: result["case"]["name"])
     ordered = sorted(reduced.values(),
                      key=lambda result: (steps_of(result), base_model_of(result),
