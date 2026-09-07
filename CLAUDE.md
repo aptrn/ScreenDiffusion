@@ -243,6 +243,10 @@ how the whole path is driven until a GUI field exists to drive it.
   engines. Leave them out of commits and out of test fixtures. Point `SD_MODELS_DIR` /
   `SD_ENGINES_DIR` at a shared copy rather than re-downloading or rebuilding per
   worktree.
+- **PRs from this fork default to the upstream repo.** `gh pr create` targets
+  `rudyaa-sd/ScreenDiffusion` unless `remote.origin.gh-resolved` is set locally
+  (`gh repo set-default aptrn/ScreenDiffusion`). It lives in `.git/config`, so it does
+  not survive a fresh clone — see [`docs/second-machine.md`](docs/second-machine.md).
 - **The worker enforces offline mode** (`enforce_offline_mode()`). Network calls from
   the frame path will fail there by design.
 - **`controlnet_paths` / `controlnet_scales`** are accepted by
