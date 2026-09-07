@@ -285,10 +285,21 @@ class Spread:
         return asdict(self)
 
 
-def configuration_of(result: dict) -> Tuple[str, int]:
-    """What a run measured beyond the hardware: where it blended, how often it
-    detected. Two runs that differ in either are two configurations."""
-    return composite_path(result), cadence_of(result)
+# What a run measured beyond the hardware: where it blended (issue #31), how often
+# it detected (issue #33). Each dimension is a way of reading it off a record and a
+# way of saying it in the sentence that names an excluded run - one list, the way
+# `MEASURES` is one list, so a dimension cannot be filtered on here and left out of
+# the explanation there.
+CONFIGURATION: Tuple[Tuple[Callable[[dict], object], Callable[[dict], str]], ...] = (
+    (composite_path, lambda run: f"blended on the {_where(composite_path(run))}"),
+    (cadence_of, lambda run: f"ran at detect_every_n {cadence_of(run)}"),
+)
+
+
+def configuration_of(result: dict) -> Tuple[object, ...]:
+    """The configuration a run measured. Two runs that differ in any dimension of
+    it are two configurations, not two samples of one."""
+    return tuple(read(result) for read, _ in CONFIGURATION)
 
 
 def fps_spread(results: Mapping[str, dict], gpu_name: str,
@@ -337,12 +348,8 @@ def fps_spread(results: Mapping[str, dict], gpu_name: str,
 
 def _differences(run: dict, like: dict) -> str:
     """How one excluded run differs from the one being judged, in words."""
-    parts = []
-    if composite_path(run) != composite_path(like):
-        parts.append(f"blended on the {_where(composite_path(run))}")
-    if cadence_of(run) != cadence_of(like):
-        parts.append(f"ran at detect_every_n {cadence_of(run)}")
-    return " and ".join(parts)
+    return " and ".join(describe(run) for read, describe in CONFIGURATION
+                        if read(run) != read(like))
 
 
 def _excluded_phrase(dropped: Sequence[dict], like: Optional[dict]) -> str:
@@ -568,13 +575,22 @@ def box_age_note(baseline: dict, deploy: dict) -> str:
         return ("Box age is **not recorded** on either machine: both records "
                 "predate the staleness block (issue #23), so what the cadence "
                 "costs in freshness is unmeasured here - spec 8.8's sweep has it.")
+    # One record may predate the block while the other carries it. Frames are the
+    # portable half, so the machine that measured them lends them to the machine
+    # that did not - and `_age_phrase` labels that half as projected.
     measured = dev_frames if deploy_frames is None else deploy_frames
-    dev_ms = (dev_frames or measured) * ms_per_frame(baseline)
-    deploy_ms = (deploy_frames or measured) * ms_per_frame(deploy)
-    ratio = max(dev_ms, deploy_ms) / min(dev_ms, deploy_ms)
+    dev_age = measured if dev_frames is None else dev_frames
+    deploy_age = measured if deploy_frames is None else deploy_frames
+    dev_ms = dev_age * ms_per_frame(baseline)
+    deploy_ms = deploy_age * ms_per_frame(deploy)
+    slowest = min(dev_ms, deploy_ms)
+    # A run whose detector never ticked measures zero box age; nothing is a
+    # multiple of zero, so the two are the same lag rather than a division by it.
+    ratio = max(dev_ms, deploy_ms) / slowest if slowest else 1.0
     return (f"**What the cadence costs is box age, and only its frames travel.** "
-            f"{_age_phrase(baseline, dev_frames, measured)} and "
-            f"{_age_phrase(deploy, deploy_frames, measured)} - {dev_ms:.0f} ms "
+            f"{_age_phrase(baseline, dev_age, projected=dev_frames is None)} and "
+            f"{_age_phrase(deploy, deploy_age, projected=deploy_frames is None)} "
+            f"- {dev_ms:.0f} ms "
             f"against {deploy_ms:.0f} ms at their own frame paths, {ratio:.1f}x "
             f"apart on the same setting. The frames are the portable figure; the "
             f"milliseconds are what a viewer sees the mask lag the subject by, and "
@@ -582,14 +598,14 @@ def box_age_note(baseline: dict, deploy: dict) -> str:
             f"decision about the deploy card.")
 
 
-def _age_phrase(result: dict, frames: Optional[float], measured: float) -> str:
+def _age_phrase(result: dict, age_frames: float, projected: bool) -> str:
     """One machine's box age, and whether it is its own measurement."""
-    if frames is None:
-        return (f"{measured:.1f} frames on {gpu_of(result)} (projected: that "
+    if projected:
+        return (f"{age_frames:.1f} frames on {gpu_of(result)} (projected: that "
                 f"record predates the staleness block, so the frames are the other "
                 f"machine's)")
-    return (f"a frame rendered boxes {frames:.1f} frames old on {gpu_of(result)} "
-            f"at `detect_every_n: {cadence_of(result)}`")
+    return (f"a frame rendered boxes {age_frames:.1f} frames old on "
+            f"{gpu_of(result)} at `detect_every_n: {cadence_of(result)}`")
 
 
 def composite_note(baseline: dict, deploy: dict) -> str:

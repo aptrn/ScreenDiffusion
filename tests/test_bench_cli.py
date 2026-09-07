@@ -519,8 +519,7 @@ def test_the_gate_stops_a_run_that_would_decide_something_on_a_shared_card(
     assert "Close whatever else" in message, "and say how to fix it"
 
 
-@pytest.mark.parametrize("outcome", ["clear", "busy", "unknown"])
-def test_without_the_flag_the_gate_does_not_even_sample(outcome):
+def test_without_the_flag_the_gate_does_not_even_sample():
     """A gate nobody asked for must not lengthen every run by two seconds."""
     from bench.cli import idle_gpu_guard
 

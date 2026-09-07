@@ -479,7 +479,7 @@ def test_the_wire_key_the_cadence_override_writes_is_the_plan_s_own():
 # --- was anything else on the card while this ran? (issue #33) ---------------
 
 
-def test_a_run_records_whether_the_card_was_its_own(record):
+def test_a_run_records_whether_the_card_was_its_own():
     """The door issue #33's discarded run walked through. Every other field said the
     run was sound; this is the one that would not have."""
     from bench.contention import CLEAR, OccupancyRecord
@@ -496,7 +496,7 @@ def test_a_record_predating_the_occupancy_gate_carries_none_not_a_pass(record):
     assert record["occupancy"] is None
 
 
-def test_a_run_measured_beside_something_else_says_so_where_it_is_quoted(record):
+def test_a_run_measured_beside_something_else_says_so_where_it_is_quoted():
     """A door that only fires at run time is not a door: `--require-idle-gpu` is
     opt-in, so a contended run can still reach `bench/results/`. The block that
     quotes it has to say what it was measured beside."""

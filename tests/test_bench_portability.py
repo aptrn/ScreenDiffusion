@@ -423,6 +423,15 @@ def test_the_report_says_which_rows_a_cadence_difference_confounds():
     assert "detect_every_n" in report and "issue #33" in report
 
 
+def test_every_cadence_sensitive_row_is_a_row_the_table_actually_prints():
+    """The withholding is matched on the label, so a row renamed in `MEASURES` and
+    not here would silently start quoting a ratio across two cadences again."""
+    from bench.portability import CADENCE_SENSITIVE, MEASURES
+
+    printed = {label for label, _, _ in MEASURES}
+    assert set(CADENCE_SENSITIVE) <= printed
+
+
 def test_a_confounded_row_prints_no_ratio_at_all():
     """A ratio is the part someone quotes, so the cell says why it is absent rather
     than dividing two cadences' figures - the same rule `comparability` applies to
