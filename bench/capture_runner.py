@@ -39,7 +39,6 @@ from bench.capture import (
     CANVAS,
     ENGINE_SCENARIO,
     README_NAME,
-    README_PREAMBLE,
     CaptureArm,
     CaptureCase,
     CaptureResult,
@@ -282,7 +281,7 @@ def sweep_denoise(stream, case: CaptureCase, primitive: str, tensors: Sequence,
     return points
 
 
-def _arm(case: CaptureCase, primitive: str, width: int, height: int,
+def _arm(primitive: str, width: int, height: int,
          denoise, points: Sequence[DenoisePoint],
          stages: StageCost, per_frame_ms: Sequence[float], sources: Sequence,
          outputs: Sequence, control_change: Sequence[float], masks: Sequence,
@@ -525,7 +524,7 @@ def run_capture(
                     identity = identity_check(detector, probe_case, rendered)
                     log(f"identity {arm_name(primitive, width, height)}: "
                         f"{identity.statement}")
-                arm = _arm(case, primitive, width, height, chosen, points, stages,
+                arm = _arm(primitive, width, height, chosen, points, stages,
                            stage_ms["frame"], sources, rendered, control_change,
                            masks, selections, changed, calls, crop_frames, identity)
                 arms.append(arm)
