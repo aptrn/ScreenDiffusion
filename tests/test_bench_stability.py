@@ -17,11 +17,13 @@ from bench.flicker import flicker_score, response_score
 from bench.selective import (
     CASES,
     PRIORITY_CASE,
+    background_check,
     change_check,
     ema_suffix,
     plan_record,
 )
 from bench.stability import (
+    RANDOM_POLICY,
     RESPONSE_RETENTION,
     SHIPPED_EMA,
     SHIPPED_POLICY,
@@ -69,17 +71,15 @@ def an_arm(seed_policy=SHIPPED_POLICY, output_ema=SHIPPED_EMA, flicker=1.49,
     case = CASES[PRIORITY_CASE].replace(
         name=f"{PRIORITY_CASE}-{seed_policy}-{ema_suffix(output_ema)}",
         seed_policy=seed_policy, output_ema=output_ema)
-    flicker_score_, response_score_ = _scores(flicker, response)
+    scored_flicker, scored_response = _scores(flicker, response)
     fields = dict(
         case=case, plan=plan_record(case.plan()),
         run=dataclasses.replace(a_selective_result().run, finished_utc=finished),
-        flicker=flicker_score_, response=response_score_,
+        flicker=scored_flicker, response=scored_response,
         change=change_check(net_change, 0.0),
         hardware=a_fingerprint(gpu_name=gpu),
     )
     if not background_ok:
-        from bench.selective import background_check
-
         fields["background"] = background_check([0] * 47 + [12], 200_000)
     fields.update(overrides)
     return a_selective_result(**fields).to_dict()
@@ -90,6 +90,28 @@ def a_sweep(*arms):
     return {f"arm-{index}.json": an_arm(policy, ema, flicker=flicker,
                                         response=response)
             for index, (policy, ema, flicker, response) in enumerate(arms)}
+
+
+# --- the vocabulary this report is written in --------------------------------
+
+
+def test_the_control_arm_is_what_render_plan_actually_ships():
+    """`bench.stability` spells these itself, because the shipped modules are
+    imported inside functions in the results modules. One value, or the arm every
+    other one is read against would stop being the one the app runs."""
+    import render_plan
+
+    assert SHIPPED_POLICY == render_plan.DEFAULT_SEED_POLICY
+    assert SHIPPED_EMA == render_plan.DEFAULT_OUTPUT_EMA
+
+
+def test_the_control_policy_is_one_the_plan_can_carry():
+    """The `random` arm is the flicker metric's upper bound, and the report points
+    a reader at its clip by name."""
+    import render_plan
+
+    assert RANDOM_POLICY == render_plan.RANDOM
+    assert {SHIPPED_POLICY, RANDOM_POLICY} <= set(render_plan.SEED_POLICIES)
 
 
 # --- reading one arm ---------------------------------------------------------

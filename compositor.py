@@ -179,11 +179,9 @@ class Compositor:
 
     # --- the output EMA (issue #32, spec 8.5) -------------------------------
     #
-    # Applied to the *rendered canvas*, before the blend, and that is what keeps
-    # the issue's first trap shut: an EMA on the composited frame would make a
-    # background pixel a function of history, and this one cannot, because the
-    # blend it feeds still copies the captured byte wherever alpha is zero. What
-    # history reaches the screen is exactly what the mask lets through.
+    # `smooth` is applied to the *rendered canvas* and `blend` to what it returns,
+    # never the other way round - the module docstring says why that ordering is
+    # the whole safety argument.
 
     def set_output_ema(self, coefficient: float) -> None:
         """Take the plan's coefficient. The history is kept: a plan edit is not a

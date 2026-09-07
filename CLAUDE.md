@@ -152,14 +152,15 @@ be improved.
 
 All six case-table blocks (`--detector-report`, `--primitive-report`,
 `--selective-report`, `--cadence-report`, `--swap-report`, `--stability-report`)
-keep the newest run
-**per (thing measured, GPU)**, not per name. A 4090 run therefore adds a row beside the 3080's instead of erasing it,
-which is what keeps spec 7.4's portability table checkable. When rows span GPUs
-the table grows a `GPU` column, the preamble names every machine, and the
-per-machine verdicts — the recommendation, the primitive decision, the selective
-Gate lines, the two acceptance-criterion verdicts — are stated once per machine; with one machine the block renders
-byte-identically to before, so the byte-match tests do not churn. `gpu_of` in
-`bench/results.py` is the one reading of which machine a record came from.
+keep the newest run **per (thing measured, GPU)**, not per name. A 4090 run
+therefore adds a row beside the 3080's instead of erasing it, which is what keeps
+spec 7.4's portability table checkable. When rows span GPUs the table grows a
+`GPU` column, the preamble names every machine, and the per-machine verdicts —
+the recommendation, the primitive decision, the selective Gate lines, the two
+acceptance-criterion verdicts — are stated once per machine; with one machine the
+block renders byte-identically to before, so the byte-match tests do not churn.
+`gpu_of` in `bench/results.py` is the one reading of which machine a record came
+from.
 
 `--portability-report` is the second question asked of those same records — not
 "does the path work" but "which of its numbers survived the move to the hardware
@@ -297,12 +298,13 @@ which picks the schedule index whose noise amplitude is nearest — the amplitud
 are computed from SD-Turbo's own beta schedule in stdlib and pinned to issue #5's
 measured ladder by a test. Only the schedule *values* move, so a plan change is a
 runtime update and never an engine rebuild; a plan with no target leaves the
-t_index slider alone. `seed_policy` and `global.output_ema` reach the frame loop the same way and are
-runtime writes too - `seeding.NoiseField` and the compositor - so no stability
-setting can cost an engine rebuild. `SD_DEMO_PLAN=1` starts the worker on
-`priority_case_plan()` — restyle the lower half of every person, gently — which is
-the headless way to drive the whole path. It survives the GUI fields: a blank target
-sends no plan at all, at start or ever, so an empty field cannot overwrite it.
+t_index slider alone. `seed_policy` and `global.output_ema` reach the frame loop
+the same way and are runtime writes too - `seeding.NoiseField` and the
+compositor - so no stability setting can cost an engine rebuild.
+`SD_DEMO_PLAN=1` starts the worker on `priority_case_plan()` — restyle the lower
+half of every person, gently — which is the headless way to drive the whole path.
+It survives the GUI fields: a blank target sends no plan at all, at start or
+ever, so an empty field cannot overwrite it.
 
 ## Gotchas
 

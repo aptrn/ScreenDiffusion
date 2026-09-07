@@ -137,11 +137,15 @@ class SelectiveCase:
         With an override, the same plan re-validated with one field changed:
         `RenderPlan.to_dict` is exactly what `validate_plan` accepts back, so a
         sweep's arms go through the same door the worker's plans do and a value
-        outside its range is clamped and recorded rather than rendered.
+        outside its range is clamped and recorded rather than rendered. An override
+        that asks for the value the plan already carries is not a change, and the
+        plan is returned untouched - so an arm at the shipped setting records the
+        same plan the baselines do, version and all.
         """
         from render_plan import INITIAL_PLAN_VERSION, priority_case_plan, validate_plan
 
         plan = priority_case_plan()
+        shipped = plan.to_dict()
         raw = plan.to_dict()
         if self.detect_every_n is not None:
             raw[GLOBAL_KEY]["detect_every_n"] = self.detect_every_n
@@ -150,7 +154,7 @@ class SelectiveCase:
         if self.seed_policy is not None:
             for target in raw["targets"]:
                 target["seed_policy"] = self.seed_policy
-        if raw == plan.to_dict():
+        if raw == shipped:
             return plan
         result = validate_plan(raw, previous_version=INITIAL_PLAN_VERSION)
         if result.plan is None:  # unreachable: only a validated plan is edited here

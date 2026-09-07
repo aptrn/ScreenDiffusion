@@ -167,8 +167,6 @@ class NoiseField:
         noise = noise_tensor(stream)
         if noise is None:
             return False
-        import torch
-
         if self._prepared is None:
             self._prepared = noise.detach().clone()
         if not self.writes:
@@ -177,27 +175,29 @@ class NoiseField:
             return True
         # `writes` has already excluded `fixed`, and `validate_plan` admits no
         # fourth policy, so these two are the whole vocabulary here.
-        noise.copy_(self._random_like(torch, noise) if self.policy == RANDOM
-                    else self._per_track_field(torch, noise, selection))
+        noise.copy_(self._random_like(noise) if self.policy == RANDOM
+                    else self._per_track_field(noise, selection))
         self._dirty = True
         return True
 
     # --- the two policies that write ----------------------------------------
 
-    def _random_like(self, torch, noise):
+    def _random_like(self, noise):
         """A fresh field every frame - the boiling upper bound, and reproducible.
 
         Drawn from one generator advanced across the run rather than from the global
         RNG, so a run of the control is as repeatable as a run of the thing it is
         the control for.
         """
+        import torch
+
         if self._generator is None:
             self._generator = torch.Generator(device=noise.device)
             self._generator.manual_seed(self.base_seed)
         return torch.randn(noise.shape, generator=self._generator,
                            device=noise.device, dtype=noise.dtype)
 
-    def _per_track_field(self, torch, noise, selection):
+    def _per_track_field(self, noise, selection):
         """The prepared field, with each region's cells taken from its track's own.
 
         The track's realisation is rolled to the track's current latent centre, so
@@ -205,6 +205,8 @@ class NoiseField:
         moved to - which is the whole of what a per-track seed can mean when one
         noise field covers every region (see this module's docstring).
         """
+        import torch
+
         field = self._prepared.clone()
         height, width = noise.shape[-2], noise.shape[-1]
         for region in selection.regions:
@@ -213,12 +215,12 @@ class NoiseField:
                 continue
             x0, y0, x1, y1 = cells
             rolled = torch.roll(
-                self._track_field(torch, region.track_id, noise),
+                self._track_field(region.track_id, noise),
                 shifts=((y0 + y1) // 2, (x0 + x1) // 2), dims=(-2, -1))
             field[..., y0:y1, x0:x1] = rolled[..., y0:y1, x0:x1]
         return field
 
-    def _track_field(self, torch, track_id: int, noise):
+    def _track_field(self, track_id: int, noise):
         """One track's noise realisation, drawn once and kept for its lifetime.
 
         Canvas-sized rather than region-sized: a region that grows or shrinks
@@ -229,6 +231,8 @@ class NoiseField:
         cached = self._fields.get(track_id)
         if cached is not None:
             return cached
+        import torch
+
         generator = torch.Generator(device=noise.device)
         generator.manual_seed(seed_for_track(track_id, self.base_seed))
         field = torch.randn(noise.shape, generator=generator, device=noise.device,

@@ -53,13 +53,17 @@ from bench.selective import VISIBLE_CHANGE, ema_suffix
 # ships with, run through the same harness on the same clip in the same sweep. A
 # control from another directory measured at another time would be the confound
 # every other report in this repo refuses.
+#
+# Spelt here rather than imported, for the reason `bench.selective.GLOBAL_KEY` is -
+# the shipped modules are imported inside functions in these results modules - and
+# held to `render_plan`'s own defaults by a test, so "shipped" cannot go stale.
 SHIPPED_POLICY = "fixed"
 SHIPPED_EMA = 0.0
 
 # The policy that does not ship: a fresh noise field every frame, and therefore the
 # flicker metric's upper bound on this clip. Named because the report points a
 # reader at its clip - a column nobody has seen the extremes of is a column nobody
-# can read.
+# can read. Pinned to `render_plan.RANDOM` by the same test.
 RANDOM_POLICY = "random"
 
 # How much of the control arm's responsiveness a recommendation must keep. The EMA
@@ -146,6 +150,12 @@ def control_of(results: Sequence[dict]) -> Optional[dict]:
 # --- what an arm is disqualified for -----------------------------------------
 
 
+# Which of the two criteria an arm failed. Named rather than read back out of the
+# `reason` sentence, so a reworded reason cannot silently reclassify an arm.
+BACKGROUND = "background"
+CHANGE = "change"
+
+
 @dataclass(frozen=True)
 class Disqualification:
     """One arm that cannot be recommended, and the criterion it failed.
@@ -156,33 +166,40 @@ class Disqualification:
     """
 
     arm: str
+    criterion: str
     reason: str
 
     def to_dict(self) -> dict:
         return asdict(self)
 
 
+def disqualification_of(result: Mapping) -> Optional[Disqualification]:
+    """Why this one arm cannot be recommended, or None if it can.
+
+    The single rule both `disqualifications` and `qualified` read, so the list the
+    report prints and the set the recommendation chooses from can never disagree.
+    """
+    if not background_passed(result):
+        return Disqualification(
+            arm=arm_label(result), criterion=BACKGROUND,
+            reason="it left non-target pixels other than bit-identical")
+    if not change_passed(result):
+        return Disqualification(
+            arm=arm_label(result), criterion=CHANGE,
+            reason=f"the region changed by {net_change_of(result):.1f}/255 net "
+                   f"of the control, under the {VISIBLE_CHANGE:.0f}/255 a "
+                   f"visible restyle needs - it lowered flicker by rendering "
+                   f"less")
+    return None
+
+
 def disqualifications(results: Sequence[dict]) -> Tuple[Disqualification, ...]:
-    refused: List[Disqualification] = []
-    for result in results:
-        label = arm_label(result)
-        if not background_passed(result):
-            refused.append(Disqualification(
-                arm=label,
-                reason="it left non-target pixels other than bit-identical"))
-        elif not change_passed(result):
-            refused.append(Disqualification(
-                arm=label,
-                reason=f"the region changed by {net_change_of(result):.1f}/255 net "
-                       f"of the control, under the {VISIBLE_CHANGE:.0f}/255 a "
-                       f"visible restyle needs - it lowered flicker by rendering "
-                       f"less"))
-    return tuple(refused)
+    return tuple(refused for refused in map(disqualification_of, results)
+                 if refused is not None)
 
 
 def qualified(results: Sequence[dict]) -> List[dict]:
-    refused = {item.arm for item in disqualifications(results)}
-    return [result for result in results if arm_label(result) not in refused]
+    return [result for result in results if disqualification_of(result) is None]
 
 
 # --- how repeatable the flicker figures are ----------------------------------
@@ -324,7 +341,7 @@ def _recommendation(chosen: Mapping, control: Mapping, results: Sequence[dict],
         control_response=control_response, response_kept=kept, margin=round(margin, 6),
         is_shipped_default=is_shipped_arm(chosen),
         statement=_verdict(chosen, control, results, delta, margin),
-        cost=_cost(chosen, delta, kept, response, control_response),
+        cost=_cost(chosen, control, delta, kept),
     )
 
 
@@ -368,9 +385,10 @@ def _verdict(chosen: Mapping, control: Mapping, results: Sequence[dict],
             f"run-to-run spread")
 
 
-def _cost(chosen: Mapping, delta: Optional[float], kept: Optional[float],
-          response: Optional[float], control_response: Optional[float]) -> str:
+def _cost(chosen: Mapping, control: Mapping, delta: Optional[float],
+          kept: Optional[float]) -> str:
     """What the recommendation traded away - the issue's second trap, stated."""
+    response, control_response = response_of(chosen), response_of(control)
     if is_shipped_arm(chosen):
         return ("Nothing was traded, because nothing was adopted. That is the "
                 "answer this section asked for rather than a gap in it: the levers "
@@ -505,7 +523,7 @@ def change_statement(results: Sequence[dict]) -> str:
     """
     changes = sorted(net_change_of(result) for result in results)
     refused = [item for item in disqualifications(results)
-               if "rendering less" in item.reason]
+               if item.criterion == CHANGE]
     identical = all(background_passed(result) for result in results)
     background = ("Every arm above left the background bit-identical to the capture"
                   if identical else

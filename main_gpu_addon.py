@@ -1,4 +1,4 @@
-﻿import importlib.util, os, sys
+import importlib.util, os, sys
 from pathlib import Path
 import tempfile, time, queue, random, threading, pathlib, subprocess, shutil, re
 from collections import deque

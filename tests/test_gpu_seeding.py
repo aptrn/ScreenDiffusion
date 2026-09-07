@@ -21,7 +21,7 @@ import pytest
 
 from detection import Box, Track, Tracks
 from region_scheduler import RegionScheduler
-from render_plan import FIXED, PER_TRACK, RANDOM
+from render_plan import FIXED, PER_TRACK, RANDOM, validate_plan
 from seeding import NoiseField, latent_box
 
 pytestmark = pytest.mark.gpu
@@ -61,8 +61,6 @@ def selection_of(*boxes, ids=None):
     tracks = Tracks(tracks=tuple(
         Track(track_id=track_id, box=Box(*box), concept="person", confidence=0.9)
         for track_id, box in zip(track_ids, boxes)), ticks=1)
-    from render_plan import validate_plan
-
     plan = validate_plan({"source_prompt": "wet denim",
                           "targets": [{"id": "t0", "concept": "person",
                                        "region": "full_box", "box_scale": 1.0}]}).plan

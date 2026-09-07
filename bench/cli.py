@@ -28,12 +28,12 @@ from bench.disk import DiskRecord, Usage, read_disk, require_free_space
 from bench.fingerprint import read_clock_lock
 from bench.paths import (
     CADENCE_RESULTS_SUBDIR,
-    STABILITY_RESULTS_SUBDIR,
     DETECTOR_RESULTS_SUBDIR,
     PRIMITIVE_RESULTS_SUBDIR,
     RESULTS_DIR,
     SELECTIVE_RESULTS_DIR,
     SELECTIVE_RESULTS_SUBDIR,
+    STABILITY_RESULTS_SUBDIR,
     SWAP_RESULTS_SUBDIR,
     resolve_engines_dir,
 )
@@ -177,10 +177,10 @@ def build_parser() -> argparse.ArgumentParser:
                                 "The arm is named `<case>-nN` and is written under "
                                 "bench/results/cadence/, never beside the baselines")
     selective.add_argument("--seed-policy", choices=SEED_POLICIES, metavar="POLICY",
-                           help=f"run this selective case under one seed policy "
+                           help="run this selective case under one seed policy "
                                 f"({', '.join(SEED_POLICIES)}) instead of the "
-                                f"plan's, as one arm of the temporal-stability "
-                                f"sweep, under bench/results/stability/")
+                                "plan's, as one arm of the temporal-stability "
+                                "sweep, under bench/results/stability/")
     selective.add_argument("--output-ema", type=float, metavar="E",
                            help="run this selective case with the compositor's "
                                 "output EMA at E (0.0-0.9) instead of the plan's, "
@@ -407,19 +407,6 @@ def report_swap(results_dir: Path, out: TextIO = sys.stdout) -> None:
     out.write(format_swap_report(load_swap_results(results_dir)) + "\n")
 
 
-def report_stability(results_dir: Path, out: TextIO = sys.stdout,
-                     baseline_dir: Path = SELECTIVE_RESULTS_DIR) -> None:
-    """The temporal-stability block spec 8.5 carries (issue #32).
-
-    Two directories, like the cadence report and for the same reason: `results_dir`
-    holds the swept arms and `baseline_dir` holds the shipped path's own runs, and
-    the block is about the distance between them.
-    """
-    out.write(format_stability_report(load_selective_results(results_dir),
-                                      baseline=load_selective_results(baseline_dir))
-              + "\n")
-
-
 def report_cadence(results_dir: Path, out: TextIO = sys.stdout,
                    baseline_dir: Path = SELECTIVE_RESULTS_DIR) -> None:
     """The `detect_every_n` sweep block spec 8.8 carries (issue #23).
@@ -431,6 +418,19 @@ def report_cadence(results_dir: Path, out: TextIO = sys.stdout,
     """
     out.write(format_cadence_report(load_selective_results(results_dir),
                                     baseline=load_selective_results(baseline_dir))
+              + "\n")
+
+
+def report_stability(results_dir: Path, out: TextIO = sys.stdout,
+                     baseline_dir: Path = SELECTIVE_RESULTS_DIR) -> None:
+    """The temporal-stability block spec 8.5 carries (issue #32).
+
+    Two directories, like the cadence report and for the same reason: `results_dir`
+    holds the swept arms and `baseline_dir` holds the shipped path's own runs, and
+    the block is about the distance between them.
+    """
+    out.write(format_stability_report(load_selective_results(results_dir),
+                                      baseline=load_selective_results(baseline_dir))
               + "\n")
 
 

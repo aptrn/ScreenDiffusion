@@ -121,6 +121,13 @@ class _Scored:
     selected_fraction: float
     per_pair_abs_diff: List[float]
 
+    @classmethod
+    def nothing(cls, pairs: int, frame_pixels: int) -> "_Scored":
+        """No honest number: too few frames, or no pair with a selected pixel."""
+        return cls(mean_abs_diff=None, pairs=pairs, pairs_scored=0,
+                   selected_pixels=0, frame_pixels=frame_pixels,
+                   selected_fraction=0.0, per_pair_abs_diff=[])
+
 
 PairMask = Callable[[object, object], np.ndarray]
 
@@ -134,9 +141,7 @@ def _score(sources: Sequence, outputs: Sequence, painted: Optional[Sequence],
         height, width = np.asarray(sources[0]).shape[:2]
         frame_pixels = int(height * width)
     if len(sources) < 2:
-        return _Scored(mean_abs_diff=None, pairs=0, pairs_scored=0,
-                       selected_pixels=0, frame_pixels=frame_pixels,
-                       selected_fraction=0.0, per_pair_abs_diff=[])
+        return _Scored.nothing(pairs=0, frame_pixels=frame_pixels)
 
     per_pair: List[float] = []
     selected_total = 0
@@ -153,9 +158,7 @@ def _score(sources: Sequence, outputs: Sequence, painted: Optional[Sequence],
     pairs = len(sources) - 1
     selected_mean = selected_total / pairs
     if not per_pair:
-        return _Scored(mean_abs_diff=None, pairs=pairs, pairs_scored=0,
-                       selected_pixels=0, frame_pixels=frame_pixels,
-                       selected_fraction=0.0, per_pair_abs_diff=[])
+        return _Scored.nothing(pairs=pairs, frame_pixels=frame_pixels)
     return _Scored(
         mean_abs_diff=round(float(np.mean(per_pair)), 6),
         pairs=pairs,
@@ -251,17 +254,17 @@ def response_score(
     """
     scored = _score(sources, outputs, painted,
                     lambda before, after: ~static_pair_mask(before, after, threshold))
+    if scored.mean_abs_diff is None:
+        note = ("no pixel both moved in the source and was painted in both frames "
+                "of any pair, so there is nothing to score")
+    else:
+        note = (f"mean absolute difference between consecutive outputs over the "
+                f"{scored.selected_pixels} pixels per pair that moved in the source "
+                f"(by more than {threshold:g}/255) and were painted in both frames; "
+                f"0-255 units, higher is more responsive")
     return ResponseScore(
         mean_abs_diff=scored.mean_abs_diff, pairs=scored.pairs,
         pairs_scored=scored.pairs_scored, moving_pixels=scored.selected_pixels,
         frame_pixels=scored.frame_pixels, moving_fraction=scored.selected_fraction,
-        threshold=threshold, per_pair_abs_diff=scored.per_pair_abs_diff,
-        note=(f"mean absolute difference between consecutive outputs over the "
-              f"{scored.selected_pixels} pixels per pair that moved in the source "
-              f"(by more than {threshold:g}/255) and were painted in both frames; "
-              f"0-255 units, higher is more responsive"
-              if scored.mean_abs_diff is not None else
-              "no pixel both moved in the source and was painted in both frames of "
-              "any pair, so there is nothing to score"),
+        threshold=threshold, per_pair_abs_diff=scored.per_pair_abs_diff, note=note,
     )
-

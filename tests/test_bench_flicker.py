@@ -229,4 +229,3 @@ def test_higher_is_more_responsive_which_is_the_direction_the_trade_reads():
     assert "higher is more responsive" in response_score(
         [np.zeros((1, 2, 3)), np.full((1, 2, 3), 255.0)],
         [np.zeros((1, 2, 3)), np.full((1, 2, 3), 40.0)]).note
-
