@@ -14,11 +14,14 @@ GPU-free: `bench.selective` reads JSON and formats it.
 
 import io
 from pathlib import Path
+from typing import List
 
+import pytest
 from sourceloader import ROOT
 
 from bench.cli import report_selective
 from bench.paths import SELECTIVE_RESULTS_DIR
+from bench.portability import is_deploy_gpu
 from bench.results import require_recordable
 from bench.selective import (
     CASES,
@@ -44,9 +47,33 @@ def computed_block() -> str:
     return buffer.getvalue().strip()
 
 
-def committed() -> dict:
+def committed() -> List[dict]:
+    """One run per case *and machine*, in a stable order (issue #24).
+
+    Per machine because the same case now has a run on the deploy card as well as on
+    the dev laptop, and the Gate is asserted on every one of them rather than on
+    whichever happened to be newest.
+    """
     latest = latest_per_case(load_selective_results(SELECTIVE_RESULTS_DIR))
-    return {result["case"]["name"]: result for result in latest.values()}
+    return sorted(latest.values(),
+                  key=lambda result: (result["case"]["name"],
+                                      result["hardware"]["gpu_name"]))
+
+
+def runs_of(case: str = PRIORITY_CASE) -> List[dict]:
+    """Every machine's newest run of `case`."""
+    return [result for result in committed() if result["case"]["name"] == case]
+
+
+def newest(case: str = PRIORITY_CASE) -> dict:
+    """The most recent run of `case` on any machine - whose Gate lines 8.8 prints."""
+    return max(runs_of(case), key=lambda result: result["run"]["finished_utc"])
+
+
+def per_machine(case: str = PRIORITY_CASE):
+    """Parametrise a Gate item over every machine that has a committed run."""
+    return pytest.mark.parametrize(
+        "result", runs_of(case), ids=lambda result: result["hardware"]["gpu_name"])
 
 
 def test_the_spec_block_is_what_the_committed_run_says():
@@ -66,81 +93,96 @@ def test_every_committed_run_could_have_reached_disk():
 
 
 def test_the_priority_case_has_a_committed_run():
-    assert set(committed()) == set(CASES)
+    assert {result["case"]["name"] for result in committed()} == set(CASES)
+
+
+def test_the_case_was_measured_on_deploy_hardware_too():
+    """Issue #24's Gate: a `selective-people` result from a 3090 Ti or a 4090."""
+    assert any(is_deploy_gpu(result["hardware"]["gpu_name"])
+               for result in runs_of()), (
+        "spec 7.4's absolute rows need a run on the hardware this deploys to")
 
 
 # --- the Gate ---------------------------------------------------------------
 
 
-def test_the_background_was_bit_identical_on_every_frame():
-    """The issue's sharp criterion, asserted on what is on disk."""
-    background = committed()[PRIORITY_CASE]["gate"]["background"]
+@per_machine()
+def test_the_background_was_bit_identical_on_every_frame(result):
+    """The issue's sharp criterion, asserted on what is on disk - and on every
+    machine that has a run, which is issue #24's third Gate item."""
+    background = result["gate"]["background"]
     assert background["passed"], background["statement"]
     assert background["identical_frames"] == background["frames"] > 0
     assert background["worst_pixels_changed"] == 0
     assert background["background_pixels"] > 0, "nothing was outside the regions"
 
 
-def test_the_region_was_visibly_restyled_net_of_the_control():
-    change = committed()[PRIORITY_CASE]["gate"]["change"]
+@per_machine()
+def test_the_region_was_visibly_restyled_net_of_the_control(result):
+    change = result["gate"]["change"]
     assert change["passed"], change["statement"]
     assert change["net_change"] >= change["threshold"]
 
 
-def test_no_track_was_starved_by_the_round_robin():
+@per_machine()
+def test_no_track_was_starved_by_the_round_robin(result):
     """The Gate's second item, exercised with more tracks than slots."""
-    coverage = committed()[PRIORITY_CASE]["gate"]["coverage"]
+    coverage = result["gate"]["coverage"]
     assert coverage["passed"], coverage["statement"]
     assert coverage["max_tracks"] > coverage["slots"], (
         "the probe did not force more tracks than slots, so it proved nothing")
     assert coverage["worst_gap_frames"] <= coverage["bound_frames"]
 
 
-def test_the_loop_produced_a_frame_for_every_frame_it_took():
-    stall = committed()[PRIORITY_CASE]["gate"]["stall"]
+@per_machine()
+def test_the_loop_produced_a_frame_for_every_frame_it_took(result):
+    stall = result["gate"]["stall"]
     assert stall["passed"], stall["statement"]
     assert stall["worst_offer_ms"] <= stall["max_offer_ms"]
 
 
-def test_the_run_reports_an_output_fps_and_a_flicker_figure():
+@per_machine()
+def test_the_run_reports_an_output_fps_and_a_flicker_figure(result):
     """Step 5: both numbers, on the committed clip."""
-    result = committed()[PRIORITY_CASE]
     assert result["run"]["fps"] > 0
     assert result["flicker"]["mean_abs_diff"] is not None
     assert result["flicker"]["pairs_scored"] > 0
 
 
-def test_the_run_rendered_the_hardcoded_priority_case():
-    plan = committed()[PRIORITY_CASE]["plan"]
+@per_machine()
+def test_the_run_rendered_the_hardcoded_priority_case(result):
+    plan = result["plan"]
     assert (plan["concept"], plan["region"], plan["mode"]) == (
         "person", "lower_half", "selective")
 
 
-def test_one_diffusion_call_per_frame_whatever_the_object_count():
+@per_machine()
+def test_one_diffusion_call_per_frame_whatever_the_object_count(result):
     """Issue #5 chose the masked primitive; K is masked regions, not calls."""
-    run = committed()[PRIORITY_CASE]["run"]
-    regions = committed()[PRIORITY_CASE]["regions"]
-    assert run["diffusion_calls"] <= run["frames"]
-    assert regions["regions_per_frame"] > 1.0, "nothing was selective about this run"
+    assert result["run"]["diffusion_calls"] <= result["run"]["frames"]
+    assert result["regions"]["regions_per_frame"] > 1.0, (
+        "nothing was selective about this run")
 
 
 def test_how_many_regions_the_size_floor_skipped_is_recorded():
     """The issue's first trap: skipped is a number, not a silence."""
-    assert "skipped_small_total" in committed()[PRIORITY_CASE]["regions"]
+    assert "skipped_small_total" in newest()["regions"]
 
 
-def test_the_clip_a_human_has_to_watch_is_committed():
-    """Manual verification is a Gate item; it needs a file to point at."""
-    result = committed()[PRIORITY_CASE]
+@per_machine()
+def test_the_clip_a_human_has_to_watch_is_committed(result):
+    """Manual verification is a Gate item; it needs a file to point at - one per
+    machine, because a 4090's output frames are not the laptop's."""
     assert result["comparison_clip"]
     assert (SELECTIVE_RESULTS_DIR / result["comparison_clip"]).is_file()
     assert (SELECTIVE_RESULTS_DIR / result["comparison_still"]).is_file()
 
 
-def test_the_spec_says_the_frame_rate_is_not_the_claim():
-    """The issue's fourth trap: 30 FPS is M2's problem and cannot be judged here."""
+def test_the_spec_hands_the_frame_rate_verdict_to_7_4():
+    """8.8 asks whether the path works, not whether it is fast enough. The frame
+    rate is a deploy-hardware claim, and 7.4 is where issue #24 answered it."""
     section = SPEC.read_text(encoding="utf-8").split("### 8.8", 1)[1].split("## 9.", 1)[0]
-    assert "30 FPS is not claimed" in section
+    assert "30 FPS is not this section's claim" in section
     assert "7.4" in section
 
 

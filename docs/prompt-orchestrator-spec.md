@@ -622,7 +622,9 @@ What survives the move from laptop to desktop:
 | Shape of the marginal-cost curve vs batch size | Yes — the sublinearity question is architectural   |
 | Relative ranking of detector candidates        | Yes                                                |
 | Relative ranking of the §8.2 primitives        | Yes                                                |
-| Absolute ms/frame, and whether 30 FPS is met   | **No** — re-measure on the deploy GPU              |
+| What the selective path selects, and in how many calls | Yes — **measured**, identical on both cards |
+| Bit-identity of non-target pixels              | Yes — **measured**, 48/48 frames on both           |
+| Absolute ms/frame, and whether 30 FPS is met   | **No** — **measured**, 2.3× apart; re-measure on the deploy GPU |
 | VRAM ceilings and OOM thresholds               | **No** — a laptop OOM says nothing about 24 GB     |
 | Engine build times                             | **No**                                             |
 
@@ -644,6 +646,88 @@ lines — once per machine, because a ranking across two GPUs is not a ranking. 
 single-machine repo renders exactly what it rendered before. A record with no
 `hardware.gpu_name` (there are none, but the fingerprint post-dates the first
 results) is labelled `unknown GPU` and never merged with another one.
+
+#### Measured: the move to an RTX 4090 (issue #24)
+
+Until 2026-09-07 the table above was reasoning, not measurement — every figure in
+the repo came from one RTX 3080 laptop at a 120 W limit. The shipped selective path
+has now been run on the deploy hardware, over the same committed clip under the same
+plan, through an engine **rebuilt for Ada** (engines are architecture-specific; an
+Ampere build will not load, and copying one across is the trap this measurement
+exists to avoid). The block is generated from the committed records with
+`uv run python -m bench --portability-report`; re-measure and the merge gate fails
+until it is regenerated.
+
+<!-- BEGIN DEPLOY HARDWARE -->
+`selective-people` measured on NVIDIA GeForce RTX 4090 (unlocked clocks, 500 W) against the NVIDIA GeForce RTX 3080 Laptop GPU baseline of 2026-09-06 (unlocked clocks, 120 W): the same img2img-tensorrt-512x512-b1 engine rebuilt for this architecture, the same 48 frames of `people.mp4` at the app's 512x512 capture canvas, the same `person / lower_half / t_index 40` plan.
+
+| measure | NVIDIA GeForce RTX 3080 Laptop GPU (dev) | NVIDIA GeForce RTX 4090 (deploy) | deploy / dev |
+|---|---|---|---|
+| regions/frame | 5.04 | 5.04 | 1.00x |
+| diffusion calls/frame | 1.00 | 1.00 | 1.00x |
+| ms/frame, frame path | 55.06 | 24.81 | 0.45x |
+| ms/frame, with detection | 74.73 | 32.35 | 0.43x |
+| FPS | 13.4 | 30.9 | 2.31x |
+| ms/detect | 59.03 | 22.62 | 0.38x |
+| composite ms/frame | 4.03 | 2.75 | 0.68x |
+| flicker (static px) | 1.49 | 1.49 | 1.00x |
+| peak VRAM (MiB) | 3742 | 3738 | 1.00x |
+| mean SM clock (MHz) | 1668 | 2715 | 1.63x |
+
+**Acceptance criterion 2 (30 FPS): MET.** 30.9 FPS at 5.04 regions/frame on NVIDIA GeForce RTX 4090 - 32.35 ms per frame with detection amortised against the 33.33 ms a 30 FPS budget allows, 0.98 ms to spare; clocks unlocked. 5 committed runs on NVIDIA GeForce RTX 4090 span 30.9-31.4 FPS, clear of the 30 FPS target.
+
+What carried across the move, measured:
+
+| Conclusion | Carried? | Evidence |
+|---|---|---|
+| Non-target pixels stay bit-identical to the capture | Yes | 48/48 frames dev -> 48/48 frames deploy |
+| How much of the frame the scheduler picks: regions and calls per frame | Yes | 5.04 dev -> 5.04 deploy regions/frame, 1.00 dev -> 1.00 deploy calls/frame |
+| The ceil(N/K) round-robin bound | Yes | worst gap 2 of 3 allowed dev -> 2 of 3 deploy |
+| Flicker over pixels static in the source | Yes | 1.49 dev -> 1.49 deploy |
+| Absolute ms/frame on the frame path | **No** | 55.06 ms dev -> 24.81 ms deploy |
+| Whether the 30 FPS criterion is met | **No** | 13.4 FPS dev -> 30.9 FPS deploy |
+| What one detect costs beside the diffusion | **No** | 59.03 ms dev -> 22.62 ms deploy |
+| Peak VRAM the path allocates | Yes | 3742 MiB dev -> 3738 MiB deploy |
+| The clock the card holds under load, against its own maximum | **No** | 79% of maximum dev (120 W limit) -> 86% deploy (500 W) |
+
+Comparable because NVIDIA GeForce RTX 3080 Laptop GPU rendered 5.04 regions/frame and NVIDIA GeForce RTX 4090 rendered 5.04, the same selection to within 5%.
+<!-- END DEPLOY HARDWARE -->
+
+Four things the block does not say for itself.
+
+**The criterion is met, and the margin is one millisecond.** 32.35 ms against a
+33.33 ms budget on the slowest of five runs, 31.88 ms on the fastest. That clears
+the gate and is nobody's idea of headroom: it is 5.04 regions on one 512² frame at
+`detect_every_n: 3` with nothing else on the card, while the app also has a capture
+thread, a GUI process and a real screen to feed. §8.8's two known costs — detection
+contention and a host-side composite — are the levers, and #23 is where they get
+pulled. This verdict is a floor to optimise from, not a finish line.
+
+**The first run on this card measured 29.5 FPS and is not among the five.** It was
+the run that compiled the engine, and it diffused in a process still holding the
+TensorRT builder's state. The five committed runs are cold-started against the
+cached engine, which is what the app does; the excluded one is recorded here rather
+than in `bench/results/` because it measured a condition the product never enters.
+
+**Everything that is not a millisecond carried exactly.** Same regions, same calls,
+the same round-robin bound, the same flicker to three figures, and the same 48/48
+frames bit-identical outside the mask. That is the useful half of this measurement:
+the design decisions taken on the laptop — issue #5's primitive, #8's scheduler and
+feathered composite — did not need re-taking. Peak VRAM matched too, but read that
+narrowly: what the path *allocates* is a property of the path, and the VRAM
+*ceiling* remains untested, because nothing here came near either card's.
+
+**The composite is the part that did not scale.** The frame path came down to 0.45×
+and one detect to 0.38×, but the numpy blend only reached 0.68× — it is host code,
+and a faster GPU does not make it faster. It was 7.3% of the laptop's frame path and
+it is 11.1% of the 4090's. On this card the ranking of what to optimise has changed.
+
+Clocks were unlocked on both machines: `nvidia-smi --lock-gpu-clocks` needs an
+elevated shell the agent loop does not have (issue #13), and the 4090 refused it
+here for the same reason the laptop did. The desktop is nonetheless the steadier of
+the two — 86% of its maximum SM clock at 48 °C against the laptop's 79% at 75 °C —
+which is the difference the move was expected to show, recorded rather than
+normalised away.
 
 ---
 
@@ -984,13 +1068,14 @@ generated from the committed record; re-run the case and the merge gate fails un
 it is regenerated with `uv run python -m bench --selective-report`.
 
 <!-- BEGIN SELECTIVE PATH -->
-Measured on NVIDIA GeForce RTX 3080 Laptop GPU, img2img-tensorrt-512x512-b1, 48 consecutive frames of `people.mp4` resized to the app's 512x512 capture canvas. Clocks unlocked; absolute figures belong to this GPU (spec 7.4), and 30 FPS is M2's gate, not this one's.
+Measured on NVIDIA GeForce RTX 3080 Laptop GPU, NVIDIA GeForce RTX 4090, img2img-tensorrt-512x512-b1, 48 consecutive frames of `people.mp4` resized to the app's 512x512 capture canvas. Clocks: NVIDIA GeForce RTX 3080 Laptop GPU unlocked, NVIDIA GeForce RTX 4090 unlocked; absolute figures belong to the GPU in the row (spec 7.4), and 30 FPS is M2's gate, not this one's. Rows are one per case per GPU.
 
-| case | plan | regions/frame | diffusion calls/frame | ms/frame | +detect | FPS | flicker (static px) | gate |
-|---|---|---|---|---|---|---|---|---|
-| selective-people | person / lower_half / t_index 40 | 5.04 | 1.00 | 55.1 | 74.7 | 13.4 | 1.49 | pass |
+| case | GPU | plan | regions/frame | diffusion calls/frame | ms/frame | +detect | FPS | flicker (static px) | gate |
+|---|---|---|---|---|---|---|---|---|---|
+| selective-people | NVIDIA GeForce RTX 3080 Laptop GPU | person / lower_half / t_index 40 | 5.04 | 1.00 | 55.1 | 74.7 | 13.4 | 1.49 | pass |
+| selective-people | NVIDIA GeForce RTX 4090 | person / lower_half / t_index 40 | 5.04 | 1.00 | 24.8 | 32.4 | 30.9 | 1.49 | pass |
 
-The Gate, measured:
+The Gate, measured on NVIDIA GeForce RTX 3080 Laptop GPU:
 
 - **Non-target pixels bit-identical** - yes. 48/48 frames left every pixel outside the rendered regions exactly as captured (164676 background pixels on the frame with the most painted).
 - **The region is visibly restyled** - yes. The rendered regions changed by 11.8/255 against the capture - 11.8 net of the 0.00/255 the capture's own round trip costs - against a 8/255 threshold.
@@ -998,22 +1083,39 @@ The Gate, measured:
 - **The loop never stalls** - yes. 48/48 frames produced an output; the worst frame spent 0.168 ms offering the capture to the detector (budget 5 ms), and 0 frames had nothing to restyle and passed the capture through.
 
 Manual verification artefact: `selective-people-20260906-202515Z-comparison.mp4` (source | selective render) and `selective-people-20260906-202515Z-comparison.jpg`.
+
+The Gate, measured on NVIDIA GeForce RTX 4090:
+
+- **Non-target pixels bit-identical** - yes. 48/48 frames left every pixel outside the rendered regions exactly as captured (164676 background pixels on the frame with the most painted).
+- **The region is visibly restyled** - yes. The rendered regions changed by 11.8/255 against the capture - 11.8 net of the 0.00/255 the capture's own round trip costs - against a 8/255 threshold.
+- **No track starved by the round robin** - yes. With 6 tracks over 2 slots no track waited more than 2 frames to be rendered, against a ceil(N/K) bound of 3.
+- **The loop never stalls** - yes. 48/48 frames produced an output; the worst frame spent 0.015 ms offering the capture to the detector (budget 5 ms), and 0 frames had nothing to restyle and passed the capture through.
+
+Manual verification artefact: `selective-people-20260907-101106Z-comparison.mp4` (source | selective render) and `selective-people-20260907-101106Z-comparison.jpg`.
 <!-- END SELECTIVE PATH -->
+
+The table carries one row per machine. Issue #24 re-ran the case on the deploy
+hardware, and both rows are kept rather than the newer replacing the older: they
+are two answers to one question, and §7.4 is the section that says so.
 
 Three things the numbers say that the Gate does not.
 
 **Detection costs three times more beside diffusion than alone.** §8.1 measured
-YOLO-World at 14–19 ms per detect with the diffusion engine merely *resident*; here
-it runs concurrently with a UNet on the same SMs and each detect costs ~59 ms, so
-at `detect_every_n: 3` it amortises to ~20 ms/frame rather than ~6. Contention
-rather than the clock — the fastest detect in the same run was 15.7 ms. Raising the
-cadence is the cheap lever and is a plan field already; spending it is M2's
-decision, not this one's.
+YOLO-World at 14–19 ms per detect with the diffusion engine merely *resident*; on
+the laptop it runs concurrently with a UNet on the same SMs and each detect costs
+~59 ms, so at `detect_every_n: 3` it amortises to ~20 ms/frame rather than ~6.
+Contention rather than the clock — the fastest detect in the same run was 15.7 ms.
+The contention is not a laptop artefact: the 4090 pays it too, at ~23 ms against
+§8.1's resident-but-idle figure. Raising the cadence is the cheap lever and is a
+plan field already; spending it is M2's decision, not this one's.
 
 **The composite is ~4 ms/frame of numpy** — the bounding rectangle of the regions,
 blended on the host, on a frame that is otherwise entirely on the GPU. The
 interface (an alpha map and a blend) is the same on either device, so moving it is
-an M2 optimisation and not a redesign.
+an M2 optimisation and not a redesign. It is also the only cost here that barely
+moved on the faster card (§7.4): 2.75 ms against 4.03, where the frame path around
+it came down to 0.45× — so it is a *larger* share of a 4090 frame than of a laptop
+one, 11.1% against 7.3%.
 
 **Flicker is 1.49 where §8.2 measured 1.43 on the same clip.** The two are not the
 same measurement — this one renders detected boxes at the app's capture geometry,
@@ -1021,9 +1123,11 @@ that one rendered a committed track at clip resolution — but they are the same
 order, so neither the tracker's box smoothing nor the feathered composite made the
 boiling worse. Per-track seed pinning and the output EMA (§8.5) are still unbuilt.
 
-**30 FPS is not claimed and is not a gate here.** 13.4 FPS on an RTX 3080 laptop
-under a 120 W limit, with unlocked clocks, says the path is correct and roughly
-what it costs; §7.4 is why it says nothing about the deploy hardware.
+**30 FPS is not this section's claim and is not a gate here.** This section asks
+whether the path works, and both rows say it does. What it costs is a fact about
+the card in the row — 13.4 FPS on an RTX 3080 laptop under a 120 W limit, 30.9 on
+an RTX 4090 — and the frame-rate *verdict* is §7.4's, where issue #24 measured the
+two against each other and answered acceptance criterion 2.
 
 ---
 
@@ -1076,6 +1180,11 @@ cheaply — which is the point of ordering them this way.
    without restarting generation, people on screen render with red hats.
 2. Sustained ≥ 30 FPS output with up to 4 tracked objects at 512² diffusion,
    measured **on deploy hardware** (RTX 3090 Ti / 4090) — see §7.4.
+   **Met, measured (issue #24, 2026-09-07):** 30.9–31.4 FPS over five runs on an
+   RTX 4090 at **5.04 regions/frame** — more than the four objects the criterion
+   asks for — with the whole shipped selective path running. The margin is ~1 ms
+   of a 33.33 ms frame, on a card with nothing else on it; §7.4 has the comparison
+   against the dev laptop and what it does and does not license.
 3. Typing a new instruction swaps behaviour with **no stutter** in the output
    stream and **no TensorRT rebuild**.
 4. Non-target pixels are bit-identical to the capture (verifiable).

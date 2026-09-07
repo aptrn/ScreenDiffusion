@@ -107,6 +107,18 @@ Gate lines — are stated once per machine; with one machine the block renders
 byte-identically to before, so the byte-match tests do not churn. `gpu_of` in
 `bench/results.py` is the one reading of which machine a record came from.
 
+`--portability-report` is the second question asked of those same records — not
+"does the path work" but "which of its numbers survived the move to the hardware
+this ships on" — and regenerates the block in spec 7.4, byte-matched by a test
+like the other four. It refuses to draw a table at all when the two runs rendered
+different regions/frame, because region count drives cost and a table across two
+of them is the wrong answer in a quotable shape. The 30 FPS verdict it prints is
+judged on `ms/frame with detection`, carries the region count and the clock
+regime, and says whether every committed run on the card landed on the same side
+of the target — a verdict inside the run-to-run spread is labelled one.
+`scripts/regen_spec_blocks.py` pastes all five generated blocks back into the
+spec, so a regeneration is never a hand-copy that drops a digit.
+
 The clips in `bench/clips/` are committed and so are their box tracks
 (`*.track.json`). A case reads its boxes rather than detecting them, so two runs
 render identical regions; `python -m bench <case> --write-track` regenerates a
@@ -216,7 +228,23 @@ sends no plan at all, at start or ever, so an empty field cannot overwrite it.
 - **Dev and deploy hardware differ.** Development is an RTX 3080 laptop; deployment
   targets RTX 3090 Ti / 4090. Curve shapes and relative rankings carry across; absolute
   ms/frame, VRAM ceilings and engine build times do not. Any 30 FPS claim is a
-  deploy-hardware claim.
+  deploy-hardware claim. Measured on both (issue #24, spec 7.4): the selective path
+  runs 2.3x faster on a 4090 and meets 30 FPS at 5.04 regions/frame **by ~1 ms**,
+  while everything that is not a millisecond — the selection, the call count, the
+  round-robin bound, the flicker, the bit-identity — came across unchanged. The
+  composite is the exception in the other direction: it is host numpy, so it barely
+  moved (0.68x where the frame path went to 0.45x) and is now a larger share of the
+  frame than it was on the laptop.
+- **Engines are per GPU architecture, and must be rebuilt, never copied.** An Ampere
+  build will not load on Ada. A second machine needs its own `models/` (2.5 GB once
+  the fp32 duplicates are excluded; `huggingface-cli download stabilityai/sd-turbo
+  --local-dir $SD_MODELS_DIR/sd-turbo-fp16 --exclude sd_turbo.safetensors
+  unet/diffusion_pytorch_model.safetensors vae/diffusion_pytorch_model.safetensors
+  text_encoder/model.safetensors`), its own detector weights under
+  `$SD_MODELS_DIR/detectors`, and its own `engines/` (~15 min for the 512² b1 build
+  on a 4090). **Do not benchmark in the process that built the engine** — the first
+  4090 run measured 29.5 FPS against 30.9–31.4 for five cold-started runs against
+  the cached engine, which is what the app actually does.
 - **GPU benchmarks need a thermal cooldown**, or you measure the throttle instead of
   the change. Wait for the GPU to fall below ~62 °C before each rep, cap the wait, and
   record whether the threshold was actually reached — a laptop under sustained load may

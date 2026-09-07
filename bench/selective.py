@@ -489,8 +489,10 @@ SELECTIVE_README_INTRO = (
     "the rendered regions identical to the capture, on every frame. `flicker` is the\n"
     "mean absolute difference between consecutive outputs over pixels static in the\n"
     "source and painted in both, lower is steadier.\n\n"
-    "Absolute figures belong to the GPU in the row (spec 7.4). 30 FPS is not a gate\n"
-    "here and cannot be judged on this laptop at all.\n"
+    "Absolute figures belong to the GPU in the row (spec 7.4), and rows from two GPUs\n"
+    "are two answers rather than one superseding the other. Whether 30 FPS is met is\n"
+    "a deploy-hardware question: `python -m bench --portability-report` answers it\n"
+    "from these rows, and spec 7.4 carries the answer.\n"
 )
 SELECTIVE_README_HEADER = (
     "| finished (UTC) | case | GPU | clip | plan | regions/frame | ms/frame |"

@@ -32,6 +32,7 @@ from bench.paths import (
     SELECTIVE_RESULTS_SUBDIR,
     resolve_engines_dir,
 )
+from bench.portability import format_portability_report
 from bench.primitive_results import format_primitive_report, load_primitive_results
 from bench.primitives import CASES, CaseConfig
 from bench.scenarios import SCENARIOS, ScenarioConfig
@@ -81,6 +82,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--selective-report", action="store_true",
                         help="report the selective render block spec 8.8 carries, "
                              "from the committed end-to-end runs, and exit")
+    parser.add_argument("--portability-report", action="store_true",
+                        help="report the dev-vs-deploy block spec 7.4 carries, from "
+                             "the committed selective runs on each GPU, and exit")
     parser.add_argument("--reps", type=int, help="timed reps (default: the scenario's)")
     parser.add_argument("--warmup", type=int, dest="warmup_reps",
                         help="warmup reps before timing (default: the scenario's)")
@@ -301,6 +305,16 @@ def report_selective(results_dir: Path, out: TextIO = sys.stdout) -> None:
     out.write(format_selective_report(load_selective_results(results_dir)) + "\n")
 
 
+def report_portability(results_dir: Path, out: TextIO = sys.stdout) -> None:
+    """The dev-vs-deploy block spec 7.4 carries (issue #24).
+
+    Reads the same selective records `--selective-report` does, and asks a different
+    question of them: not "does the path work" but "which of its numbers survived
+    the move to the hardware this ships on".
+    """
+    out.write(format_portability_report(load_selective_results(results_dir)) + "\n")
+
+
 def list_targets(out: TextIO = sys.stdout) -> None:
     """Every registry, one name per line - whatever the positional slot accepts."""
     for name, scenario in SCENARIOS.items():
@@ -423,6 +437,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 0
     if args.selective_report:
         report_selective(args.results_dir / SELECTIVE_RESULTS_SUBDIR)
+        return 0
+    if args.portability_report:
+        report_portability(args.results_dir / SELECTIVE_RESULTS_SUBDIR)
         return 0
     if not args.scenario:
         parser.print_usage()

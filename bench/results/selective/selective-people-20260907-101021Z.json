@@ -1,0 +1,247 @@
+{
+  "case": {
+    "canvas": 512,
+    "clip": "people.mp4",
+    "coverage_slots": 2,
+    "frames": 48,
+    "name": "selective-people",
+    "note": "The M1 finish line: the shipped selective path end to end on the priority case - restyle the lower half of every person, gently, and leave every other pixel exactly as captured.",
+    "start_frame": 0,
+    "warmup_frames": 3
+  },
+  "clip": {
+    "fps": 25.0,
+    "frames_used": 48,
+    "height": 720,
+    "name": "people.mp4",
+    "sha256": "c509b3699045b605d62e66abf534ce096078b983a0b666e04039b1168dc7b54d",
+    "start_frame": 0,
+    "total_frames": 377,
+    "width": 1280
+  },
+  "clock_normalization": {
+    "basis_mhz": 3150.0,
+    "basis_source": "clocks.max.sm",
+    "method": "ms_per_frame * time-weighted mean SM clock / basis clock",
+    "ms_per_frame": 21.2746,
+    "note": "Clocks were not locked (unlocked), so the raw figure carries this run's clock. This is a first-order estimate of the same work at 3150 MHz, not a measurement, and not a substitute for `nvidia-smi --lock-gpu-clocks` from an elevated shell.",
+    "regime": "unlocked",
+    "sampled_mean_sm_clock_mhz": 2718.7
+  },
+  "comparison_clip": "",
+  "comparison_still": "",
+  "cooldown": {
+    "cap_s": 120.0,
+    "enabled": true,
+    "final_temperature_c": 46.0,
+    "outcome": "reached",
+    "reached": true,
+    "samples": [
+      [
+        0.031000000017229468,
+        46.0
+      ]
+    ],
+    "threshold_c": 62.0,
+    "waited_s": 0.031000000017229468
+  },
+  "flicker": {
+    "frame_pixels": 262144,
+    "mean_abs_diff": 1.487784,
+    "note": "mean absolute difference between consecutive outputs over the 78151 pixels per pair that were static in the source (within 2/255) and painted in both frames; 0-255 units, lower is steadier",
+    "pairs": 47,
+    "pairs_scored": 47,
+    "per_pair_abs_diff": [
+      1.348947,
+      1.457411,
+      1.387012,
+      1.651824,
+      1.472413,
+      1.478198,
+      1.654258,
+      1.77454,
+      1.760036,
+      1.726892,
+      1.48031,
+      1.3606,
+      1.418769,
+      1.483845,
+      1.345137,
+      1.491541,
+      1.235371,
+      1.382146,
+      1.408818,
+      1.345369,
+      1.410355,
+      1.59557,
+      1.680589,
+      1.690251,
+      1.448924,
+      1.456454,
+      1.488084,
+      1.375168,
+      1.462305,
+      1.338345,
+      1.531545,
+      1.546814,
+      1.535365,
+      1.336344,
+      1.263076,
+      1.519028,
+      1.378863,
+      1.241066,
+      1.319161,
+      1.683729,
+      1.409951,
+      1.464159,
+      1.435833,
+      1.451238,
+      1.678438,
+      1.718506,
+      1.803243
+    ],
+    "static_fraction": 0.298123,
+    "static_pixels": 78151,
+    "threshold": 2.0
+  },
+  "gate": {
+    "background": {
+      "background_pixels": 164676,
+      "frames": 48,
+      "identical_frames": 48,
+      "passed": true,
+      "statement": "48/48 frames left every pixel outside the rendered regions exactly as captured (164676 background pixels on the frame with the most painted)",
+      "worst_pixels_changed": 0
+    },
+    "change": {
+      "capture_change": 0.0,
+      "net_change": 11.7591,
+      "passed": true,
+      "region_change": 11.7591,
+      "statement": "the rendered regions changed by 11.8/255 against the capture - 11.8 net of the 0.00/255 the capture's own round trip costs - against a 8/255 threshold",
+      "threshold": 8.0
+    },
+    "coverage": {
+      "bound_frames": 3,
+      "frames": 48,
+      "max_tracks": 6,
+      "passed": true,
+      "slots": 2,
+      "statement": "with 6 tracks over 2 slots no track waited more than 2 frames to be rendered, against a ceil(N/K) bound of 3",
+      "worst_gap_frames": 2
+    },
+    "passed": true,
+    "stall": {
+      "frames_in": 48,
+      "frames_out": 48,
+      "max_offer_ms": 5.0,
+      "passed": true,
+      "passthrough_frames": 0,
+      "statement": "48/48 frames produced an output; the worst frame spent 0.014 ms offering the capture to the detector (budget 5 ms), and 0 frames had nothing to restyle and passed the capture through",
+      "worst_offer_ms": 0.0143
+    }
+  },
+  "hardware": {
+    "clock_lock": {
+      "applied_clock_mhz": null,
+      "current_sm_clock_mhz": 210.0,
+      "evidence": "clocks_event_reasons.applications_clocks_setting=Not Active",
+      "max_sm_clock_mhz": 3150.0,
+      "state": "unlocked"
+    },
+    "cuda_version": "12.8",
+    "driver_version": "610.47",
+    "enforced_power_limit_w": 500.0,
+    "gpu_name": "NVIDIA GeForce RTX 4090",
+    "hostname": "DESKTOP-7OBJQKB",
+    "nvidia_smi_captured_utc": "2026-09-07T10:10:09Z",
+    "nvidia_smi_raw": "Mon Sep  7 12:10:09 2026       \n+-----------------------------------------------------------------------------------------+\n| NVIDIA-SMI 610.47                 KMD Version: 610.47        CUDA UMD Version: 13.3     |\n+-----------------------------------------+------------------------+----------------------+\n| GPU  Name                  Driver-Model | Bus-Id          Disp.A | Volatile Uncorr. ECC |\n| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |\n|                                         |                        |               MIG M. |\n|=========================================+========================+======================|\n|   0  NVIDIA GeForce RTX 4090      WDDM  |   00000000:01:00.0  On |                  Off |\n|  0%   44C    P8             28W /  500W |     632MiB /  24564MiB |      8%      Default |\n|                                         |                        |                  N/A |\n+-----------------------------------------+------------------------+----------------------+\n\n+-----------------------------------------------------------------------------------------+\n| Processes:                                                                              |\n|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |\n|        ID   ID                                                               Usage      |\n|=========================================================================================|\n|    0   N/A  N/A            1432    C+G   ...y\\StartMenuExperienceHost.exe      N/A      |\n|    0   N/A  N/A            2336    C+G   ...6)\\Dropbox\\Client\\Dropbox.exe      N/A      |\n|    0   N/A  N/A           14916    C+G   C:\\Windows\\explorer.exe               N/A      |\n|    0   N/A  N/A           20048    C+G   ...ms\\t3code\\T3 Code (Alpha).exe      N/A      |\n|    0   N/A  N/A           20256    C+G   ...h_cw5n1h2txyewy\\SearchApp.exe      N/A      |\n|    0   N/A  N/A           20448    C+G   ...ntrolPanel\\SystemSettings.exe      N/A      |\n|    0   N/A  N/A           23024    C+G   ...xyewy\\ShellExperienceHost.exe      N/A      |\n|    0   N/A  N/A           27052    C+G   ...yb3d8bbwe\\WindowsTerminal.exe      N/A      |\n|    0   N/A  N/A           27612    C+G   ...5n1h2txyewy\\TextInputHost.exe      N/A      |\n|    0   N/A  N/A           29188    C+G   ...Chrome\\Application\\chrome.exe      N/A      |\n+-----------------------------------------------------------------------------------------+\n",
+    "power_limit_w": 500.0,
+    "torch_version": "2.7.0+cu128",
+    "total_vram_mib": 24564.0
+  },
+  "kind": "selective",
+  "plan": {
+    "concept": "person",
+    "denoise": 0.49,
+    "detect_every_n": 3,
+    "max_instances": 6,
+    "mode": "selective",
+    "plan_version": 1,
+    "prompt": "trousers soaked through with a dark wet stain, damp fabric, wet denim, photograph",
+    "region": "lower_half",
+    "t_index": 40
+  },
+  "regions": {
+    "deferred_total": 0,
+    "feather_px": 6,
+    "max_side_px": 152,
+    "min_region_px": 16,
+    "min_side_px": 20,
+    "regions_per_frame": 5.0417,
+    "regions_rendered": 242,
+    "skipped_small_total": 0,
+    "slots": 6,
+    "tracks_per_frame": 5.0417
+  },
+  "run": {
+    "amortised_detect_ms": 7.3866,
+    "composite": {
+      "max_ms": 4.3051,
+      "mean_ms": 2.7089,
+      "median_ms": 2.6741,
+      "min_ms": 2.5165,
+      "p95_ms": 2.8286,
+      "stdev_ms": 0.249
+    },
+    "detect": {
+      "max_ms": 28.0472,
+      "mean_ms": 22.1599,
+      "median_ms": 21.677,
+      "min_ms": 7.6825,
+      "p95_ms": 28.0472,
+      "stdev_ms": 4.2203
+    },
+    "detect_every_n": 3,
+    "detector": "yolo-world-s-640",
+    "detector_ticks": 17,
+    "diffusion_calls": 48,
+    "engine_scenario": "img2img-tensorrt-512x512-b1",
+    "finished_utc": "2026-09-07T10:10:21Z",
+    "fps": 31.2151,
+    "frames": 48,
+    "gpu_samples": [
+      [
+        0.03931169997667894,
+        2730.0,
+        46.0
+      ],
+      [
+        0.567586199962534,
+        2715.0,
+        51.0
+      ],
+      [
+        1.0968101999606006,
+        2715.0,
+        51.0
+      ]
+    ],
+    "max_temperature_c": 51.0,
+    "mean_sm_clock_mhz": 2720.0,
+    "ms_per_frame": 24.6492,
+    "ms_per_frame_with_detection": 32.0358,
+    "peak_vram_bytes": 3928193024,
+    "render": {
+      "max_ms": 40.3143,
+      "mean_ms": 24.6492,
+      "median_ms": 23.7075,
+      "min_ms": 22.6866,
+      "p95_ms": 27.7187,
+      "stdev_ms": 2.7526
+    },
+    "started_utc": "2026-09-07T10:10:20Z",
+    "warmup_frames": 3
+  },
+  "schema_version": 2
+}
