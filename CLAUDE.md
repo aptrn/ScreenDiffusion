@@ -116,26 +116,41 @@ says why. Every arm predates issue #31's device composite and none has been
 re-run, so read the recommendation as a bound: the ~7 ms it removes applies to
 every arm equally and can only move the pick to a *fresher* cadence.
 
-All four case-table blocks (`--detector-report`, `--primitive-report`,
-`--selective-report`, `--cadence-report`) keep the newest run **per (thing
-measured, GPU)**, not per name. A 4090 run therefore adds a row beside the 3080's instead of erasing it,
+The same slot also takes a **plan-swap case** (`swap-target`, `swap-style`) —
+issue #30, acceptance criteria 1 and 3. That run renders the committed clip under
+one instruction, submits a second one mid-clip through the shipped producer and
+`ActivePlan`, and keeps rendering; it writes to `bench/results/swaps/`. It records
+the whole per-frame **interval series**, how long the new instruction took to
+reach the screen with and without the GUI's 400 ms debounce, and whether the
+engine was rebuilt — a number read off the step count and the engine object's
+identity either side, not an assumption. `--swap-report` regenerates the block in
+spec 8.9. `swap-target` changes the target concept, so it pays the vocabulary
+re-encode and the throwaway detect; `swap-style` changes only style and denoise.
+Measured on a 4090: **0.50 s and 0.43 s keystroke to pixel** against a 3 s
+criterion, worst interval across a swap 37.85 ms against 32.03 in the same run's
+steady state, **0 rebuilds**. A stutter is judged against that steady state plus
+one frame budget, never against 33.33 ms alone.
+
+All five case-table blocks (`--detector-report`, `--primitive-report`,
+`--selective-report`, `--cadence-report`, `--swap-report`) keep the newest run
+**per (thing measured, GPU)**, not per name. A 4090 run therefore adds a row beside the 3080's instead of erasing it,
 which is what keeps spec 7.4's portability table checkable. When rows span GPUs
 the table grows a `GPU` column, the preamble names every machine, and the
 per-machine verdicts — the recommendation, the primitive decision, the selective
-Gate lines — are stated once per machine; with one machine the block renders
+Gate lines, the two acceptance-criterion verdicts — are stated once per machine; with one machine the block renders
 byte-identically to before, so the byte-match tests do not churn. `gpu_of` in
 `bench/results.py` is the one reading of which machine a record came from.
 
 `--portability-report` is the second question asked of those same records — not
 "does the path work" but "which of its numbers survived the move to the hardware
 this ships on" — and regenerates the block in spec 7.4, byte-matched by a test
-like the other four. It refuses to draw a table at all when the two runs rendered
+like the other five. It refuses to draw a table at all when the two runs rendered
 different regions/frame, because region count drives cost and a table across two
 of them is the wrong answer in a quotable shape. The 30 FPS verdict it prints is
 judged on `ms/frame with detection`, carries the region count and the clock
 regime, and says whether every committed run on the card landed on the same side
 of the target — a verdict inside the run-to-run spread is labelled one.
-`scripts/regen_spec_blocks.py` pastes all six generated blocks back into the
+`scripts/regen_spec_blocks.py` pastes all seven generated blocks back into the
 spec, so a regeneration is never a hand-copy that drops a digit.
 
 The clips in `bench/clips/` are committed and so are their box tracks
@@ -364,6 +379,14 @@ sends no plan at all, at start or ever, so an empty field cannot overwrite it.
   contention is itself a function of the cadence: measured across issue #23's
   sweep, one detect costs ~23 ms at `detect_every_n: 2` and ~20 ms at 8, so
   raising the cadence saves more than 1/N.
+- **A plan swap re-encodes the prompt on the frame thread.** `update_prompt` and
+  the schedule-cache rebuild run inside the frame that binds a changed plan, and
+  they cost that one frame ~5.8 ms on a 4090 (measured, spec 8.9) — the only place
+  in this design where cold-path work runs on the hot path. It is inside the
+  budget a dropped frame would cost, so it is not a stutter and needs no fix at
+  30 FPS; anything that makes it dearer wants re-measuring. A *target* swap is the
+  other way round: it costs the frame path nothing and costs the output ~10 frames
+  of unstyled capture while the detector re-encodes and re-detects.
 - **A feather that bleeds outside its region breaks the whole criterion.** The
   selective path's promise is that non-target pixels are the captured bytes, so
   the alpha ramp climbs inwards from the region's own edge and is exactly 0 one

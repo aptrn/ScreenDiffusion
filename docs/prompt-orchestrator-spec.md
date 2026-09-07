@@ -1254,6 +1254,93 @@ its own change, with both cards re-run.
 
 ---
 
+### 8.9 Does a plan swap take effect in time, and without a stutter? — **yes, measured**
+
+Acceptance criteria 1 and 3 (§11) were the two nobody had run. Everything the
+repo knew about them was indirect and additive: `PLAN_DEBOUNCE_MS = 400` in the
+GUI, a ~16 ms text encode, a `set_classes` that drops the predictor and costs the
+next `predict` ~108 ms, a schedule update that is a runtime call rather than a
+rebuild. On paper that sums to well under three seconds — but criterion 3 is not
+the same question as criterion 1. "No stutter" is about the *inter-frame
+interval* while that work happens, and nothing in the repo had ever looked at
+inter-frame intervals.
+
+Two swaps, because they take different paths. The **expensive** one changes the
+target concept, which re-encodes the detector's vocabulary and owes the throwaway
+detect §8.1 measured; the **cheap** one changes only the style and the strength,
+which is a prompt re-encode on the frame thread and a `set_t_index_list`. Both
+start from the priority-case plan the worker itself boots on, so the frames
+before the swap are the steady state §7.4 and §8.8 already have baselines for.
+
+Three rules the block below obeys.
+
+**Criterion 1's clock starts at the keystroke.** The 400 ms debounce is time the
+user waits, so it is in the figure; the worker-side half is reported beside it,
+because that is the one an optimisation would move. What the harness does *not*
+measure is the `multiprocessing.Queue` hop between the two processes — it runs in
+one process, and the omission is named rather than absorbed.
+
+**The pixels are the event, not the plan version.** A frame that bound the new
+plan but has no boxes for it yet renders the capture untouched, which is the old
+instruction still on screen. The clock stops at the first frame whose rendered
+regions came from the new plan's own tracks.
+
+**Criterion 3 is judged against a steady-state control from the same run.** A
+40 ms frame on a card rendering 32 ms frames has not stuttered, and 33.33 ms
+alone cannot tell you that. The bar is the dearest frame in the same run's steady
+state, plus one frame budget — past that the stream has lost a frame to the swap.
+The control is the worse of the two steady states either side, so it is not
+whichever half flatters the verdict.
+
+Each swap was measured twice, cold-started. The block is generated with
+`uv run python -m bench --swap-report` from `bench/results/swaps/`.
+
+<!-- BEGIN PLAN SWAP -->
+Measured on NVIDIA GeForce RTX 4090, img2img-tensorrt-512x512-b1, 96 consecutive frames of `people.mp4` resized to the app's 512x512 capture canvas, the new instruction submitted on frame 48. Clocks unlocked. The swap travels the shipped cold path - `plan_from_fields`, `validate_plan`, `ActivePlan.submit`, and the frame loop's own prompt re-encode, `BackgroundDetector.follow` and `set_t_index_list` - so what is timed is the work the worker does. It omits one hop the app has and this harness does not: the `multiprocessing.Queue` between the GUI and the worker process.
+
+| swap | what moved | keystroke -> pixel | worker | frames to pixel | criterion 1 | worst across swap | control worst | over budget (swap / steady) | criterion 3 | rebuilds | background |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| swap-style | style, denoise 0.49 -> 0.62 | 0.43 s | 33 ms | 1 | MET | 37.85 ms | 32.03 ms | 1/1 vs 0/44 | MET | 0 | identical |
+| swap-target | target person -> shoes | 0.50 s | 104 ms | 11 | MET | 27.97 ms | 31.66 ms | 0/11 vs 0/44 | MET | 0 | identical |
+
+**Acceptance criterion 1 - a typed instruction takes effect within 3 s: MET.** The slower of the two swaps is `swap-target`, where a typed instruction reached the screen 0.50 s after the keystroke - 400 ms of GUI debounce, 0.1 ms to validate the plan and 104 ms in the worker (11 frames) - against the 3.00 s the criterion allows.
+
+**Acceptance criterion 3 - swapping the instruction stutters nothing and rebuilds nothing: MET.** The least steady of the two swaps is `swap-style`, where the worst inter-frame interval across the swap was 37.85 ms over 1 frames, against 32.03 ms in the same run's steady state before (1.18x): +5.82 ms, inside the 33.33 ms a dropped frame would cost; 1/1 frames across the swap were over the 33.33 ms budget against 0/44 in steady state. Across both swaps there were 0 TensorRT rebuilds: the schedule went from t_index [40] to [36] on the same engine object at 1 step(s) either side, so 0 TensorRT rebuilds.
+
+What a swap costs when it does not cost milliseconds: `swap-target` showed the capture untouched for 10 of the 11 frames it took to arrive (2 detects). A plan change drops the tracks that were about the old concept, and a frame with no boxes costs no diffusion call - which is why the frame path across a vocabulary swap is *cheaper* than steady state rather than dearer.
+
+Criterion 4 held across the swap too: 96/96 frames left every pixel outside the rendered regions exactly as captured (164676 background pixels on the frame with the most painted).
+
+Each swap was measured twice and the two runs of one never differed by more than 2 ms in keystroke-to-pixel or 0.20 ms in the worst interval across the swap, against margins of 2.50 s and 27.51 ms to the two thresholds - so both verdicts are outside the run-to-run spread.
+
+Manual verification artefacts, source | render: `swap-style-20260907-122518Z-comparison.mp4`, `swap-target-20260907-122458Z-comparison.mp4`. The still beside each is the frame the new instruction first reached, which is the frame there is anything to look at on.
+<!-- END PLAN SWAP -->
+
+Three things the block does not say for itself.
+
+**The expensive swap is the cheap one on the frame path.** A vocabulary change
+costs the frame loop *less* than steady state, not more, because `follow` drops
+the tracks that were about the old concept and a frame with no boxes costs no
+diffusion call at all. What it costs instead is ten frames of unstyled capture —
+about 0.1 s of output showing the screen as it is. That is the trade a
+millisecond figure alone would report as free, and it is the one a viewer sees.
+
+**The cheap swap is the dearer one on the frame path**, at +5.8 ms on the single
+frame it lands on: `update_prompt` re-encodes the prompt on the frame thread, and
+the schedule caches are rebuilt beside it. It is one frame, it is inside the
+budget a dropped frame would cost, and it is the only place in this design where
+cold-path work runs on the hot path. Moving the text encode off the frame thread
+is the obvious optimisation and is not needed at 30 FPS.
+
+**No rebuild is arithmetic here, not an assumption.** The step *count* is what
+keys a TensorRT engine (§7.2); a plan's `denoise` reaches the engine as a
+schedule *value* through `render_plan.t_index_for_denoise`, so t_index 40 → 36 is
+a runtime update. The record carries both the count and the engine object's
+identity either side of the swap, so a reviewer recomputes the zero rather than
+trusting it.
+
+---
+
 ## 9. Risks
 
 | Risk                                              | Impact                  | Mitigation                                             |
@@ -1301,6 +1388,11 @@ cheaply — which is the point of ordering them this way.
 
 1. User types "find all people and give them a red hat" and, within 3 s and
    without restarting generation, people on screen render with red hats.
+   **Met, measured (issue #30, 2026-09-07):** 0.50 s from keystroke to pixel for a
+   new *target* on an RTX 4090 — 0.40 s of that is the GUI's own debounce, 0.10 s
+   is the worker — and 0.43 s for a new style. Generation never restarts: the
+   engine object and its step count are unchanged across both swaps. §8.9 has the
+   block and what the two halves of the figure mean.
 2. Sustained ≥ 30 FPS output with up to 4 tracked objects at 512² diffusion,
    measured **on deploy hardware** (RTX 3090 Ti / 4090) — see §7.4.
    **Met, measured (issue #24, 2026-09-07):** 30.9–31.4 FPS over five runs on an
@@ -1322,6 +1414,13 @@ cheaply — which is the point of ordering them this way.
    thread and a GUI process beside it.
 3. Typing a new instruction swaps behaviour with **no stutter** in the output
    stream and **no TensorRT rebuild**.
+   **Met, measured (issue #30, 2026-09-07):** worst inter-frame interval across a
+   swap 37.85 ms against 32.03 ms in the same run's steady state — +5.8 ms on the
+   one frame the prompt re-encode lands on, well inside the 33.33 ms a dropped
+   frame would cost — and **0 TensorRT rebuilds**, checked from the step count and
+   the engine object's identity either side rather than assumed. A *target* swap
+   is cheaper than steady state on the frame path and costs ten frames of unstyled
+   capture instead; §8.9 says why that is the half worth watching.
 4. Non-target pixels are bit-identical to the capture (verifiable).
 5. An unsatisfiable instruction leaves the previous render running and shows a
    readable explanation.

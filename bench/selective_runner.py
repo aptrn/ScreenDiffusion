@@ -171,8 +171,13 @@ def _region_summary(selections: Sequence, plan, feather_px: int) -> RegionSummar
     )
 
 
-def _background_pixels_changed(source, output, painted) -> int:
-    """How many background pixels the render moved. Zero is the whole point."""
+def background_pixels_changed(source, output, painted) -> int:
+    """How many background pixels the render moved. Zero is the whole point.
+
+    Public because the plan-swap run (issue #30) asks the same question of its own
+    frames: bit-identity has to hold *across* a swap too, and a second spelling of
+    this would be a second criterion wearing the same name.
+    """
     import numpy as np
 
     outside = ~painted
@@ -314,7 +319,7 @@ def run_selective(
             selections.append(selection)
             snapshots.append(tracks)
             background_changed.append(
-                _background_pixels_changed(sources[index], output, painted))
+                background_pixels_changed(sources[index], output, painted))
     finished_utc = utc_now()
     peak_vram_bytes = int(torch.cuda.max_memory_allocated())
     if detection is not None:
@@ -361,8 +366,8 @@ def run_selective(
     stem = f"{case.name}-{timestamp}"
     comparison, still = "", ""
     if write_clips:
-        comparison, still = _write_artefacts(sources, outputs, results_dir, stem,
-                                             meta["fps"], log)
+        comparison, still = write_comparison_artefacts(sources, outputs, results_dir,
+                                                       stem, meta["fps"], log)
 
     result = SelectiveResult(
         case=case, plan=plan_record(plan),
@@ -395,23 +400,32 @@ def run_selective(
     return result
 
 
-def _write_artefacts(sources: Sequence, outputs: Sequence, results_dir: Path,
-                     stem: str, fps: float,
-                     log: Callable[[str], None]) -> Tuple[str, str]:
-    """The files a human judges the run by: capture | selective render.
+def write_comparison_artefacts(sources: Sequence, outputs: Sequence,
+                               results_dir: Path, stem: str, fps: float,
+                               log: Callable[[str], None],
+                               still_index: Optional[int] = None,
+                               render_clip: bool = True) -> Tuple[str, str]:
+    """The files a human judges the run by: capture | render.
 
     The Gate's manual-verification step has to be pointed at a file, and the still
     is full resolution because a subtle low-denoise change on a person's lower half
     is not visible in a downscaled clip.
+
+    `still_index` is the frame the still is cut from - the middle of the clip by
+    default, and for a plan swap (issue #30) the frame the new instruction first
+    reached, which is the one there is anything to look at on. `render_clip` is
+    the render-only arm, which the swap run does not need beside the comparison.
     """
     comparison = write_clip(triptych(sources, [outputs]),
                             results_dir / f"{stem}-comparison.mp4", fps).name
-    panels = [resized_panel(frame, COMPARISON_PANEL_WIDTH) for frame in outputs]
-    render = write_clip(panels, results_dir / f"{stem}-render.mp4", fps).name
-    middle = len(sources) // 2
+    written = [comparison]
+    if render_clip:
+        panels = [resized_panel(frame, COMPARISON_PANEL_WIDTH) for frame in outputs]
+        written.append(write_clip(panels, results_dir / f"{stem}-render.mp4", fps).name)
+    chosen = len(sources) // 2 if still_index is None else still_index
     still = write_still(
-        triptych(sources[middle:middle + 1], [outputs[middle:middle + 1]],
+        triptych(sources[chosen:chosen + 1], [outputs[chosen:chosen + 1]],
                  panel_width=None)[0],
         results_dir / f"{stem}-comparison.jpg").name
-    log(f"clips: {comparison}, {render}, {still}")
+    log(f"clips: {', '.join(written)}, {still}")
     return comparison, still
