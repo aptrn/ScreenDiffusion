@@ -16,6 +16,11 @@ from typing import Callable, Optional, Sequence, TextIO, Tuple, Union
 from bench import marginal
 from bench.cadence import format_cadence_report
 from bench.clocks import ClockLock, regime_summary
+from bench.contention import (
+    OccupancyRecord,
+    measure_occupancy_now,
+    occupancy_summary,
+)
 from bench.cooldown import DEFAULT_CAP_S, DEFAULT_POLL_INTERVAL_S, DEFAULT_THRESHOLD_C
 from bench.detector_results import format_detector_report, load_detector_results
 from bench.detectors import (
@@ -135,6 +140,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--require-locked-clocks", action="store_true",
                         help="refuse to run unless someone has already locked the GPU "
                              "clocks; for a run that decides something (issue #13)")
+    parser.add_argument("--require-idle-gpu", action="store_true",
+                        help="refuse to run unless nothing else is drawing on the GPU; "
+                             "for a run that decides something (issue #33)")
     parser.add_argument("--per-module", action="store_true",
                         help="also time UNet / VAE encode / VAE decode, in a separate "
                              "pass (the extra synchronises perturb the total)")
@@ -343,6 +351,38 @@ def clock_lock_guard(require_locked: bool,
             f"{LOCK_INSTRUCTIONS}"
         )
     return lock
+
+
+IDLE_INSTRUCTIONS = (
+    "       Close whatever else is drawing on the card and re-run. The harness\n"
+    "       cannot tell you which process it is - `nvidia-smi` reports per-process\n"
+    "       memory but not per-process SM time on consumer cards - so this is the\n"
+    "       one door that needs a human to look at the machine."
+)
+
+
+def idle_gpu_guard(require_idle: bool,
+                   measure: Callable[[], OccupancyRecord] = measure_occupancy_now,
+                   ) -> Optional[OccupancyRecord]:
+    """Whether anything else is using the GPU; refuse the run if something is.
+
+    Issue #33, and the same shape as `clock_lock_guard`: it happens before an
+    engine build so a refusal costs nothing, and `unknown` refuses for the reason
+    `unknown` refuses there - a gate that cannot see the card has not seen an empty
+    one. Unlike the clock gate it *samples*, which costs a couple of seconds, so it
+    only samples when it was asked to; the record that lands in the result file is
+    taken again by the runner.
+    """
+    if not require_idle:
+        return None
+    record = measure()
+    if not record.clear:
+        raise SystemExit(
+            f"bench: --require-idle-gpu, but the GPU is {record.outcome}.\n"
+            f"       {occupancy_summary(record)}\n"
+            f"{IDLE_INSTRUCTIONS}"
+        )
+    return record
 
 
 def report_marginal(results_dir: Path, out: TextIO = sys.stdout) -> None:
@@ -611,6 +651,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     kind, target = resolve_target(args)
     clock_lock_guard(args.require_locked_clocks)
+    idle_gpu_guard(args.require_idle_gpu)
     if kind == "detector":
         return run_detector_target(args, target)
     if kind == "primitive":

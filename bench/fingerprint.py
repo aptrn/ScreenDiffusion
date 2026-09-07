@@ -44,6 +44,10 @@ SAMPLE_FIELDS: Tuple[str, ...] = ("clocks.sm", "temperature.gpu")
 # it - so answering "do the detector and the diffusion engine fit together?" (issue
 # #4) needs the driver's figure, not torch's.
 MEMORY_USED_FIELD = "memory.used"
+# How busy the whole GPU is right now. Read *before* the timed region, while this
+# process is idle, so what it reports is what else is on the card - which is the
+# one thing about a run that no other field in the record shows (issue #33).
+UTILIZATION_FIELD = "utilization.gpu"
 
 Runner = Callable[[Sequence[str]], str]
 
@@ -136,6 +140,15 @@ def read_memory_used_mib(run: Runner = _run) -> Optional[float]:
     both - so the difference answers the second question too.
     """
     return parse_number(query((MEMORY_USED_FIELD,), run=run).get(MEMORY_USED_FIELD))
+
+
+def read_utilization_pct(run: Runner = _run) -> Optional[float]:
+    """SM utilization across every process on the GPU, or None if it cannot be read.
+
+    None rather than zero: `occupancy_verdict` turns the first into `unknown` and
+    would read the second as an empty card.
+    """
+    return parse_number(query((UTILIZATION_FIELD,), run=run).get(UTILIZATION_FIELD))
 
 
 def read_clock_lock(run: Runner = _run) -> ClockLock:

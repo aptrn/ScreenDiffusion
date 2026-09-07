@@ -35,7 +35,7 @@ from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 from bench.portability import (
     FRAME_BUDGET_MS,
     TARGET_FPS,
-    composite_path,
+    cadence_of,
     criterion_verdict,
     detect_ms,
     fps_spread,
@@ -70,15 +70,6 @@ REGIONS_TOLERANCE = 0.15
 # thread, a GUI process and a real screen, so a setting that fits with nothing to
 # spare fits only in the benchmark. Ten percent is 3.33 ms - about one composite.
 HEADROOM_FRACTION = 0.10
-
-
-def cadence_of(result: Mapping) -> int:
-    """The cadence an arm actually ran at, off the plan it rendered.
-
-    The plan, not the case name: `validate_plan` clamps `detect_every_n` into
-    1..30, and what a run measured is what the plan carried, not what was typed.
-    """
-    return int(result["plan"]["detect_every_n"])
 
 
 def staleness_of(result: Mapping) -> dict:
@@ -340,11 +331,11 @@ def baseline_statement(baseline: Optional[Mapping[str, dict]]) -> str:
     if not deploy:
         return NO_BASELINE
     verdict = criterion_verdict(deploy[0])
-    # The spread of the design the verdict is about, not of every run the card ever
-    # produced: since issue #31 the same case has been measured on both sides of a
-    # composite that moved to the device, and one span across the two is not noise.
-    spread = fps_spread(baseline, verdict.gpu,
-                        composite=composite_path(deploy[0]))
+    # The spread of the configuration the verdict is about, not of every run the
+    # card ever produced: the same case has been measured on both sides of a
+    # composite that moved to the device (issue #31) and on both sides of a cadence
+    # default that moved (issue #33), and one span across those is not noise.
+    spread = fps_spread(baseline, verdict.gpu, like=deploy[0])
     if verdict.met:
         finding = ("so **there is no gap to close by lowering the resolution, and "
                    "no lower-resolution engine was built** - a 384x384 or 256x256 "

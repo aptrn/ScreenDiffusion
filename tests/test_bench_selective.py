@@ -314,6 +314,24 @@ def test_the_gate_lines_belong_to_the_newest_run_and_say_which_machine(record):
     assert f"The Gate, measured on {DEPLOY_GPU}:" in report
 
 
+def test_each_machine_states_what_its_cadence_cost_in_box_age(record):
+    """Issue #33's Gate: the cadence's price is box age, and it is quoted per
+    machine because the frames are portable and the milliseconds are not."""
+    report = format_selective_report({
+        "laptop.json": record,
+        "deploy.json": on_gpu(record, DEPLOY_GPU, "2026-09-07T10:00:00Z")})
+    assert report.count("What the cadence cost") == 2
+    assert "frames old" in report
+
+
+def test_a_run_predating_the_staleness_block_says_so_rather_than_nothing(record):
+    """The 3080 baseline was written before issue #23 added the measurement. An
+    absent block is a record that is older than the question, not a zero."""
+    older = copy.deepcopy(record)
+    older["staleness"] = None
+    assert "not recorded" in format_selective_report({"laptop.json": older})
+
+
 # --- how stale the boxes a frame renders are (issue #23) --------------------
 
 
@@ -456,3 +474,47 @@ def test_the_wire_key_the_cadence_override_writes_is_the_plan_s_own():
     from bench.selective import GLOBAL_KEY
 
     assert GLOBAL_KEY == render_plan.GLOBAL_KEY
+
+
+# --- was anything else on the card while this ran? (issue #33) ---------------
+
+
+def test_a_run_records_whether_the_card_was_its_own():
+    """The door issue #33's discarded run walked through. Every other field said the
+    run was sound; this is the one that would not have."""
+    from bench.contention import CLEAR, OccupancyRecord
+
+    occupied = a_selective_result(occupancy=OccupancyRecord(
+        outcome=CLEAR, mean_utilization_pct=1.0, samples=[1.0])).to_dict()
+    assert occupied["occupancy"]["outcome"] == CLEAR
+    assert occupied["occupancy"]["clear"] is True
+
+
+def test_a_record_predating_the_occupancy_gate_carries_none_not_a_pass(record):
+    """The fourteen committed records were written before the gate existed. An
+    absent block is a run that never answered the question, not one that passed."""
+    assert record["occupancy"] is None
+
+
+def test_a_run_measured_beside_something_else_says_so_where_it_is_quoted():
+    """A door that only fires at run time is not a door: `--require-idle-gpu` is
+    opt-in, so a contended run can still reach `bench/results/`. The block that
+    quotes it has to say what it was measured beside."""
+    from bench.contention import BUSY, OccupancyRecord
+
+    busy = a_selective_result(occupancy=OccupancyRecord(
+        outcome=BUSY, mean_utilization_pct=45.0, samples=[45.0])).to_dict()
+    report = format_selective_report({"busy.json": busy})
+    assert "45%" in report
+    assert "busy" in report
+
+
+def test_a_clear_run_adds_no_line_at_all(record):
+    """The rule `GpuColumn` follows: a caveat that is always there is not read. A
+    clean run renders exactly the block it always did, so no byte-match churns."""
+    from bench.contention import CLEAR, OccupancyRecord
+
+    clear = a_selective_result(occupancy=OccupancyRecord(
+        outcome=CLEAR, mean_utilization_pct=1.0, samples=[1.0])).to_dict()
+    assert (format_selective_report({"a.json": clear})
+            == format_selective_report({"a.json": record}))

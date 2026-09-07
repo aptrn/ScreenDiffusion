@@ -488,3 +488,42 @@ def test_a_swap_lands_in_its_own_directory_rather_than_beside_the_selective_runs
     source = (ROOT / "bench" / "cli.py").read_text(encoding="utf-8")
     body = source.split("def run_swap_target", 1)[1].split("\ndef ", 1)[0]
     assert "SWAP_RESULTS_SUBDIR" in body
+
+
+# --- the occupancy gate (issue #33) ------------------------------------------
+
+
+def test_a_clear_card_passes_the_gate_that_demands_one():
+    from bench.cli import idle_gpu_guard
+    from bench.contention import CLEAR, OccupancyRecord
+
+    record = idle_gpu_guard(
+        True, measure=lambda: OccupancyRecord(outcome=CLEAR, mean_utilization_pct=1.0))
+    assert record.clear is True
+
+
+@pytest.mark.parametrize("outcome,utilization", [("busy", 49.0), ("unknown", None)])
+def test_the_gate_stops_a_run_that_would_decide_something_on_a_shared_card(
+        outcome, utilization):
+    """Issue #33: the run that measured 3.2x its own committed baseline passed every
+    other door. `unknown` refuses too, for the reason it refuses a clock lock."""
+    from bench.cli import idle_gpu_guard
+    from bench.contention import OccupancyRecord
+
+    with pytest.raises(SystemExit) as exit_info:
+        idle_gpu_guard(True, measure=lambda: OccupancyRecord(
+            outcome=outcome, mean_utilization_pct=utilization))
+    message = str(exit_info.value)
+    assert outcome in message
+    assert "--require-idle-gpu" in message, "the message has to name the flag"
+    assert "Close whatever else" in message, "and say how to fix it"
+
+
+def test_without_the_flag_the_gate_does_not_even_sample():
+    """A gate nobody asked for must not lengthen every run by two seconds."""
+    from bench.cli import idle_gpu_guard
+
+    def measure():
+        raise AssertionError("sampled without --require-idle-gpu")
+
+    assert idle_gpu_guard(False, measure=measure) is None

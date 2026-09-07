@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
 from bench.clocks import clock_normalization, regime_summary
+from bench.contention import OccupancyRecord, measure_occupancy_now, occupancy_summary
 from bench.cooldown import (
     DEFAULT_CAP_S,
     DEFAULT_POLL_INTERVAL_S,
@@ -193,6 +194,20 @@ def cooldown_gate(enabled: bool, threshold_c: float, cap_s: float,
     )
     log(f"cooldown: {record.outcome} after {record.waited_s:.1f} s "
         f"at {record.final_temperature_c} C")
+    return record
+
+
+def occupancy_gate(log: Callable[[str], None]) -> OccupancyRecord:
+    """Read what else is on the GPU, right before the timed region. Issue #33.
+
+    A gate that only records: the refusal lives in `bench.cli.idle_gpu_guard`
+    behind `--require-idle-gpu`, which fires before an engine build. This is the
+    reading that travels with the number, and it is taken here because here is
+    where the process is idle - so what it measures is the neighbours rather than
+    the run.
+    """
+    record = measure_occupancy_now()
+    log(occupancy_summary(record))
     return record
 
 
