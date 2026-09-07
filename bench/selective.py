@@ -41,12 +41,18 @@ from bench.fingerprint import Fingerprint
 from bench.flicker import FlickerScore
 from bench.primitive_results import ClipRecord
 from bench.results import (
+    GpuColumn,
     append_row,
+    distinct_gpus,
     format_number,
+    gpu_of,
     latest_per,
     load_records,
+    measured_on,
     normalised_cell,
     require_recordable,
+    table_row,
+    table_separator,
     timestamp_from,
     write_record,
 )
@@ -491,7 +497,7 @@ SELECTIVE_README_HEADER = (
     " +detect | FPS | flicker | background | gate | cooldown | clock regime |"
     " ms/frame at basis clock | clip file | file |"
 )
-SELECTIVE_README_SEPARATOR = "|" + "---|" * (SELECTIVE_README_HEADER.count("|") - 1)
+SELECTIVE_README_SEPARATOR = table_separator(SELECTIVE_README_HEADER)
 SELECTIVE_README_NAME = "README.md"
 SELECTIVE_README_PREAMBLE = (
     f"{SELECTIVE_README_TITLE}\n\n{SELECTIVE_README_INTRO}\n"
@@ -502,7 +508,7 @@ SELECTIVE_README_PREAMBLE = (
 def selective_readme_row(result: dict, filename: str) -> str:
     run, gate = result["run"], result["gate"]
     plan, clip = result["plan"], result["clip"]
-    return "| " + " | ".join([
+    return table_row([
         run["finished_utc"],
         result["case"]["name"],
         result["hardware"]["gpu_name"],
@@ -521,7 +527,7 @@ def selective_readme_row(result: dict, filename: str) -> str:
         f"[{result['comparison_clip']}]({result['comparison_clip']})"
         if result.get("comparison_clip") else "-",
         f"[{filename}]({filename})",
-    ]) + " |"
+    ])
 
 
 def append_selective_readme_row(result: ResultLike, readme_path: Path,
@@ -542,13 +548,16 @@ def load_selective_results(results_dir: Path) -> Dict[str, dict]:
 
 
 def latest_per_case(results: Mapping[str, dict]) -> Dict[str, dict]:
-    """One result per case: the most recently finished run of each."""
+    """One result per case *per GPU*: the most recently finished run of each.
+
+    Per GPU because a 4090 run of `selective-people` does not supersede the 3080
+    one - it is the other half of spec 7.4's portability claim (issue #25).
+    """
     return latest_per(results, lambda result: result["case"]["name"])
 
 
 REPORT_HEADER = ("| case | plan | regions/frame | diffusion calls/frame |"
                  " ms/frame | +detect | FPS | flicker (static px) | gate |")
-REPORT_SEPARATOR = "|" + "---|" * (REPORT_HEADER.count("|") - 1)
 
 GATE_ORDER = ("background", "change", "coverage", "stall")
 GATE_TITLES = {
@@ -559,11 +568,11 @@ GATE_TITLES = {
 }
 
 
-def _report_rows(results: Sequence[dict]) -> List[str]:
+def _report_rows(results: Sequence[dict], column: GpuColumn) -> List[str]:
     rows = []
     for result in results:
         run, plan = result["run"], result["plan"]
-        rows.append("| " + " | ".join([
+        rows.append(column.row([
             result["case"]["name"],
             f"{plan['concept']} / {plan['region']} / t_index {plan['t_index']}",
             format_number(result["regions"]["regions_per_frame"], 2),
@@ -573,7 +582,7 @@ def _report_rows(results: Sequence[dict]) -> List[str]:
             format_number(run["fps"], 1),
             format_number(result["flicker"]["mean_abs_diff"], 2),
             "pass" if result["gate"]["passed"] else "FAIL",
-        ]) + " |")
+        ], result))
     return rows
 
 
@@ -588,38 +597,86 @@ def _gate_lines(result: dict) -> List[str]:
     return lines
 
 
+def _measured_phrase(result: dict) -> str:
+    """The engine, the clip and the canvas one run was measured through."""
+    clip, case = result["clip"], result["case"]
+    return (f"{result['run']['engine_scenario']}, {clip['frames_used']} consecutive "
+            f"frames of `{clip['name']}` resized to the app's "
+            f"{case['canvas']}x{case['canvas']} capture canvas")
+
+
+def _clock_states(results: Sequence[dict]) -> str:
+    """The clock regimes these records were measured under, deduplicated."""
+    return ", ".join(sorted({result["hardware"]["clock_lock"]["state"]
+                             for result in results}))
+
+
+def _clock_phrase(results: Sequence[dict], gpus: Sequence[str]) -> str:
+    """Which regime produced these figures, and whose figures they are.
+
+    One machine reads as it always did. Two, and naming a single GPU would imply
+    the other one's rows were measured on it (issue #25 step 3), so every machine
+    is named with its own regime and the reader is pointed at the row.
+    """
+    if len(gpus) == 1:
+        return (f"Clocks {_clock_states(results)}; "
+                f"absolute figures belong to this GPU (spec 7.4)")
+    per_gpu = ", ".join(f"{gpu} {_clock_states(measured_on(results, gpu))}"
+                        for gpu in gpus)
+    return (f"Clocks: {per_gpu}; absolute figures belong to the GPU in the row "
+            f"(spec 7.4)")
+
+
+def _report_preamble(results: Sequence[dict], gpus: Sequence[str]) -> str:
+    measured = ", ".join(sorted({_measured_phrase(result) for result in results}))
+    spanning = "" if len(gpus) == 1 else " Rows are one per case per GPU."
+    return (f"Measured on {', '.join(gpus)}, {measured}. "
+            f"{_clock_phrase(results, gpus)}, and 30 FPS is M2's gate, "
+            f"not this one's.{spanning}")
+
+
+def _gate_sections(results: Sequence[dict], gpus: Sequence[str]) -> List[str]:
+    """The Gate lines and the manual artefact, once per machine.
+
+    The table lists every case; these belong to the first case *on each machine*,
+    because a Gate statement is a claim about one run and the run it came from is
+    the thing a reader has to be able to name.
+    """
+    sections = []
+    for gpu in gpus:
+        primary = measured_on(results, gpu)[0]
+        sections.append("The Gate, measured:" if len(gpus) == 1
+                        else f"The Gate, measured on {gpu}:")
+        sections.append("\n".join(_gate_lines(primary)))
+        if primary.get("comparison_clip"):
+            sections.append(
+                f"Manual verification artefact: `{primary['comparison_clip']}` "
+                f"(source | selective render) and `{primary['comparison_still']}`.")
+    return sections
+
+
 def format_selective_report(results: Mapping[str, dict]) -> str:
     """The measured block the spec carries for the selective path.
 
     Generated from the committed JSON rather than transcribed, for the reason specs
     7.2, 8.1 and 8.2 are: a table pasted into Markdown drifts the moment the case is
     re-measured and nothing notices.
+
+    Rows are one per (case, GPU) and a case's machines sit adjacently, so a second
+    machine adds rows rather than replacing them (issue #25).
     """
     ordered = sorted(latest_per_case(results).values(),
-                     key=lambda result: result["case"]["name"])
+                     key=lambda result: (result["case"]["name"], gpu_of(result),
+                                         result["run"]["finished_utc"]))
     if not ordered:
         return "no selective render run committed yet"
 
-    # The case the prose details: the table lists every case, the preamble
-    # and the Gate lines belong to the first of them.
-    primary = ordered[0]
-    hardware = primary["hardware"]
-    preamble = (
-        f"Measured on {hardware['gpu_name']}, {primary['run']['engine_scenario']}, "
-        f"{primary['clip']['frames_used']} consecutive frames of "
-        f"`{primary['clip']['name']}` resized to the app's "
-        f"{primary['case']['canvas']}x{primary['case']['canvas']} capture canvas. "
-        f"Clocks {hardware['clock_lock']['state']}; absolute figures belong to this "
-        f"GPU (spec 7.4), and 30 FPS is M2's gate, not this one's."
-    )
+    gpus = distinct_gpus(ordered)
+    column = GpuColumn.for_gpus(gpus)
+    header = column.header(REPORT_HEADER)
     sections = [
-        preamble,
-        "\n".join([REPORT_HEADER, REPORT_SEPARATOR] + _report_rows(ordered)),
-        "The Gate, measured:",
-        "\n".join(_gate_lines(primary)),
+        _report_preamble(ordered, gpus),
+        "\n".join([header, table_separator(header)]
+                  + _report_rows(ordered, column)),
     ]
-    if primary.get("comparison_clip"):
-        sections.append(
-            f"Manual verification artefact: `{primary['comparison_clip']}` "
-            f"(source | selective render) and `{primary['comparison_still']}`.")
-    return "\n\n".join(sections)
+    return "\n\n".join(sections + _gate_sections(ordered, gpus))

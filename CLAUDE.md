@@ -97,6 +97,16 @@ the `ceil(N/K)` round-robin bound, and whether the loop ever stalled — and
 `--selective-report` regenerates the block in spec 8.8, held to a byte match by
 a test.
 
+All three generated blocks (`--detector-report`, `--primitive-report`,
+`--selective-report`) keep the newest run **per (thing measured, GPU)**, not per
+name. A 4090 run therefore adds a row beside the 3080's instead of erasing it,
+which is what keeps spec 7.4's portability table checkable. When rows span GPUs
+the table grows a `GPU` column, the preamble names every machine, and the
+per-machine verdicts — the recommendation, the primitive decision, the selective
+Gate lines — are stated once per machine; with one machine the block renders
+byte-identically to before, so the byte-match tests do not churn. `gpu_of` in
+`bench/results.py` is the one reading of which machine a record came from.
+
 The clips in `bench/clips/` are committed and so are their box tracks
 (`*.track.json`). A case reads its boxes rather than detecting them, so two runs
 render identical regions; `python -m bench <case> --write-track` regenerates a

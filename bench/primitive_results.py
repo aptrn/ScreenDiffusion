@@ -39,11 +39,18 @@ from bench.primitives import (
     decide,
 )
 from bench.results import (
+    GpuColumn,
     append_row,
+    distinct_gpus,
     format_number,
+    gpu_of,
+    gpu_suffix,
     latest_per,
     load_records,
+    measured_on,
     require_recordable,
+    table_row,
+    table_separator,
     timestamp_from,
     write_record,
 )
@@ -258,7 +265,7 @@ PRIMITIVE_README_HEADER = (
     " calls/frame | t_index | strength | ms/frame | flicker | expresses |"
     " cooldown | clock regime | ms/frame at basis clock | clip file | file |"
 )
-PRIMITIVE_README_SEPARATOR = "|" + "---|" * (PRIMITIVE_README_HEADER.count("|") - 1)
+PRIMITIVE_README_SEPARATOR = table_separator(PRIMITIVE_README_HEADER)
 PRIMITIVE_README_NAME = "README.md"
 
 PRIMITIVE_README_PREAMBLE = (
@@ -290,7 +297,7 @@ def primitive_readme_rows(result: dict, filename: str) -> List[str]:
                               result["run"])
     rows = []
     for arm in result["arms"]:
-        rows.append("| " + " | ".join([
+        rows.append(table_row([
             run["finished_utc"],
             case["name"],
             arm["primitive"],
@@ -309,7 +316,7 @@ def primitive_readme_rows(result: dict, filename: str) -> List[str]:
             arm_normalised_cell(result, arm),
             arm["clip_file"] or "-",
             f"[{filename}]({filename})",
-        ]) + " |")
+        ]))
     return rows
 
 
@@ -330,34 +337,39 @@ def load_primitive_results(results_dir: Path) -> Dict[str, dict]:
 
 
 def latest_per_case(results: Mapping[str, dict]) -> Dict[str, dict]:
-    """One result per case: the most recently finished run of each."""
+    """One result per case *per GPU*: the most recently finished run of each.
+
+    Per GPU because a second machine's comparison does not supersede the first
+    machine's - it is what makes spec 7.4's ranking claim checkable (issue #25).
+    """
     return latest_per(results, lambda result: result["case"]["name"])
 
 
 REPORT_HEADER = ("| case | primitive | option | denoise t_index | strength |"
                  " objects/frame | calls/frame | ms/frame |"
                  " ms/frame at basis clock | flicker (static px) | expresses |")
-REPORT_SEPARATOR = "|" + "---|" * (REPORT_HEADER.count("|") - 1)
 
 
-def _report_preamble(results: Sequence[dict]) -> str:
-    """One line saying which machine, which engine and which clips these are for."""
-    gpus = sorted({result["hardware"]["gpu_name"] for result in results})
+def _report_preamble(results: Sequence[dict], gpus: Sequence[str]) -> str:
+    """One line saying which machines, which engine and which clips these are for."""
     engines = sorted({result["run"]["engine_scenario"] for result in results})
     clips = sorted({f"{result['clip']['name']} "
                     f"({result['clip']['frames_used']} consecutive frames)"
                     for result in results})
+    spanning = ("" if len(gpus) == 1 else
+                " Rows are one per case per GPU, and absolute figures belong to the "
+                "GPU in the row (spec 7.4).")
     return (f"Measured: {', '.join(gpus)}, engine {', '.join(engines)}. "
             f"Committed clips: {', '.join(clips)}. Both primitives are timed on the "
             f"same frames, interleaved frame by frame, so the laptop's clock drift "
-            f"lands on both arms.")
+            f"lands on both arms.{spanning}")
 
 
-def _report_rows(results: Sequence[dict]) -> List[str]:
+def _report_rows(results: Sequence[dict], column: GpuColumn) -> List[str]:
     rows = []
     for result in results:
         for arm in result["arms"]:
-            rows.append("| " + " | ".join([
+            rows.append(column.row([
                 result["case"]["name"],
                 arm["primitive"],
                 arm["spec_option"],
@@ -370,7 +382,7 @@ def _report_rows(results: Sequence[dict]) -> List[str]:
                 f"{format_number(arm['flicker']['mean_abs_diff'], 2)} "
                 f"({arm['flicker']['static_pixels']})",
                 "yes" if arm["expresses"] else "no",
-            ]) + " |")
+            ], result))
     return rows
 
 
@@ -397,13 +409,22 @@ def decision_from(results: Sequence[dict]) -> Decision:
     return decide(measurements_from(results))
 
 
-def _denoise_lines(results: Sequence[dict]) -> List[str]:
+def _on(result: dict, gpus: Sequence[str]) -> str:
+    """` (<GPU>)` for the machine one record came from - `gpu_suffix`, given a record.
+
+    A bullet that names only its case would be two identical-looking bullets once a
+    second machine measured the same case (issue #25).
+    """
+    return gpu_suffix(gpu_of(result), gpus)
+
+
+def _denoise_lines(results: Sequence[dict], gpus: Sequence[str]) -> List[str]:
     """What each case needed, per primitive. A Gate item in its own right."""
     lines = []
     for result in results:
         for arm in result["arms"]:
-            lines.append(f"- **{result['case']['name']} / {arm['primitive']}:** "
-                         f"{arm['denoise']['statement']}")
+            lines.append(f"- **{result['case']['name']} / {arm['primitive']}"
+                         f"{_on(result, gpus)}:** {arm['denoise']['statement']}")
     return lines
 
 
@@ -415,7 +436,7 @@ def _cannot_express_lines(results: Sequence[dict]) -> List[str]:
             for key in sorted(seen, key=lambda k: PRIMITIVES[k].spec_option)]
 
 
-def _findings(results: Sequence[dict]) -> List[str]:
+def _findings(results: Sequence[dict], gpus: Sequence[str]) -> List[str]:
     """Findings the Gate asks to be recorded even though they decide nothing."""
     lines = []
     for result in results:
@@ -425,13 +446,31 @@ def _findings(results: Sequence[dict]) -> List[str]:
         unable = [arm["primitive"] for arm in result["arms"] if not arm["expresses"]]
         if able and unable:
             lines.append(
-                f"- **{result['case']['name']} separates the two primitives:** "
+                f"- **{result['case']['name']} separates the two primitives"
+                f"{_on(result, gpus)}:** "
                 f"{', '.join(unable)} did not express it at any rung of the ladder "
                 f"and {', '.join(able)} did. That is the half of the comparison no "
                 f"millisecond figure carries.")
         small = result["track"]["small_objects"]
-        lines.append(f"- **Small objects, {result['clip']['name']}:** "
-                     f"{small['statement']}")
+        lines.append(f"- **Small objects, {result['clip']['name']}"
+                     f"{_on(result, gpus)}:** {small['statement']}")
+    return lines
+
+
+def _decision_lines(results: Sequence[dict], gpus: Sequence[str]) -> List[str]:
+    """The choice, taken once per machine.
+
+    A cost comparison between two primitives measured on two different GPUs is not
+    a comparison (spec 7.4), so each machine decides from its own arms and says
+    which machine it is. With one machine the sentence is the one it always was.
+    """
+    lines = []
+    for gpu in gpus:
+        decision = decision_from(measured_on(results, gpu))
+        lines.append(
+            f"**Decision{gpu_suffix(gpu, gpus)}: "
+            f"{decision.primitive or 'none of the implemented primitives'}.** "
+            f"{decision.statement}")
     return lines
 
 
@@ -441,27 +480,32 @@ def format_primitive_report(results: Mapping[str, dict]) -> str:
     Generated from the committed JSON rather than transcribed, for the reason specs
     7.2 and 8.1 are: a table pasted into Markdown drifts the moment a case is
     re-measured, and nothing notices.
+
+    Rows are one per (case, GPU) and a case's machines sit adjacently, so a second
+    machine adds rows rather than replacing them (issue #25).
     """
     ordered = sorted(latest_per_case(results).values(),
                      key=lambda result: (not result["case"]["priority"],
-                                         result["case"]["name"]))
+                                         result["case"]["name"], gpu_of(result),
+                                         result["run"]["finished_utc"]))
     if not ordered:
         return "no primitive comparison committed yet"
 
-    decision = decision_from(ordered)
+    gpus = distinct_gpus(ordered)
+    column = GpuColumn.for_gpus(gpus)
+    header = column.header(REPORT_HEADER)
     clips = [f"`{result['comparison_clip']}`" for result in ordered
              if result.get("comparison_clip")]
     sections = [
-        _report_preamble(ordered),
-        "\n".join([REPORT_HEADER, REPORT_SEPARATOR] + _report_rows(ordered)),
+        _report_preamble(ordered, gpus),
+        "\n".join([header, table_separator(header)]
+                  + _report_rows(ordered, column)),
         "Denoise strength each case turned out to need:",
-        "\n".join(_denoise_lines(ordered)),
+        "\n".join(_denoise_lines(ordered, gpus)),
         "\n".join(_cannot_express_lines(ordered)),
         "Findings:",
-        "\n".join(_findings(ordered)),
-        f"**Decision: {decision.primitive or 'none of the implemented primitives'}.** "
-        f"{decision.statement}",
-    ]
+        "\n".join(_findings(ordered, gpus)),
+    ] + _decision_lines(ordered, gpus)
     if clips:
         sections.append(
             f"Side-by-side clips for human judgement (source | A | B), under "
