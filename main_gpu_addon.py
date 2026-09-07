@@ -4,7 +4,7 @@ import tempfile, time, queue, random, threading, pathlib, subprocess, shutil, re
 from collections import deque
 from multiprocessing import get_context, Queue
 from multiprocessing.connection import Connection
-from typing import List, Literal, Dict, Mapping, Optional, Deque, Any, Sequence, Union
+from typing import List, Literal, Dict, Mapping, NamedTuple, Optional, Deque, Any, Sequence, Union
 import numpy as np
 from PIL import Image, ImageTk, ImageDraw
 import PIL.Image
@@ -589,11 +589,28 @@ def _format_fps(payload: Any) -> str:
 # module scope, so it is testable without a Tk root - which is what the issue's Gate
 # asks for.
 
+# What a prompt or negative-prompt edit waits before it re-encodes on the live
+# engine. Cheap, so it fires nearly as fast as the user types.
+PROMPT_DEBOUNCE_MS = 150
+
 # A target edit changes the detector's vocabulary, and `YOLOWorld.set_classes` drops
 # the predictor: the next detect then costs ~108 ms more than a steady one (spec
 # 8.1). Per keystroke that is three frames' budget per character, so the plan waits
-# a good deal longer than the prompt box's 150 ms before it fires.
+# a good deal longer than a prompt edit does before it fires.
 PLAN_DEBOUNCE_MS = 400
+
+class PlanUpdate(NamedTuple):
+    """What the two fields came to: a line to read, and a plan to send or not.
+
+    Mirrors `render_plan.PlanValidation` one step further out - `message` is the
+    `set_plan` to put on `control_queue`, and it is None exactly when `reason`
+    holds the validator's stated refusal. `status` is filled either way, because
+    the user gets told what happened either way.
+    """
+
+    status: str
+    message: Optional[Dict[str, Any]] = None
+    reason: str = ""
 
 def _plan_status_line(plan: RenderPlan, notes: Sequence[str] = ()) -> str:
     """The line the status bar carries for a plan the GUI just built.
@@ -613,28 +630,25 @@ def _plan_status_line(plan: RenderPlan, notes: Sequence[str] = ()) -> str:
     return line
 
 def _plan_update_from_fields(target: str, style: str, prompt: str,
-                             negative_prompt: str) -> Dict[str, Any]:
+                             negative_prompt: str) -> PlanUpdate:
     """The GUI's fields as a control message, or the reason there is not one.
 
-    Returns "status" always - the line the user reads - and then exactly one of
-    "message", the `set_plan` to put on `control_queue`, or "error", the validator's
-    stated reason for refusing what was typed. The producer validates so a refusal
-    is visible where it was typed instead of silent in the worker; the worker
-    validates the same plan again, because it owns the version and because a plan
-    can arrive from any hand.
+    The producer validates so a refusal is visible where it was typed instead of
+    silent in the worker; the worker validates the same plan again, because it owns
+    the version and because a plan can arrive from any hand.
 
     An empty target is not "restyle nothing": it is `mode: "global"`, the whole
     frame under one prompt, which is what this app has always done. An empty style
     falls back to the prompt box for the same reason - naming a target must not
-    hand the engine an empty embedding and call it a style.
+    hand the engine an empty embedding and call it a style. The boxes arrive with
+    the newline Tk's `get` appends, so everything is stripped on the way in.
     """
-    style_text = (style or "").strip() or (prompt or "").strip()
-    result = plan_from_fields((target or "").strip(), style_text,
-                              negative_prompt=(negative_prompt or "").strip())
+    result = plan_from_fields(target.strip(), style.strip() or prompt.strip(),
+                              negative_prompt=negative_prompt.strip())
     if result.plan is None:
-        return {"error": result.reason, "status": f"Plan rejected: {result.reason}"}
-    return {"message": {"type": "set_plan", "plan": result.plan.to_dict()},
-            "status": _plan_status_line(result.plan, result.notes)}
+        return PlanUpdate(status=f"Plan rejected: {result.reason}", reason=result.reason)
+    return PlanUpdate(status=_plan_status_line(result.plan, result.notes),
+                      message={"type": "set_plan", "plan": result.plan.to_dict()})
 
 SHOW = {
     "model_path": True, "prompt": True, "negative_prompt": True, "seed": True,
@@ -1324,8 +1338,7 @@ class StreamGUI(ctk.CTk):
         self.sim_thresh_var = ctk.StringVar(value="0.99")
         self.sim_maxskip_var = ctk.StringVar(value="10.0")
         self.offline_var = ctk.BooleanVar(value=True)
-        self._debounce_prompt = self._debounce_neg = self._debounce_region = None
-        self._debounce_plan = None
+        self._debounce_prompt = self._debounce_neg = self._debounce_region = self._debounce_plan = None
         self.t_index_list: List[int] = [30]
         self._lockables: List[ctk.CTkBaseClass] = []
         self._step_sliders: List[ctk.CTkSlider] = []
@@ -1979,14 +1992,14 @@ class StreamGUI(ctk.CTk):
         if self._debounce_prompt is not None:
             try: self.after_cancel(self._debounce_prompt)
             except Exception: pass
-        self._debounce_prompt = self.after(150, self._push_prompt_runtime)
+        self._debounce_prompt = self.after(PROMPT_DEBOUNCE_MS, self._push_prompt_runtime)
 
     def _on_neg_prompt_changed(self, _evt=None):
         if not self.running: return
         if self._debounce_neg is not None:
             try: self.after_cancel(self._debounce_neg)
             except Exception: pass
-        self._debounce_neg = self.after(150, self._push_neg_prompt_runtime)
+        self._debounce_neg = self.after(PROMPT_DEBOUNCE_MS, self._push_neg_prompt_runtime)
 
     def _push_prompt_runtime(self):
         if not getattr(self, 'control_q', None): return
@@ -2022,9 +2035,9 @@ class StreamGUI(ctk.CTk):
             self.target_var.get(), self.style_var.get(),
             self.prompt_txt.get("1.0", "end"), self.neg_prompt_txt.get("1.0", "end"),
         )
-        self.status_var.set(update["status"])
-        if "message" in update and getattr(self, "control_q", None):
-            try: self.control_q.put_nowait(update["message"])
+        self.status_var.set(update.status)
+        if update.message is not None and getattr(self, "control_q", None):
+            try: self.control_q.put_nowait(update.message)
             except Exception: pass
 
     def _overlay_screen_rect(self) -> Dict[str, int]:

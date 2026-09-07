@@ -18,9 +18,9 @@ SOURCE = Path(__file__).resolve().parent.parent / "main_gpu_addon.py"
 TEXT = SOURCE.read_text(encoding="utf-8-sig")
 TREE = ast.parse(TEXT, filename=str(SOURCE))
 
-PLAN_DEBOUNCE_MS = load_symbols("main_gpu_addon.py", ["PLAN_DEBOUNCE_MS"])["PLAN_DEBOUNCE_MS"]
-# What `_on_prompt_changed` waits before it re-encodes a prompt on the live engine.
-PROMPT_DEBOUNCE_MS = 150
+_DELAYS = load_symbols("main_gpu_addon.py", ["PLAN_DEBOUNCE_MS", "PROMPT_DEBOUNCE_MS"])
+PLAN_DEBOUNCE_MS = _DELAYS["PLAN_DEBOUNCE_MS"]
+PROMPT_DEBOUNCE_MS = _DELAYS["PROMPT_DEBOUNCE_MS"]
 
 
 def _class(name: str) -> ast.ClassDef:
@@ -99,7 +99,7 @@ def test_the_prompt_boxes_still_debounce_at_their_own_delay():
     """Not regressed: the plan's longer wait is not imposed on the prompt controls."""
     for name in ("_on_prompt_changed", "_on_neg_prompt_changed"):
         after, = _calls_named(_method(name), "after")
-        assert after.args[0].value == PROMPT_DEBOUNCE_MS
+        assert _mentions(after, "PROMPT_DEBOUNCE_MS")
 
 
 # --- what is sent ------------------------------------------------------------
