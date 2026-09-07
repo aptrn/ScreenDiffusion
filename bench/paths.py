@@ -52,6 +52,11 @@ STABILITY_RESULTS_DIR = RESULTS_DIR / STABILITY_RESULTS_SUBDIR
 # directory rather than sitting where the selective reports reduce and quote.
 SWAP_RESULTS_SUBDIR = "swaps"
 SWAP_RESULTS_DIR = RESULTS_DIR / SWAP_RESULTS_SUBDIR
+# Capture-geometry comparisons (issue #39) are a fourth record shape - six arms in
+# one record, one per (primitive, capture size), with a per-stage cost breakdown -
+# so they get their own directory rather than sitting where another report reads.
+CAPTURE_RESULTS_SUBDIR = "capture"
+CAPTURE_RESULTS_DIR = RESULTS_DIR / CAPTURE_RESULTS_SUBDIR
 
 SD_MODELS_DIR_ENV = "SD_MODELS_DIR"
 SD_ENGINES_DIR_ENV = "SD_ENGINES_DIR"

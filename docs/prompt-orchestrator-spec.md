@@ -201,12 +201,17 @@ is rendered inside `ceil(N/K)` frames.
 **C6 — Diffusion Executor.** The existing `StreamDiffusionWrapper`, driven with
 a batch of crops instead of one full frame. Needs per-item prompt embeddings if
 different objects carry different styles (§8.3). **Implemented**: as one
-full-frame `img2img` call per frame — §8.2 chose B — and the plan's `denoise`
+`img2img` call per frame — §8.2 chose B — and the plan's `denoise`
 reaches it as a `t_index` on the live schedule (`render_plan.t_index_for_denoise`,
 whose amplitudes are held to §8.2's measured ladder by a test). Only the schedule
 *values* move, never the step count, so a plan change is a runtime update and
 never an engine rebuild. A frame whose plan selected no region costs no diffusion
-call at all.
+call at all. What that one call is *given* is the plan's `global.primitive`
+(issue #39): the whole capture squeezed onto the 512×512 canvas under `masked`, or
+one region blown up to fill it under `crop`. The capture is no longer the canvas —
+`device_compositor.to_canvas` / `crop_to_canvas` resize between them — and the
+engine is 512×512 either way, because it is 512×512 whatever a directory name
+claims (§7.2).
 
 **C7 — Compositor.** Pastes results back with feathered alpha, optional
 colour/exposure match to surrounding pixels, and optional temporal EMA to
@@ -269,7 +274,8 @@ away from the code.
     }
   ],
   "background": { "action": "passthrough", "prompt": "" },   // or "stylize"
-  "global": { "fps_target": 30, "detect_every_n": 5, "output_ema": 0.0 },   // 0.0-0.9, spec 8.5
+  "global": { "fps_target": 30, "detect_every_n": 5, "output_ema": 0.0,   // 0.0-0.9, spec 8.5
+              "primitive": "masked" },                                    // "masked" | "crop", spec 8.2
   "confidence": 1.0,
   "notes": ""
 }
@@ -1038,6 +1044,168 @@ absent, so if a dependency ever ships one this assessment fails rather than rots
 
 **This comparison happened before anything else was built**, which is what this
 section asked for.
+
+#### Re-taken at K=1, with the capture decoupled from the canvas (issue #39)
+
+The decision above was taken under a premise that has since been reversed. It ranked
+the primitives at **six objects a frame**, where A's 5.87× penalty is entirely its
+call count — and it recorded, as B's cost, exactly the thing live testing later ran
+into:
+
+> "Nor can it spend detail where it matters: the whole frame is squeezed onto one
+> 512×512 canvas, so a region occupying 45 px of a 1280 px-wide frame is diffused at
+> ~18 px and comes back with roughly that much detail."
+
+Two things changed on 2026-09-07. The product decision: **one object at high detail
+is worth more than all objects at low detail**, so K is 1. And the app's capture
+geometry stopped being the engine's canvas — a 512×512 capture window cannot get a
+whole object into frame, the engine is 512×512 whatever is captured (§7.2), and the
+frame loop resizes between them. Under `crop` that resize is of one region rather
+than of the whole frame, which is where the detail comes from.
+
+At K=1 the cost argument that decided the section above does not apply: A and B are
+**one diffusion call each**. §8.2's own table already showed it — on `identity-dog`,
+at one object, crop measured 81.75 ms/frame against masked's 85.73.
+
+The block below is generated from `bench/results/capture/`, not transcribed.
+Regenerate it with `uv run python -m bench --capture-report`; a new comparison fails
+the merge gate until it is regenerated. Every arm renders the same region of the same
+frame of the same committed clip through the same 512×512 engine, at the strength its
+own denoise sweep selected, at three capture geometries.
+
+Two things the run does *not* claim. The clip's pixels at 1920×1080 are an upscale of
+its own 1280×720, because the committed tracks are what make two arms comparable and
+regenerating one invalidates every committed comparison — so the *cost* figures are
+exact and the detail figures measure what each primitive does with one source rather
+than what a true 1080p source would give. And detection is not in the frame path
+here, for the same reason: the boxes come from the committed track.
+
+<!-- BEGIN CAPTURE GEOMETRY -->
+Measured: NVIDIA GeForce RTX 4090, engine img2img-tensorrt-512x512-b1 - one 512x512 canvas, whatever the capture is (spec 7.2). Committed clips: dog.mp4 (48 frames), people.mp4 (48 frames), resized to each capture geometry the way the worker's capture thread resizes a screen region. Every arm renders the same regions of the same frames at K=1 through the same engine at the same strength, so what differs between two rows is the primitive and the geometry.
+
+| case | arm | capture | denoise | object px | detail gain | resize in | diffuse | composite | host copy | IPC put | frame path | FPS | 30 FPS | net change | flicker | background |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| capture-dog | masked | 512x512 | 0.49 | 156 | 1.00x | 0.01 | 15.64 | 0.95 | 0.15 | 0.05 | 16.65 | 60.1 | yes | 15.8 | 5.82 | identical |
+| capture-dog | crop | 512x512 | 0.85 | 512 | 3.29x | 0.08 | 15.54 | 0.95 | 0.16 | 0.01 | 16.58 | 60.3 | yes | 15.9 | 9.72 | identical |
+| capture-dog | masked | 1280x720 | 0.85 | 99 | 0.40x | 0.11 | 17.58 | 2.21 | 0.34 | 0.01 | 19.91 | 50.2 | yes | 28.7 | 16.53 | identical |
+| capture-dog | crop | 1280x720 | 0.92 | 512 | 2.08x | 0.09 | 16.06 | 2.09 | 0.34 | 0.01 | 18.25 | 54.8 | yes | 22.6 | 14.40 | identical |
+| capture-dog | masked | 1920x1080 | 0.85 | 99 | 0.27x | 0.16 | 16.56 | 5.09 | 1.35 | 0.01 | 21.82 | 45.8 | yes | 29.0 | 16.74 | identical |
+| capture-dog | crop | 1920x1080 | 0.92 | 512 | 1.39x | 0.12 | 16.76 | 4.85 | 1.35 | 0.01 | 21.75 | 46.0 | yes | 23.4 | 14.79 | identical |
+| capture-people | masked | 512x512 | 0.32 | 123 | 1.00x | 0.01 | 15.38 | 0.46 | 0.22 | 0.12 | 15.97 | 62.6 | yes | 9.1 | 1.07 | identical |
+| capture-people | crop | 512x512 | 0.76 | 512 | 4.16x | 0.06 | 15.50 | 0.53 | 0.16 | 0.01 | 16.10 | 62.1 | yes | 8.8 | 1.30 | identical |
+| capture-people | masked | 1280x720 | 0.49 | 69 | 0.40x | 0.11 | 17.08 | 1.34 | 0.52 | 0.01 | 18.54 | 53.9 | yes | 10.0 | 1.18 | identical |
+| capture-people | crop | 1280x720 | 0.76 | 512 | 2.96x | 0.08 | 15.96 | 1.29 | 0.37 | 0.01 | 17.34 | 57.7 | yes | 9.8 | 1.62 | identical |
+| capture-people | masked | 1920x1080 | 0.49 | 69 | 0.27x | 0.14 | 17.12 | 3.32 | 0.67 | 0.01 | 20.60 | 48.5 | yes | 10.3 | 1.18 | identical |
+| capture-people | crop | 1920x1080 | 0.64 | 512 | 1.98x | 0.10 | 17.25 | 3.27 | 1.38 | 0.01 | 20.63 | 48.5 | yes | 9.0 | 1.31 | identical |
+
+**Non-target pixels stayed bit-identical to the capture** on all 576 rendered frames, at every geometry measured (1280x720, 1920x1080, 512x512) and under both primitives. The criterion does not get easier because the frame got bigger, and it did not have to.
+
+At 512x512, `crop` diffused the region at 512 px against `masked`'s 156 - 3.3x the detail - for 16.58 ms against 16.65 ms (1.00x). Visible change inside the region net of the resize control: crop 15.9/255 at strength 0.85, masked 15.8/255 at 0.49, against a 8/255 threshold. Read as the new identity in: crop 9/48, masked 23/48 frames.
+
+At 1280x720, `crop` diffused the region at 512 px against `masked`'s 99 - 5.2x the detail - for 18.25 ms against 19.91 ms (0.92x). Visible change inside the region net of the resize control: crop 22.6/255 at strength 0.92, masked 28.7/255 at 0.85, against a 8/255 threshold. Read as the new identity in: crop 10/48, masked 38/48 frames.
+
+At 1920x1080, `crop` diffused the region at 512 px against `masked`'s 99 - 5.2x the detail - for 21.75 ms against 21.82 ms (1.00x). Visible change inside the region net of the resize control: crop 23.4/255 at strength 0.92, masked 29.0/255 at 0.85, against a 8/255 threshold. Read as the new identity in: crop 9/48, masked 39/48 frames.
+
+**What 512x512 -> 1920x1080 (7.9x the pixels) cost, per stage, under `masked`:** resize in 0.01 -> 0.16 ms (19.1x); diffuse 15.64 -> 16.56 ms (1.1x); composite 0.95 -> 5.09 ms (5.3x); host copy 0.15 -> 1.35 ms (9.3x); ipc put 0.05 -> 0.01 ms (0.2x); ipc roundtrip 0.65 -> 9.03 ms (13.9x); preview 0.36 -> 10.00 ms (28.1x). The diffusion call is the one stage that *cannot* move - the canvas is fixed at 512x512 (spec 7.2), and a bare probe on this card measures it at 15.5 / 15.3 / 16.8 ms at the three geometries - so what the table shows in that column is the allocation pressure a bigger frame puts on the same call, not a bigger call. Everything else in the list is the price of the capture, and issue #31's 9.58 ms of headroom is a 512x512 figure that does not transfer.
+
+Denoise strength each arm turned out to need:
+- **masked-512x512:** t_index 40 - timestep 199, denoise strength 0.49. Selected as the least denoise at which the detector read at least 50% of the probed frames as the new identity; it changed the region by 17.7/255 - 17.7 of it net of the 0.0/255 the resize alone costs - against 0.0/255 outside it, and was read as the new identity in 2/4 probed frames.
+- **crop-512x512:** t_index 25 - timestep 499, denoise strength 0.85. Selected as the least denoise at which the detector read at least 50% of the probed frames as the new identity; it changed the region by 18.7/255 - 16.8 of it net of the 1.9/255 the resize alone costs - against 0.0/255 outside it, and was read as the new identity in 3/4 probed frames.
+- **masked-1280x720:** t_index 25 - timestep 499, denoise strength 0.85. Selected as the least denoise at which the detector read at least 50% of the probed frames as the new identity; it changed the region by 31.5/255 - 28.9 of it net of the 2.5/255 the resize alone costs - against 0.0/255 outside it, and was read as the new identity in 4/4 probed frames.
+- **crop-1280x720:** t_index 20 - timestep 599, denoise strength 0.92. Selected as the least denoise at which the detector read at least 50% of the probed frames as the new identity; it changed the region by 24.5/255 - 23.4 of it net of the 1.0/255 the resize alone costs - against 0.0/255 outside it, and was read as the new identity in 2/4 probed frames.
+- **masked-1920x1080:** t_index 25 - timestep 499, denoise strength 0.85. Selected as the least denoise at which the detector read at least 50% of the probed frames as the new identity; it changed the region by 31.9/255 - 29.4 of it net of the 2.5/255 the resize alone costs - against 0.0/255 outside it, and was read as the new identity in 4/4 probed frames.
+- **crop-1920x1080:** t_index 20 - timestep 599, denoise strength 0.92. Selected as the least denoise at which the detector read at least 50% of the probed frames as the new identity; it changed the region by 24.9/255 - 24.4 of it net of the 0.5/255 the resize alone costs - against 0.0/255 outside it, and was read as the new identity in 2/4 probed frames.
+
+30 FPS on the frame path, per arm:
+- **masked-512x512:** MET - 16.65 ms on the frame path against 33.33 ms, 60.1 FPS at 1.00 regions/frame on NVIDIA GeForce RTX 4090.
+- **crop-512x512:** MET - 16.58 ms on the frame path against 33.33 ms, 60.3 FPS at 1.00 regions/frame on NVIDIA GeForce RTX 4090.
+- **masked-1280x720:** MET - 19.91 ms on the frame path against 33.33 ms, 50.2 FPS at 1.00 regions/frame on NVIDIA GeForce RTX 4090.
+- **crop-1280x720:** MET - 18.25 ms on the frame path against 33.33 ms, 54.8 FPS at 1.00 regions/frame on NVIDIA GeForce RTX 4090.
+- **masked-1920x1080:** MET - 21.82 ms on the frame path against 33.33 ms, 45.8 FPS at 1.00 regions/frame on NVIDIA GeForce RTX 4090.
+- **crop-1920x1080:** MET - 21.75 ms on the frame path against 33.33 ms, 46.0 FPS at 1.00 regions/frame on NVIDIA GeForce RTX 4090.
+
+Detection is **not** in these figures: every arm reads its boxes from the committed track, which is what makes two arms comparable (issue #5's second trap). Spec 8.8's cadence sweep measures detection at ~4.3 ms per frame amortised at `detect_every_n` 5 on this card at 512x512, so an arm with less than that in hand is not a 30 FPS claim about the shipped app.
+
+**Recommended for capture-dog on NVIDIA GeForce RTX 4090: `masked-1280x720`** - the region diffused at 99 px (0.40x its size in the capture), 19.91 ms on the frame path (50.2 FPS), background identical. It is the most canvas an object got among the arms that fit the budget and expressed the case. It is **not** a recommendation against a larger capture: under `masked` the object keeps the same fraction of a frame that is squeezed onto one canvas, so it lands on the same canvas pixels either way. Detail therefore cannot separate the geometries and the tie falls to cost. What 1920x1080 buys instead is field of view - a screen region big enough to hold the object at all, which is what issue #39 was opened about and the one thing no metric here scores - and what it costs is 1.91 ms/frame (21.82 ms, 45.8 FPS).
+
+At 512x512, `crop` diffused the region at 512 px against `masked`'s 123 - 4.2x the detail - for 16.10 ms against 15.97 ms (1.01x). Visible change inside the region net of the resize control: crop 8.8/255 at strength 0.76, masked 9.1/255 at 0.32, against a 8/255 threshold. Both expressed the case.
+
+At 1280x720, `crop` diffused the region at 512 px against `masked`'s 69 - 7.4x the detail - for 17.34 ms against 18.54 ms (0.94x). Visible change inside the region net of the resize control: crop 9.8/255 at strength 0.76, masked 10.0/255 at 0.49, against a 8/255 threshold. Both expressed the case.
+
+At 1920x1080, `crop` diffused the region at 512 px against `masked`'s 69 - 7.4x the detail - for 20.63 ms against 20.60 ms (1.00x). Visible change inside the region net of the resize control: crop 9.0/255 at strength 0.64, masked 10.3/255 at 0.49, against a 8/255 threshold. Both expressed the case.
+
+**What 512x512 -> 1920x1080 (7.9x the pixels) cost, per stage, under `masked`:** resize in 0.01 -> 0.14 ms (20.9x); diffuse 15.38 -> 17.12 ms (1.1x); composite 0.46 -> 3.32 ms (7.1x); host copy 0.22 -> 0.67 ms (3.1x); ipc put 0.12 -> 0.01 ms (0.1x); ipc roundtrip 1.28 -> 9.95 ms (7.8x); preview 0.37 -> 9.80 ms (26.2x). The diffusion call is the one stage that *cannot* move - the canvas is fixed at 512x512 (spec 7.2), and a bare probe on this card measures it at 15.5 / 15.3 / 16.8 ms at the three geometries - so what the table shows in that column is the allocation pressure a bigger frame puts on the same call, not a bigger call. Everything else in the list is the price of the capture, and issue #31's 9.58 ms of headroom is a 512x512 figure that does not transfer.
+
+Denoise strength each arm turned out to need:
+- **masked-512x512:** t_index 45 - timestep 99, denoise strength 0.32. Selected as the least denoise whose mean absolute change inside the region, net of the resize control, reached 8/255; it changed the region by 9.1/255 - 9.1 of it net of the 0.0/255 the resize alone costs - against 0.0/255 outside it.
+- **crop-512x512:** t_index 30 - timestep 399, denoise strength 0.76. Selected as the least denoise whose mean absolute change inside the region, net of the resize control, reached 8/255; it changed the region by 11.2/255 - 9.5 of it net of the 1.6/255 the resize alone costs - against 0.0/255 outside it.
+- **masked-1280x720:** t_index 40 - timestep 199, denoise strength 0.49. Selected as the least denoise whose mean absolute change inside the region, net of the resize control, reached 8/255; it changed the region by 12.2/255 - 9.7 of it net of the 2.6/255 the resize alone costs - against 0.0/255 outside it.
+- **crop-1280x720:** t_index 30 - timestep 399, denoise strength 0.76. Selected as the least denoise whose mean absolute change inside the region, net of the resize control, reached 8/255; it changed the region by 10.8/255 - 9.9 of it net of the 0.9/255 the resize alone costs - against 0.0/255 outside it.
+- **masked-1920x1080:** t_index 40 - timestep 199, denoise strength 0.49. Selected as the least denoise whose mean absolute change inside the region, net of the resize control, reached 8/255; it changed the region by 12.2/255 - 9.9 of it net of the 2.3/255 the resize alone costs - against 0.0/255 outside it.
+- **crop-1920x1080:** t_index 35 - timestep 299, denoise strength 0.64. Selected as the least denoise whose mean absolute change inside the region, net of the resize control, reached 8/255; it changed the region by 9.4/255 - 9.0 of it net of the 0.4/255 the resize alone costs - against 0.0/255 outside it.
+
+30 FPS on the frame path, per arm:
+- **masked-512x512:** MET - 15.97 ms on the frame path against 33.33 ms, 62.6 FPS at 1.00 regions/frame on NVIDIA GeForce RTX 4090.
+- **crop-512x512:** MET - 16.10 ms on the frame path against 33.33 ms, 62.1 FPS at 1.00 regions/frame on NVIDIA GeForce RTX 4090.
+- **masked-1280x720:** MET - 18.54 ms on the frame path against 33.33 ms, 53.9 FPS at 1.00 regions/frame on NVIDIA GeForce RTX 4090.
+- **crop-1280x720:** MET - 17.34 ms on the frame path against 33.33 ms, 57.7 FPS at 1.00 regions/frame on NVIDIA GeForce RTX 4090.
+- **masked-1920x1080:** MET - 20.60 ms on the frame path against 33.33 ms, 48.5 FPS at 1.00 regions/frame on NVIDIA GeForce RTX 4090.
+- **crop-1920x1080:** MET - 20.63 ms on the frame path against 33.33 ms, 48.5 FPS at 1.00 regions/frame on NVIDIA GeForce RTX 4090.
+
+Detection is **not** in these figures: every arm reads its boxes from the committed track, which is what makes two arms comparable (issue #5's second trap). Spec 8.8's cadence sweep measures detection at ~4.3 ms per frame amortised at `detect_every_n` 5 on this card at 512x512, so an arm with less than that in hand is not a 30 FPS claim about the shipped app.
+
+**Recommended for capture-people on NVIDIA GeForce RTX 4090: `crop-512x512`** - the region diffused at 512 px (4.16x its size in the capture), 16.10 ms on the frame path (62.1 FPS), background identical. It is the most canvas an object got among the arms that fit the budget and expressed the case. It is **not** a recommendation against a larger capture: under `crop` the object gets the whole canvas whatever is captured. Detail therefore cannot separate the geometries and the tie falls to cost. What 1920x1080 buys instead is field of view - a screen region big enough to hold the object at all, which is what issue #39 was opened about and the one thing no metric here scores - and what it costs is 4.54 ms/frame (20.63 ms, 48.5 FPS).
+
+Side-by-side clips for human judgement, under `bench/results/capture/`: `capture-dog-20260907-173054Z-triptych.mp4`, `capture-people-20260907-172929Z-triptych.mp4`. **The metric ranks cost, detail and steadiness, not beauty** - a human still has to watch these and confirm the crop's upscaled invention is acceptable.
+<!-- END CAPTURE GEOMETRY -->
+
+#### What this changed about the decision above
+
+**The decision splits by case, and the 5.87× that made it does not survive K=1.**
+At one object A and B are one diffusion call each and cost within 8% of one another
+at every geometry measured (0.92–1.01×). What separates them is what they spend that
+call on.
+
+- **For the priority case — a sub-region restyle — `crop` is the primitive.** It
+  diffuses the region at the full 512 px against masked's 69 at 1080p (7.4×), it
+  expresses the case (9.0/255 net against an 8/255 threshold), and it costs 20.63 ms
+  against masked's 20.60. That is the limitation §8.2 recorded and accepted,
+  removed, at no measurable cost in milliseconds.
+- **For the identity change `masked` still wins, and by the margin §8.2 already
+  found.** Asked whether the rendered subject is a cat, YOLO-World read masked's
+  output as one in 38–39 of 48 frames at 720p and 1080p, and crop's in 9–10 — at
+  crop's *own* selected strength, on the same frames. The reason is the one this
+  section already names: a 424×280 box stretched onto a square canvas comes back at
+  the wrong aspect and the wrong scale, and a larger capture does not fix a
+  distortion that is proportional. `capture-dog-*-triptych.jpg` is what it looks
+  like. **Crop lost `identity-dog` at the new geometry too, and that is the
+  finding.**
+
+**Raising the capture on its own would have been a regression, and the table shows
+it.** Under `masked` the same object drops from 123 canvas px at 512×512 to 69 at
+1080p — 0.27× its own size in the frame — because the whole frame is squeezed onto
+one canvas whatever the frame is. Under `crop` it is 512 px at every geometry. That
+is why the capture size and `global.primitive` landed in one change.
+
+**What the larger capture costs is the frame's periphery, not its centre.** Per
+stage, 512×512 → 1920×1080 under `masked` on the priority case: the resize onto the
+canvas 0.01 → 0.14 ms, the composite 0.46 → 3.32 ms, the device-to-host copy 0.22 →
+0.67 ms, and the diffusion call flat. In the GUI process, which the frame budget
+does not pay but a viewer does: the IPC round trip 1.28 → 9.95 ms and the preview
+0.37 → 9.80 ms. Issue #31's 9.58 ms of headroom was a 512×512 figure and does not
+transfer, which the trap predicted; what does transfer is that **30 FPS survives**
+— 20.60 ms on the frame path at 1080p at 1.00 region/frame on an RTX 4090, leaving
+12.7 ms for the ~4.3 ms/frame §8.8 measures detection at.
+
+**What ships, and what does not.** The lever is a plan field (`global.primitive`)
+and a GUI box — *Detail*, beside Target and Style, which sets the primitive and
+`max_instances` together because `crop` above one slot falls back to `masked` on
+every frame. The **defaults do not move**: `masked`, `max_instances: 6`, a 512×512
+capture. Every committed measurement in §7.4, §8.5, §8.8 and §8.9 was taken there,
+and adopting crop as the default means moving `max_instances` to 1 with it — one
+product decision and a re-measurement of those four sections, which is its own
+change. The recommendation this run makes is on the record; the field behind it is
+not moved by it.
 
 ### 8.3 Per-object prompts
 

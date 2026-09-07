@@ -266,7 +266,8 @@ def run_swap(
             selection = scheduler.select(tracks, frame_plan.plan, canvas, canvas)
             render = compositor.frame(selection, canvas, canvas)
             output, frame_ms, _ = render_frame(stream, tensor, compositor, render,
-                                               sources[index], noise, selection)
+                                               sources[index], noise, selection,
+                                               canvas)
             finished_at.append(time.perf_counter())
             outputs.append(output)
             per_frame_ms.append(frame_ms)

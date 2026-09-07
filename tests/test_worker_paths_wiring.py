@@ -85,5 +85,8 @@ def test_the_gui_fills_every_positional_parameter():
 
 
 def test_the_gui_passes_the_resolved_engines_root():
-    last = _spawn_args_tuple().elts[-1]
-    assert "resolve_engines_dir" in _names_used_in(last)
+    """By the parameter's own position rather than by the tuple's end: the worker
+    has taken arguments after `engine_dir` since issue #39."""
+    names = [argument.arg for argument in WORKER.args.args]
+    passed = _spawn_args_tuple().elts[names.index("engine_dir")]
+    assert "resolve_engines_dir" in _names_used_in(passed)

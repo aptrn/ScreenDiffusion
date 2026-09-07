@@ -1,0 +1,2340 @@
+{
+  "arms": [
+    {
+      "background": {
+        "background_pixels": 245416,
+        "frames": 48,
+        "identical_frames": 48,
+        "passed": true,
+        "statement": "48/48 frames left every pixel outside the rendered regions exactly as captured (245416 background pixels on the frame with the most painted)",
+        "worst_pixels_changed": 0
+      },
+      "capture_height": 512,
+      "capture_width": 512,
+      "clip_file": "",
+      "crop_frames": 0,
+      "denoise": {
+        "kind": "restyle",
+        "met": true,
+        "points": [
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 9.0712,
+            "outside_change": 0.0,
+            "region_change": 9.0712,
+            "resample_change": 0.0,
+            "strength": 0.323323,
+            "t_index": 45,
+            "timestep": 99
+          },
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 11.5996,
+            "outside_change": 0.0,
+            "region_change": 11.5996,
+            "resample_change": 0.0,
+            "strength": 0.494734,
+            "t_index": 40,
+            "timestep": 199
+          },
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 14.1608,
+            "outside_change": 0.0,
+            "region_change": 14.1608,
+            "resample_change": 0.0,
+            "strength": 0.638606,
+            "t_index": 35,
+            "timestep": 299
+          },
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 16.6576,
+            "outside_change": 0.0,
+            "region_change": 16.6576,
+            "resample_change": 0.0,
+            "strength": 0.757571,
+            "t_index": 30,
+            "timestep": 399
+          },
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 20.5483,
+            "outside_change": 0.0,
+            "region_change": 20.5483,
+            "resample_change": 0.0,
+            "strength": 0.8499,
+            "t_index": 25,
+            "timestep": 499
+          },
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 24.1677,
+            "outside_change": 0.0,
+            "region_change": 24.1677,
+            "resample_change": 0.0,
+            "strength": 0.915559,
+            "t_index": 20,
+            "timestep": 599
+          }
+        ],
+        "rule": "the least denoise whose mean absolute change inside the region, net of the resize control, reached 8/255",
+        "statement": "t_index 45 - timestep 99, denoise strength 0.32. Selected as the least denoise whose mean absolute change inside the region, net of the resize control, reached 8/255; it changed the region by 9.1/255 - 9.1 of it net of the 0.0/255 the resize alone costs - against 0.0/255 outside it.",
+        "strength": 0.323323,
+        "t_index": 45,
+        "timestep": 99
+      },
+      "denoise_points": [
+        {
+          "frames": 4,
+          "identity_frames": null,
+          "identity_hits": null,
+          "net_region_change": 24.1677,
+          "outside_change": 0.0,
+          "region_change": 24.1677,
+          "resample_change": 0.0,
+          "strength": 0.915559,
+          "t_index": 20,
+          "timestep": 599
+        },
+        {
+          "frames": 4,
+          "identity_frames": null,
+          "identity_hits": null,
+          "net_region_change": 20.5483,
+          "outside_change": 0.0,
+          "region_change": 20.5483,
+          "resample_change": 0.0,
+          "strength": 0.8499,
+          "t_index": 25,
+          "timestep": 499
+        },
+        {
+          "frames": 4,
+          "identity_frames": null,
+          "identity_hits": null,
+          "net_region_change": 16.6576,
+          "outside_change": 0.0,
+          "region_change": 16.6576,
+          "resample_change": 0.0,
+          "strength": 0.757571,
+          "t_index": 30,
+          "timestep": 399
+        },
+        {
+          "frames": 4,
+          "identity_frames": null,
+          "identity_hits": null,
+          "net_region_change": 14.1608,
+          "outside_change": 0.0,
+          "region_change": 14.1608,
+          "resample_change": 0.0,
+          "strength": 0.638606,
+          "t_index": 35,
+          "timestep": 299
+        },
+        {
+          "frames": 4,
+          "identity_frames": null,
+          "identity_hits": null,
+          "net_region_change": 11.5996,
+          "outside_change": 0.0,
+          "region_change": 11.5996,
+          "resample_change": 0.0,
+          "strength": 0.494734,
+          "t_index": 40,
+          "timestep": 199
+        },
+        {
+          "frames": 4,
+          "identity_frames": null,
+          "identity_hits": null,
+          "net_region_change": 9.0712,
+          "outside_change": 0.0,
+          "region_change": 9.0712,
+          "resample_change": 0.0,
+          "strength": 0.323323,
+          "t_index": 45,
+          "timestep": 99
+        }
+      ],
+      "detail": {
+        "canvas_px": 123.17,
+        "gain": 1.0,
+        "region_px": 123.17,
+        "statement": "a region 123 px across in a 512 px frame is diffused at 123 px under `masked`"
+      },
+      "diffusion_calls": 48,
+      "flicker": {
+        "frame_pixels": 262144,
+        "mean_abs_diff": 1.06779,
+        "note": "mean absolute difference between consecutive outputs over the 14030 pixels per pair that were static in the source (within 2/255) and painted in both frames; 0-255 units, lower is steadier",
+        "pairs": 47,
+        "pairs_scored": 47,
+        "per_pair_abs_diff": [
+          0.975881,
+          0.894396,
+          0.725472,
+          0.980168,
+          1.072633,
+          1.064286,
+          1.342571,
+          1.172188,
+          1.517324,
+          1.243385,
+          1.000805,
+          0.833775,
+          0.887382,
+          1.04843,
+          1.215276,
+          0.981451,
+          0.895085,
+          0.987851,
+          1.423655,
+          1.058661,
+          1.044969,
+          1.447341,
+          1.349447,
+          1.200716,
+          0.878503,
+          0.968583,
+          1.088854,
+          0.895572,
+          0.999394,
+          0.821673,
+          1.028883,
+          1.29225,
+          0.947635,
+          1.053617,
+          1.045894,
+          1.496095,
+          1.12307,
+          0.973847,
+          1.016188,
+          1.207628,
+          1.084618,
+          1.048442,
+          0.82293,
+          0.878398,
+          1.056629,
+          1.113514,
+          0.98076
+        ],
+        "static_fraction": 0.053518,
+        "static_pixels": 14030,
+        "threshold": 2.0
+      },
+      "fps": 62.6013,
+      "frames": 48,
+      "identity": null,
+      "latency": {
+        "max_ms": 16.6234,
+        "mean_ms": 15.8712,
+        "median_ms": 15.8102,
+        "min_ms": 15.5306,
+        "p95_ms": 16.4282,
+        "stdev_ms": 0.2736
+      },
+      "meets_budget": true,
+      "ms_per_frame": 15.9741,
+      "name": "masked-512x512",
+      "net_region_change": 9.0658,
+      "primitive": "masked",
+      "region_change": 9.0658,
+      "regions_per_frame": 1.0,
+      "resample_change": 0.0,
+      "stages": {
+        "composite_ms": 0.4647,
+        "diffuse_ms": 15.3847,
+        "frame_path_ms": 15.9741,
+        "host_copy_ms": 0.2193,
+        "ipc_put_ms": 0.1178,
+        "ipc_roundtrip_ms": 1.2797,
+        "preview_ms": 0.3736,
+        "resize_in_ms": 0.0069
+      },
+      "visible": true
+    },
+    {
+      "background": {
+        "background_pixels": 245416,
+        "frames": 48,
+        "identical_frames": 48,
+        "passed": true,
+        "statement": "48/48 frames left every pixel outside the rendered regions exactly as captured (245416 background pixels on the frame with the most painted)",
+        "worst_pixels_changed": 0
+      },
+      "capture_height": 512,
+      "capture_width": 512,
+      "clip_file": "",
+      "crop_frames": 48,
+      "denoise": {
+        "kind": "restyle",
+        "met": true,
+        "points": [
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 4.3378,
+            "outside_change": 0.0,
+            "region_change": 5.9502,
+            "resample_change": 1.6124,
+            "strength": 0.323323,
+            "t_index": 45,
+            "timestep": 99
+          },
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 5.4907,
+            "outside_change": 0.0,
+            "region_change": 7.1031,
+            "resample_change": 1.6124,
+            "strength": 0.494734,
+            "t_index": 40,
+            "timestep": 199
+          },
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 7.2529,
+            "outside_change": 0.0,
+            "region_change": 8.8653,
+            "resample_change": 1.6124,
+            "strength": 0.638606,
+            "t_index": 35,
+            "timestep": 299
+          },
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 9.5388,
+            "outside_change": 0.0,
+            "region_change": 11.1512,
+            "resample_change": 1.6124,
+            "strength": 0.757571,
+            "t_index": 30,
+            "timestep": 399
+          },
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 12.1208,
+            "outside_change": 0.0,
+            "region_change": 13.7332,
+            "resample_change": 1.6124,
+            "strength": 0.8499,
+            "t_index": 25,
+            "timestep": 499
+          },
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 14.7158,
+            "outside_change": 0.0,
+            "region_change": 16.3282,
+            "resample_change": 1.6124,
+            "strength": 0.915559,
+            "t_index": 20,
+            "timestep": 599
+          }
+        ],
+        "rule": "the least denoise whose mean absolute change inside the region, net of the resize control, reached 8/255",
+        "statement": "t_index 30 - timestep 399, denoise strength 0.76. Selected as the least denoise whose mean absolute change inside the region, net of the resize control, reached 8/255; it changed the region by 11.2/255 - 9.5 of it net of the 1.6/255 the resize alone costs - against 0.0/255 outside it.",
+        "strength": 0.757571,
+        "t_index": 30,
+        "timestep": 399
+      },
+      "denoise_points": [
+        {
+          "frames": 4,
+          "identity_frames": null,
+          "identity_hits": null,
+          "net_region_change": 14.7158,
+          "outside_change": 0.0,
+          "region_change": 16.3282,
+          "resample_change": 1.6124,
+          "strength": 0.915559,
+          "t_index": 20,
+          "timestep": 599
+        },
+        {
+          "frames": 4,
+          "identity_frames": null,
+          "identity_hits": null,
+          "net_region_change": 12.1208,
+          "outside_change": 0.0,
+          "region_change": 13.7332,
+          "resample_change": 1.6124,
+          "strength": 0.8499,
+          "t_index": 25,
+          "timestep": 499
+        },
+        {
+          "frames": 4,
+          "identity_frames": null,
+          "identity_hits": null,
+          "net_region_change": 9.5388,
+          "outside_change": 0.0,
+          "region_change": 11.1512,
+          "resample_change": 1.6124,
+          "strength": 0.757571,
+          "t_index": 30,
+          "timestep": 399
+        },
+        {
+          "frames": 4,
+          "identity_frames": null,
+          "identity_hits": null,
+          "net_region_change": 7.2529,
+          "outside_change": 0.0,
+          "region_change": 8.8653,
+          "resample_change": 1.6124,
+          "strength": 0.638606,
+          "t_index": 35,
+          "timestep": 299
+        },
+        {
+          "frames": 4,
+          "identity_frames": null,
+          "identity_hits": null,
+          "net_region_change": 5.4907,
+          "outside_change": 0.0,
+          "region_change": 7.1031,
+          "resample_change": 1.6124,
+          "strength": 0.494734,
+          "t_index": 40,
+          "timestep": 199
+        },
+        {
+          "frames": 4,
+          "identity_frames": null,
+          "identity_hits": null,
+          "net_region_change": 4.3378,
+          "outside_change": 0.0,
+          "region_change": 5.9502,
+          "resample_change": 1.6124,
+          "strength": 0.323323,
+          "t_index": 45,
+          "timestep": 99
+        }
+      ],
+      "detail": {
+        "canvas_px": 512.0,
+        "gain": 4.157,
+        "region_px": 123.17,
+        "statement": "a region 123 px across in a 512 px frame is diffused at 512 px under `crop`"
+      },
+      "diffusion_calls": 48,
+      "flicker": {
+        "frame_pixels": 262144,
+        "mean_abs_diff": 1.302932,
+        "note": "mean absolute difference between consecutive outputs over the 14030 pixels per pair that were static in the source (within 2/255) and painted in both frames; 0-255 units, lower is steadier",
+        "pairs": 47,
+        "pairs_scored": 47,
+        "per_pair_abs_diff": [
+          1.039815,
+          2.407741,
+          0.799411,
+          2.661051,
+          0.911566,
+          1.156581,
+          1.441568,
+          1.357569,
+          1.600806,
+          1.366543,
+          0.965083,
+          0.792264,
+          0.880127,
+          0.790309,
+          2.838264,
+          1.10612,
+          0.540445,
+          1.014718,
+          2.652008,
+          0.905107,
+          0.904012,
+          0.793986,
+          1.246511,
+          0.822133,
+          0.834165,
+          0.862843,
+          0.865232,
+          1.008706,
+          0.695125,
+          0.858035,
+          0.903085,
+          2.671091,
+          0.83337,
+          0.940531,
+          1.527734,
+          1.046166,
+          1.56151,
+          0.852564,
+          1.064628,
+          2.006919,
+          1.024082,
+          2.428344,
+          3.154596,
+          1.239454,
+          1.293385,
+          1.265135,
+          1.307379
+        ],
+        "static_fraction": 0.053518,
+        "static_pixels": 14030,
+        "threshold": 2.0
+      },
+      "fps": 62.1288,
+      "frames": 48,
+      "identity": null,
+      "latency": {
+        "max_ms": 18.1173,
+        "mean_ms": 16.1026,
+        "median_ms": 16.0414,
+        "min_ms": 15.5794,
+        "p95_ms": 16.5465,
+        "stdev_ms": 0.4194
+      },
+      "meets_budget": true,
+      "ms_per_frame": 16.0956,
+      "name": "crop-512x512",
+      "net_region_change": 8.7876,
+      "primitive": "crop",
+      "region_change": 10.3735,
+      "regions_per_frame": 1.0,
+      "resample_change": 1.5859,
+      "stages": {
+        "composite_ms": 0.5273,
+        "diffuse_ms": 15.4963,
+        "frame_path_ms": 16.0956,
+        "host_copy_ms": 0.1641,
+        "ipc_put_ms": 0.0083,
+        "ipc_roundtrip_ms": 0.5385,
+        "preview_ms": 0.3577,
+        "resize_in_ms": 0.0637
+      },
+      "visible": true
+    },
+    {
+      "background": {
+        "background_pixels": 863299,
+        "frames": 48,
+        "identical_frames": 48,
+        "passed": true,
+        "statement": "48/48 frames left every pixel outside the rendered regions exactly as captured (863299 background pixels on the frame with the most painted)",
+        "worst_pixels_changed": 0
+      },
+      "capture_height": 720,
+      "capture_width": 1280,
+      "clip_file": "",
+      "crop_frames": 0,
+      "denoise": {
+        "kind": "restyle",
+        "met": true,
+        "points": [
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 7.2356,
+            "outside_change": 0.0,
+            "region_change": 9.831,
+            "resample_change": 2.5954,
+            "strength": 0.323323,
+            "t_index": 45,
+            "timestep": 99
+          },
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 9.6506,
+            "outside_change": 0.0,
+            "region_change": 12.246,
+            "resample_change": 2.5954,
+            "strength": 0.494734,
+            "t_index": 40,
+            "timestep": 199
+          },
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 12.2284,
+            "outside_change": 0.0,
+            "region_change": 14.8238,
+            "resample_change": 2.5954,
+            "strength": 0.638606,
+            "t_index": 35,
+            "timestep": 299
+          },
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 14.659,
+            "outside_change": 0.0,
+            "region_change": 17.2544,
+            "resample_change": 2.5954,
+            "strength": 0.757571,
+            "t_index": 30,
+            "timestep": 399
+          },
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 18.7808,
+            "outside_change": 0.0,
+            "region_change": 21.3762,
+            "resample_change": 2.5954,
+            "strength": 0.8499,
+            "t_index": 25,
+            "timestep": 499
+          },
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 22.9848,
+            "outside_change": 0.0,
+            "region_change": 25.5802,
+            "resample_change": 2.5954,
+            "strength": 0.915559,
+            "t_index": 20,
+            "timestep": 599
+          }
+        ],
+        "rule": "the least denoise whose mean absolute change inside the region, net of the resize control, reached 8/255",
+        "statement": "t_index 40 - timestep 199, denoise strength 0.49. Selected as the least denoise whose mean absolute change inside the region, net of the resize control, reached 8/255; it changed the region by 12.2/255 - 9.7 of it net of the 2.6/255 the resize alone costs - against 0.0/255 outside it.",
+        "strength": 0.494734,
+        "t_index": 40,
+        "timestep": 199
+      },
+      "denoise_points": [
+        {
+          "frames": 4,
+          "identity_frames": null,
+          "identity_hits": null,
+          "net_region_change": 22.9848,
+          "outside_change": 0.0,
+          "region_change": 25.5802,
+          "resample_change": 2.5954,
+          "strength": 0.915559,
+          "t_index": 20,
+          "timestep": 599
+        },
+        {
+          "frames": 4,
+          "identity_frames": null,
+          "identity_hits": null,
+          "net_region_change": 18.7808,
+          "outside_change": 0.0,
+          "region_change": 21.3762,
+          "resample_change": 2.5954,
+          "strength": 0.8499,
+          "t_index": 25,
+          "timestep": 499
+        },
+        {
+          "frames": 4,
+          "identity_frames": null,
+          "identity_hits": null,
+          "net_region_change": 14.659,
+          "outside_change": 0.0,
+          "region_change": 17.2544,
+          "resample_change": 2.5954,
+          "strength": 0.757571,
+          "t_index": 30,
+          "timestep": 399
+        },
+        {
+          "frames": 4,
+          "identity_frames": null,
+          "identity_hits": null,
+          "net_region_change": 12.2284,
+          "outside_change": 0.0,
+          "region_change": 14.8238,
+          "resample_change": 2.5954,
+          "strength": 0.638606,
+          "t_index": 35,
+          "timestep": 299
+        },
+        {
+          "frames": 4,
+          "identity_frames": null,
+          "identity_hits": null,
+          "net_region_change": 9.6506,
+          "outside_change": 0.0,
+          "region_change": 12.246,
+          "resample_change": 2.5954,
+          "strength": 0.494734,
+          "t_index": 40,
+          "timestep": 199
+        },
+        {
+          "frames": 4,
+          "identity_frames": null,
+          "identity_hits": null,
+          "net_region_change": 7.2356,
+          "outside_change": 0.0,
+          "region_change": 9.831,
+          "resample_change": 2.5954,
+          "strength": 0.323323,
+          "t_index": 45,
+          "timestep": 99
+        }
+      ],
+      "detail": {
+        "canvas_px": 69.2,
+        "gain": 0.4,
+        "region_px": 173.0,
+        "statement": "a region 173 px across in a 1280 px frame is diffused at 69 px under `masked`"
+      },
+      "diffusion_calls": 48,
+      "flicker": {
+        "frame_pixels": 921600,
+        "mean_abs_diff": 1.184035,
+        "note": "mean absolute difference between consecutive outputs over the 47913 pixels per pair that were static in the source (within 2/255) and painted in both frames; 0-255 units, lower is steadier",
+        "pairs": 47,
+        "pairs_scored": 47,
+        "per_pair_abs_diff": [
+          1.087572,
+          0.97644,
+          0.871541,
+          1.151265,
+          0.970905,
+          1.027379,
+          1.393523,
+          1.379437,
+          1.486006,
+          1.216444,
+          1.218179,
+          1.03107,
+          1.139787,
+          1.049065,
+          1.083979,
+          1.34174,
+          1.131713,
+          0.988745,
+          1.46549,
+          0.985904,
+          1.125051,
+          1.05822,
+          1.529581,
+          1.660003,
+          1.070774,
+          1.157047,
+          1.000993,
+          1.228131,
+          1.080572,
+          1.092673,
+          1.202406,
+          1.798286,
+          1.150682,
+          1.126956,
+          1.045398,
+          1.626756,
+          1.552238,
+          1.204127,
+          1.055141,
+          1.307136,
+          1.257579,
+          1.105559,
+          0.957494,
+          1.083253,
+          1.123075,
+          1.095409,
+          0.958933
+        ],
+        "static_fraction": 0.051989,
+        "static_pixels": 47913,
+        "threshold": 2.0
+      },
+      "fps": 53.9465,
+      "frames": 48,
+      "identity": null,
+      "latency": {
+        "max_ms": 29.3882,
+        "mean_ms": 18.5469,
+        "median_ms": 17.5946,
+        "min_ms": 16.3678,
+        "p95_ms": 27.8057,
+        "stdev_ms": 3.276
+      },
+      "meets_budget": true,
+      "ms_per_frame": 18.5369,
+      "name": "masked-1280x720",
+      "net_region_change": 10.0247,
+      "primitive": "masked",
+      "region_change": 12.6011,
+      "regions_per_frame": 1.0,
+      "resample_change": 2.5764,
+      "stages": {
+        "composite_ms": 1.3374,
+        "diffuse_ms": 17.082,
+        "frame_path_ms": 18.5369,
+        "host_copy_ms": 0.5188,
+        "ipc_put_ms": 0.0106,
+        "ipc_roundtrip_ms": 4.6379,
+        "preview_ms": 5.1978,
+        "resize_in_ms": 0.1069
+      },
+      "visible": true
+    },
+    {
+      "background": {
+        "background_pixels": 863299,
+        "frames": 48,
+        "identical_frames": 48,
+        "passed": true,
+        "statement": "48/48 frames left every pixel outside the rendered regions exactly as captured (863299 background pixels on the frame with the most painted)",
+        "worst_pixels_changed": 0
+      },
+      "capture_height": 720,
+      "capture_width": 1280,
+      "clip_file": "",
+      "crop_frames": 48,
+      "denoise": {
+        "kind": "restyle",
+        "met": true,
+        "points": [
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 5.4733,
+            "outside_change": 0.0,
+            "region_change": 6.3921,
+            "resample_change": 0.9188,
+            "strength": 0.323323,
+            "t_index": 45,
+            "timestep": 99
+          },
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 6.6061,
+            "outside_change": 0.0,
+            "region_change": 7.5249,
+            "resample_change": 0.9188,
+            "strength": 0.494734,
+            "t_index": 40,
+            "timestep": 199
+          },
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 7.9815,
+            "outside_change": 0.0,
+            "region_change": 8.9003,
+            "resample_change": 0.9188,
+            "strength": 0.638606,
+            "t_index": 35,
+            "timestep": 299
+          },
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 9.8929,
+            "outside_change": 0.0,
+            "region_change": 10.8117,
+            "resample_change": 0.9188,
+            "strength": 0.757571,
+            "t_index": 30,
+            "timestep": 399
+          },
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 12.9475,
+            "outside_change": 0.0,
+            "region_change": 13.8663,
+            "resample_change": 0.9188,
+            "strength": 0.8499,
+            "t_index": 25,
+            "timestep": 499
+          },
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 16.1973,
+            "outside_change": 0.0,
+            "region_change": 17.1161,
+            "resample_change": 0.9188,
+            "strength": 0.915559,
+            "t_index": 20,
+            "timestep": 599
+          }
+        ],
+        "rule": "the least denoise whose mean absolute change inside the region, net of the resize control, reached 8/255",
+        "statement": "t_index 30 - timestep 399, denoise strength 0.76. Selected as the least denoise whose mean absolute change inside the region, net of the resize control, reached 8/255; it changed the region by 10.8/255 - 9.9 of it net of the 0.9/255 the resize alone costs - against 0.0/255 outside it.",
+        "strength": 0.757571,
+        "t_index": 30,
+        "timestep": 399
+      },
+      "denoise_points": [
+        {
+          "frames": 4,
+          "identity_frames": null,
+          "identity_hits": null,
+          "net_region_change": 16.1973,
+          "outside_change": 0.0,
+          "region_change": 17.1161,
+          "resample_change": 0.9188,
+          "strength": 0.915559,
+          "t_index": 20,
+          "timestep": 599
+        },
+        {
+          "frames": 4,
+          "identity_frames": null,
+          "identity_hits": null,
+          "net_region_change": 12.9475,
+          "outside_change": 0.0,
+          "region_change": 13.8663,
+          "resample_change": 0.9188,
+          "strength": 0.8499,
+          "t_index": 25,
+          "timestep": 499
+        },
+        {
+          "frames": 4,
+          "identity_frames": null,
+          "identity_hits": null,
+          "net_region_change": 9.8929,
+          "outside_change": 0.0,
+          "region_change": 10.8117,
+          "resample_change": 0.9188,
+          "strength": 0.757571,
+          "t_index": 30,
+          "timestep": 399
+        },
+        {
+          "frames": 4,
+          "identity_frames": null,
+          "identity_hits": null,
+          "net_region_change": 7.9815,
+          "outside_change": 0.0,
+          "region_change": 8.9003,
+          "resample_change": 0.9188,
+          "strength": 0.638606,
+          "t_index": 35,
+          "timestep": 299
+        },
+        {
+          "frames": 4,
+          "identity_frames": null,
+          "identity_hits": null,
+          "net_region_change": 6.6061,
+          "outside_change": 0.0,
+          "region_change": 7.5249,
+          "resample_change": 0.9188,
+          "strength": 0.494734,
+          "t_index": 40,
+          "timestep": 199
+        },
+        {
+          "frames": 4,
+          "identity_frames": null,
+          "identity_hits": null,
+          "net_region_change": 5.4733,
+          "outside_change": 0.0,
+          "region_change": 6.3921,
+          "resample_change": 0.9188,
+          "strength": 0.323323,
+          "t_index": 45,
+          "timestep": 99
+        }
+      ],
+      "detail": {
+        "canvas_px": 512.0,
+        "gain": 2.96,
+        "region_px": 173.0,
+        "statement": "a region 173 px across in a 1280 px frame is diffused at 512 px under `crop`"
+      },
+      "diffusion_calls": 48,
+      "flicker": {
+        "frame_pixels": 921600,
+        "mean_abs_diff": 1.61606,
+        "note": "mean absolute difference between consecutive outputs over the 47913 pixels per pair that were static in the source (within 2/255) and painted in both frames; 0-255 units, lower is steadier",
+        "pairs": 47,
+        "pairs_scored": 47,
+        "per_pair_abs_diff": [
+          1.528332,
+          1.878522,
+          1.957654,
+          2.032182,
+          2.405361,
+          1.592477,
+          1.749493,
+          1.43614,
+          1.679491,
+          1.935892,
+          1.861424,
+          1.4601,
+          2.989314,
+          1.13096,
+          2.147926,
+          1.168369,
+          2.175773,
+          0.929833,
+          2.422273,
+          0.984958,
+          1.064802,
+          1.151859,
+          2.25011,
+          1.19319,
+          0.908196,
+          0.988633,
+          1.09336,
+          2.628924,
+          1.261626,
+          1.163801,
+          1.078208,
+          1.522907,
+          1.724532,
+          1.529323,
+          1.286326,
+          1.228041,
+          2.120941,
+          1.110575,
+          1.089322,
+          2.30169,
+          1.444986,
+          1.516629,
+          2.009298,
+          1.263076,
+          2.235733,
+          2.102777,
+          1.21946
+        ],
+        "static_fraction": 0.051989,
+        "static_pixels": 47913,
+        "threshold": 2.0
+      },
+      "fps": 57.6665,
+      "frames": 48,
+      "identity": null,
+      "latency": {
+        "max_ms": 18.8279,
+        "mean_ms": 17.3503,
+        "median_ms": 16.9958,
+        "min_ms": 15.9924,
+        "p95_ms": 18.6035,
+        "stdev_ms": 0.8386
+      },
+      "meets_budget": true,
+      "ms_per_frame": 17.3411,
+      "name": "crop-1280x720",
+      "net_region_change": 9.8484,
+      "primitive": "crop",
+      "region_change": 10.7672,
+      "regions_per_frame": 1.0,
+      "resample_change": 0.9188,
+      "stages": {
+        "composite_ms": 1.2948,
+        "diffuse_ms": 15.9571,
+        "frame_path_ms": 17.3411,
+        "host_copy_ms": 0.3738,
+        "ipc_put_ms": 0.0099,
+        "ipc_roundtrip_ms": 4.4809,
+        "preview_ms": 5.2441,
+        "resize_in_ms": 0.0793
+      },
+      "visible": true
+    },
+    {
+      "background": {
+        "background_pixels": 1943052,
+        "frames": 48,
+        "identical_frames": 48,
+        "passed": true,
+        "statement": "48/48 frames left every pixel outside the rendered regions exactly as captured (1943052 background pixels on the frame with the most painted)",
+        "worst_pixels_changed": 0
+      },
+      "capture_height": 1080,
+      "capture_width": 1920,
+      "clip_file": "",
+      "crop_frames": 0,
+      "denoise": {
+        "kind": "restyle",
+        "met": true,
+        "points": [
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 7.4151,
+            "outside_change": 0.0,
+            "region_change": 9.7079,
+            "resample_change": 2.2928,
+            "strength": 0.323323,
+            "t_index": 45,
+            "timestep": 99
+          },
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 9.946,
+            "outside_change": 0.0,
+            "region_change": 12.2388,
+            "resample_change": 2.2928,
+            "strength": 0.494734,
+            "t_index": 40,
+            "timestep": 199
+          },
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 12.5298,
+            "outside_change": 0.0,
+            "region_change": 14.8226,
+            "resample_change": 2.2928,
+            "strength": 0.638606,
+            "t_index": 35,
+            "timestep": 299
+          },
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 15.0512,
+            "outside_change": 0.0,
+            "region_change": 17.344,
+            "resample_change": 2.2928,
+            "strength": 0.757571,
+            "t_index": 30,
+            "timestep": 399
+          },
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 19.3136,
+            "outside_change": 0.0,
+            "region_change": 21.6064,
+            "resample_change": 2.2928,
+            "strength": 0.8499,
+            "t_index": 25,
+            "timestep": 499
+          },
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 23.7421,
+            "outside_change": 0.0,
+            "region_change": 26.0349,
+            "resample_change": 2.2928,
+            "strength": 0.915559,
+            "t_index": 20,
+            "timestep": 599
+          }
+        ],
+        "rule": "the least denoise whose mean absolute change inside the region, net of the resize control, reached 8/255",
+        "statement": "t_index 40 - timestep 199, denoise strength 0.49. Selected as the least denoise whose mean absolute change inside the region, net of the resize control, reached 8/255; it changed the region by 12.2/255 - 9.9 of it net of the 2.3/255 the resize alone costs - against 0.0/255 outside it.",
+        "strength": 0.494734,
+        "t_index": 40,
+        "timestep": 199
+      },
+      "denoise_points": [
+        {
+          "frames": 4,
+          "identity_frames": null,
+          "identity_hits": null,
+          "net_region_change": 23.7421,
+          "outside_change": 0.0,
+          "region_change": 26.0349,
+          "resample_change": 2.2928,
+          "strength": 0.915559,
+          "t_index": 20,
+          "timestep": 599
+        },
+        {
+          "frames": 4,
+          "identity_frames": null,
+          "identity_hits": null,
+          "net_region_change": 19.3136,
+          "outside_change": 0.0,
+          "region_change": 21.6064,
+          "resample_change": 2.2928,
+          "strength": 0.8499,
+          "t_index": 25,
+          "timestep": 499
+        },
+        {
+          "frames": 4,
+          "identity_frames": null,
+          "identity_hits": null,
+          "net_region_change": 15.0512,
+          "outside_change": 0.0,
+          "region_change": 17.344,
+          "resample_change": 2.2928,
+          "strength": 0.757571,
+          "t_index": 30,
+          "timestep": 399
+        },
+        {
+          "frames": 4,
+          "identity_frames": null,
+          "identity_hits": null,
+          "net_region_change": 12.5298,
+          "outside_change": 0.0,
+          "region_change": 14.8226,
+          "resample_change": 2.2928,
+          "strength": 0.638606,
+          "t_index": 35,
+          "timestep": 299
+        },
+        {
+          "frames": 4,
+          "identity_frames": null,
+          "identity_hits": null,
+          "net_region_change": 9.946,
+          "outside_change": 0.0,
+          "region_change": 12.2388,
+          "resample_change": 2.2928,
+          "strength": 0.494734,
+          "t_index": 40,
+          "timestep": 199
+        },
+        {
+          "frames": 4,
+          "identity_frames": null,
+          "identity_hits": null,
+          "net_region_change": 7.4151,
+          "outside_change": 0.0,
+          "region_change": 9.7079,
+          "resample_change": 2.2928,
+          "strength": 0.323323,
+          "t_index": 45,
+          "timestep": 99
+        }
+      ],
+      "detail": {
+        "canvas_px": 69.01,
+        "gain": 0.267,
+        "region_px": 258.79,
+        "statement": "a region 259 px across in a 1920 px frame is diffused at 69 px under `masked`"
+      },
+      "diffusion_calls": 48,
+      "flicker": {
+        "frame_pixels": 2073600,
+        "mean_abs_diff": 1.184957,
+        "note": "mean absolute difference between consecutive outputs over the 108795 pixels per pair that were static in the source (within 2/255) and painted in both frames; 0-255 units, lower is steadier",
+        "pairs": 47,
+        "pairs_scored": 47,
+        "per_pair_abs_diff": [
+          1.124482,
+          0.980533,
+          0.902852,
+          1.04754,
+          1.00146,
+          0.927909,
+          1.29686,
+          1.379022,
+          1.60564,
+          1.186799,
+          1.120608,
+          1.169179,
+          1.202192,
+          1.107603,
+          1.091176,
+          1.233742,
+          1.163494,
+          1.016848,
+          1.419643,
+          1.059435,
+          1.11025,
+          1.09458,
+          1.496853,
+          1.571094,
+          0.992498,
+          1.12126,
+          1.048757,
+          1.295685,
+          0.928772,
+          1.019444,
+          1.285289,
+          1.69554,
+          1.222518,
+          1.095198,
+          1.010499,
+          1.603681,
+          1.58791,
+          1.310646,
+          1.099434,
+          1.221425,
+          1.311907,
+          1.201398,
+          0.881315,
+          1.151947,
+          1.182841,
+          1.110919,
+          1.004315
+        ],
+        "static_fraction": 0.052467,
+        "static_pixels": 108795,
+        "threshold": 2.0
+      },
+      "fps": 48.5366,
+      "frames": 48,
+      "identity": null,
+      "latency": {
+        "max_ms": 29.2189,
+        "mean_ms": 20.6115,
+        "median_ms": 20.5897,
+        "min_ms": 17.2284,
+        "p95_ms": 26.5333,
+        "stdev_ms": 3.1407
+      },
+      "meets_budget": true,
+      "ms_per_frame": 20.603,
+      "name": "masked-1920x1080",
+      "net_region_change": 10.3311,
+      "primitive": "masked",
+      "region_change": 12.6233,
+      "regions_per_frame": 1.0,
+      "resample_change": 2.2922,
+      "stages": {
+        "composite_ms": 3.3226,
+        "diffuse_ms": 17.1233,
+        "frame_path_ms": 20.603,
+        "host_copy_ms": 0.6695,
+        "ipc_put_ms": 0.0129,
+        "ipc_roundtrip_ms": 9.9475,
+        "preview_ms": 9.8012,
+        "resize_in_ms": 0.1442
+      },
+      "visible": true
+    },
+    {
+      "background": {
+        "background_pixels": 1943052,
+        "frames": 48,
+        "identical_frames": 48,
+        "passed": true,
+        "statement": "48/48 frames left every pixel outside the rendered regions exactly as captured (1943052 background pixels on the frame with the most painted)",
+        "worst_pixels_changed": 0
+      },
+      "capture_height": 1080,
+      "capture_width": 1920,
+      "clip_file": "",
+      "crop_frames": 48,
+      "denoise": {
+        "kind": "restyle",
+        "met": true,
+        "points": [
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 6.2878,
+            "outside_change": 0.0,
+            "region_change": 6.6766,
+            "resample_change": 0.3888,
+            "strength": 0.323323,
+            "t_index": 45,
+            "timestep": 99
+          },
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 7.4871,
+            "outside_change": 0.0,
+            "region_change": 7.8759,
+            "resample_change": 0.3888,
+            "strength": 0.494734,
+            "t_index": 40,
+            "timestep": 199
+          },
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 9.0246,
+            "outside_change": 0.0,
+            "region_change": 9.4134,
+            "resample_change": 0.3888,
+            "strength": 0.638606,
+            "t_index": 35,
+            "timestep": 299
+          },
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 10.9259,
+            "outside_change": 0.0,
+            "region_change": 11.3147,
+            "resample_change": 0.3888,
+            "strength": 0.757571,
+            "t_index": 30,
+            "timestep": 399
+          },
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 13.8546,
+            "outside_change": 0.0,
+            "region_change": 14.2434,
+            "resample_change": 0.3888,
+            "strength": 0.8499,
+            "t_index": 25,
+            "timestep": 499
+          },
+          {
+            "frames": 4,
+            "identity_frames": null,
+            "identity_hits": null,
+            "net_region_change": 16.7876,
+            "outside_change": 0.0,
+            "region_change": 17.1764,
+            "resample_change": 0.3888,
+            "strength": 0.915559,
+            "t_index": 20,
+            "timestep": 599
+          }
+        ],
+        "rule": "the least denoise whose mean absolute change inside the region, net of the resize control, reached 8/255",
+        "statement": "t_index 35 - timestep 299, denoise strength 0.64. Selected as the least denoise whose mean absolute change inside the region, net of the resize control, reached 8/255; it changed the region by 9.4/255 - 9.0 of it net of the 0.4/255 the resize alone costs - against 0.0/255 outside it.",
+        "strength": 0.638606,
+        "t_index": 35,
+        "timestep": 299
+      },
+      "denoise_points": [
+        {
+          "frames": 4,
+          "identity_frames": null,
+          "identity_hits": null,
+          "net_region_change": 16.7876,
+          "outside_change": 0.0,
+          "region_change": 17.1764,
+          "resample_change": 0.3888,
+          "strength": 0.915559,
+          "t_index": 20,
+          "timestep": 599
+        },
+        {
+          "frames": 4,
+          "identity_frames": null,
+          "identity_hits": null,
+          "net_region_change": 13.8546,
+          "outside_change": 0.0,
+          "region_change": 14.2434,
+          "resample_change": 0.3888,
+          "strength": 0.8499,
+          "t_index": 25,
+          "timestep": 499
+        },
+        {
+          "frames": 4,
+          "identity_frames": null,
+          "identity_hits": null,
+          "net_region_change": 10.9259,
+          "outside_change": 0.0,
+          "region_change": 11.3147,
+          "resample_change": 0.3888,
+          "strength": 0.757571,
+          "t_index": 30,
+          "timestep": 399
+        },
+        {
+          "frames": 4,
+          "identity_frames": null,
+          "identity_hits": null,
+          "net_region_change": 9.0246,
+          "outside_change": 0.0,
+          "region_change": 9.4134,
+          "resample_change": 0.3888,
+          "strength": 0.638606,
+          "t_index": 35,
+          "timestep": 299
+        },
+        {
+          "frames": 4,
+          "identity_frames": null,
+          "identity_hits": null,
+          "net_region_change": 7.4871,
+          "outside_change": 0.0,
+          "region_change": 7.8759,
+          "resample_change": 0.3888,
+          "strength": 0.494734,
+          "t_index": 40,
+          "timestep": 199
+        },
+        {
+          "frames": 4,
+          "identity_frames": null,
+          "identity_hits": null,
+          "net_region_change": 6.2878,
+          "outside_change": 0.0,
+          "region_change": 6.6766,
+          "resample_change": 0.3888,
+          "strength": 0.323323,
+          "t_index": 45,
+          "timestep": 99
+        }
+      ],
+      "detail": {
+        "canvas_px": 512.0,
+        "gain": 1.978,
+        "region_px": 258.79,
+        "statement": "a region 259 px across in a 1920 px frame is diffused at 512 px under `crop`"
+      },
+      "diffusion_calls": 48,
+      "flicker": {
+        "frame_pixels": 2073600,
+        "mean_abs_diff": 1.308935,
+        "note": "mean absolute difference between consecutive outputs over the 108795 pixels per pair that were static in the source (within 2/255) and painted in both frames; 0-255 units, lower is steadier",
+        "pairs": 47,
+        "pairs_scored": 47,
+        "per_pair_abs_diff": [
+          1.184532,
+          1.63977,
+          1.248717,
+          1.496886,
+          1.952331,
+          1.300926,
+          1.237883,
+          1.263994,
+          1.234344,
+          1.60072,
+          1.063891,
+          1.085589,
+          2.347263,
+          0.986042,
+          1.557173,
+          0.966341,
+          1.40528,
+          0.940441,
+          1.981349,
+          0.845109,
+          0.907666,
+          1.114348,
+          2.015689,
+          0.845997,
+          1.09299,
+          0.827404,
+          1.006478,
+          1.654407,
+          0.984868,
+          1.042778,
+          1.075934,
+          1.280032,
+          1.266279,
+          1.293782,
+          1.323333,
+          1.208402,
+          1.626577,
+          0.931622,
+          1.127437,
+          2.366779,
+          1.453375,
+          1.283391,
+          1.344431,
+          0.884536,
+          1.403525,
+          1.766869,
+          1.052446
+        ],
+        "static_fraction": 0.052467,
+        "static_pixels": 108795,
+        "threshold": 2.0
+      },
+      "fps": 48.4621,
+      "frames": 48,
+      "identity": null,
+      "latency": {
+        "max_ms": 33.0797,
+        "mean_ms": 20.6429,
+        "median_ms": 20.3669,
+        "min_ms": 17.0395,
+        "p95_ms": 28.1428,
+        "stdev_ms": 4.0429
+      },
+      "meets_budget": true,
+      "ms_per_frame": 20.6347,
+      "name": "crop-1920x1080",
+      "net_region_change": 9.0429,
+      "primitive": "crop",
+      "region_change": 9.4175,
+      "regions_per_frame": 1.0,
+      "resample_change": 0.3746,
+      "stages": {
+        "composite_ms": 3.2747,
+        "diffuse_ms": 17.2507,
+        "frame_path_ms": 20.6347,
+        "host_copy_ms": 1.3811,
+        "ipc_put_ms": 0.0121,
+        "ipc_roundtrip_ms": 8.6403,
+        "preview_ms": 10.6924,
+        "resize_in_ms": 0.0972
+      },
+      "visible": true
+    }
+  ],
+  "case": {
+    "becomes": null,
+    "clip": "people.mp4",
+    "concept": "person",
+    "denoise": 0.49,
+    "denoise_ladder": [
+      20,
+      25,
+      30,
+      35,
+      40,
+      45
+    ],
+    "frames": 48,
+    "geometries": [
+      [
+        512,
+        512
+      ],
+      [
+        1280,
+        720
+      ],
+      [
+        1920,
+        1080
+      ]
+    ],
+    "kind": "restyle",
+    "max_instances": 1,
+    "name": "capture-people",
+    "note": "The priority case at K=1: one person's lower half, at three capture geometries, under both primitives. The same clip, plan and engine spec 8.2 and 8.8 were measured on.",
+    "primitives": [
+      "masked",
+      "crop"
+    ],
+    "probe_frames": 8,
+    "prompt": "trousers soaked through with a dark wet stain, damp fabric, wet denim, photograph",
+    "region": "lower_half",
+    "start_frame": 0,
+    "sweep_frames": 4,
+    "warmup_frames": 3
+  },
+  "clip": {
+    "fps": 25.0,
+    "frames_used": 48,
+    "height": 720,
+    "name": "people.mp4",
+    "sha256": "c509b3699045b605d62e66abf534ce096078b983a0b666e04039b1168dc7b54d",
+    "start_frame": 0,
+    "total_frames": 377,
+    "width": 1280
+  },
+  "clock_normalization": {
+    "basis_mhz": 3150.0,
+    "basis_source": "clocks.max.sm",
+    "method": "ms_per_frame * time-weighted mean SM clock / basis clock",
+    "ms_per_frame": 6.2592,
+    "note": "Clocks were not locked (unlocked), so the raw figure carries this run's clock. This is a first-order estimate of the same work at 3150 MHz, not a measurement, and not a substitute for `nvidia-smi --lock-gpu-clocks` from an elevated shell.",
+    "regime": "unlocked",
+    "sampled_mean_sm_clock_mhz": 1234.3
+  },
+  "comparison_clip": "capture-people-20260907-172929Z-triptych.mp4",
+  "comparison_still": "capture-people-20260907-172929Z-triptych.jpg",
+  "cooldown": {
+    "cap_s": 120.0,
+    "enabled": true,
+    "final_temperature_c": 39.0,
+    "outcome": "reached",
+    "reached": true,
+    "samples": [
+      [
+        0.031000000000858563,
+        39.0
+      ]
+    ],
+    "threshold_c": 62.0,
+    "waited_s": 0.031000000000858563
+  },
+  "hardware": {
+    "clock_lock": {
+      "applied_clock_mhz": null,
+      "current_sm_clock_mhz": 210.0,
+      "evidence": "clocks_event_reasons.applications_clocks_setting=Not Active",
+      "max_sm_clock_mhz": 3150.0,
+      "state": "unlocked"
+    },
+    "cuda_version": "12.8",
+    "driver_version": "610.47",
+    "enforced_power_limit_w": 500.0,
+    "gpu_name": "NVIDIA GeForce RTX 4090",
+    "hostname": "DESKTOP-7OBJQKB",
+    "nvidia_smi_captured_utc": "2026-09-07T17:28:18Z",
+    "nvidia_smi_raw": "Mon Sep  7 19:28:18 2026       \n+-----------------------------------------------------------------------------------------+\n| NVIDIA-SMI 610.47                 KMD Version: 610.47        CUDA UMD Version: 13.3     |\n+-----------------------------------------+------------------------+----------------------+\n| GPU  Name                  Driver-Model | Bus-Id          Disp.A | Volatile Uncorr. ECC |\n| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |\n|                                         |                        |               MIG M. |\n|=========================================+========================+======================|\n|   0  NVIDIA GeForce RTX 4090      WDDM  |   00000000:01:00.0  On |                  Off |\n|  0%   38C    P8             27W /  500W |     945MiB /  24564MiB |      7%      Default |\n|                                         |                        |                  N/A |\n+-----------------------------------------+------------------------+----------------------+\n\n+-----------------------------------------------------------------------------------------+\n| Processes:                                                                              |\n|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |\n|        ID   ID                                                               Usage      |\n|=========================================================================================|\n|    0   N/A  N/A            1724    C+G   ...ntrolPanel\\SystemSettings.exe      N/A      |\n|    0   N/A  N/A            2816    C+G   C:\\Windows\\explorer.exe               N/A      |\n|    0   N/A  N/A            3648    C+G   ...5n1h2txyewy\\TextInputHost.exe      N/A      |\n|    0   N/A  N/A            3692    C+G   ...32-x64\\open-stage-control.exe      N/A      |\n|    0   N/A  N/A            4452    C+G   ...yb3d8bbwe\\WindowsTerminal.exe      N/A      |\n|    0   N/A  N/A           12072    C+G   ...vv_gamma_7.1-win-x64\\vvvv.exe      N/A      |\n|    0   N/A  N/A           12208    C+G   ...h_cw5n1h2txyewy\\SearchApp.exe      N/A      |\n|    0   N/A  N/A           12660    C+G   ...App_cw5n1h2txyewy\\LockApp.exe      N/A      |\n|    0   N/A  N/A           12752    C+G   ...ms\\t3code\\T3 Code (Alpha).exe      N/A      |\n|    0   N/A  N/A           12864    C+G   ...mmaLauncher\\GammaLauncher.exe      N/A      |\n|    0   N/A  N/A           13024    C+G   ...bs-studio\\bin\\64bit\\obs64.exe      N/A      |\n|    0   N/A  N/A           14768    C+G   ...6)\\Dropbox\\Client\\Dropbox.exe      N/A      |\n|    0   N/A  N/A           17148    C+G   ...xyewy\\ShellExperienceHost.exe      N/A      |\n|    0   N/A  N/A           19156    C+G   ...Chrome\\Application\\chrome.exe      N/A      |\n+-----------------------------------------------------------------------------------------+\n",
+    "power_limit_w": 500.0,
+    "torch_version": "2.7.0+cu128",
+    "total_vram_mib": 24564.0
+  },
+  "kind": "capture-geometry",
+  "occupancy": {
+    "clear": true,
+    "mean_utilization_pct": 3.25,
+    "outcome": "clear",
+    "samples": [
+      10.0,
+      1.0,
+      1.0,
+      1.0
+    ],
+    "threshold_pct": 10.0
+  },
+  "run": {
+    "canvas": 512,
+    "engine_scenario": "img2img-tensorrt-512x512-b1",
+    "finished_utc": "2026-09-07T17:29:29Z",
+    "gpu_samples": [
+      [
+        0.03056999999898835,
+        2610.0,
+        39.0
+      ],
+      [
+        0.562060799999017,
+        2610.0,
+        40.0
+      ],
+      [
+        1.0902970000006462,
+        2715.0,
+        49.0
+      ],
+      [
+        1.6166066999994655,
+        2715.0,
+        51.0
+      ],
+      [
+        2.145469499999308,
+        2730.0,
+        42.0
+      ],
+      [
+        2.6791477000006125,
+        2730.0,
+        41.0
+      ],
+      [
+        3.209589899999628,
+        2730.0,
+        41.0
+      ],
+      [
+        3.740273999999772,
+        2730.0,
+        41.0
+      ],
+      [
+        4.268986299999597,
+        2520.0,
+        44.0
+      ],
+      [
+        4.796692899999471,
+        2715.0,
+        52.0
+      ],
+      [
+        5.325005999999121,
+        2715.0,
+        52.0
+      ],
+      [
+        5.854638400000113,
+        2730.0,
+        42.0
+      ],
+      [
+        6.38352230000055,
+        2730.0,
+        41.0
+      ],
+      [
+        6.916659599999548,
+        2730.0,
+        41.0
+      ],
+      [
+        7.44632939999974,
+        2730.0,
+        41.0
+      ],
+      [
+        7.974645000000237,
+        1320.0,
+        41.0
+      ],
+      [
+        8.507741600000372,
+        1275.0,
+        42.0
+      ],
+      [
+        9.038141400000313,
+        1230.0,
+        41.0
+      ],
+      [
+        9.565855999999258,
+        1215.0,
+        43.0
+      ],
+      [
+        10.095640199999252,
+        2715.0,
+        50.0
+      ],
+      [
+        10.624932599999738,
+        2715.0,
+        42.0
+      ],
+      [
+        11.152458900000056,
+        2715.0,
+        42.0
+      ],
+      [
+        11.684200300000157,
+        2715.0,
+        42.0
+      ],
+      [
+        12.213052299999617,
+        675.0,
+        41.0
+      ],
+      [
+        12.740708699999232,
+        525.0,
+        40.0
+      ],
+      [
+        13.27281579999908,
+        450.0,
+        40.0
+      ],
+      [
+        13.805705499999021,
+        360.0,
+        40.0
+      ],
+      [
+        14.335627099999328,
+        300.0,
+        40.0
+      ],
+      [
+        14.868401800000356,
+        255.0,
+        40.0
+      ],
+      [
+        15.39737260000038,
+        255.0,
+        40.0
+      ],
+      [
+        15.927631099999417,
+        255.0,
+        40.0
+      ],
+      [
+        16.457381799998984,
+        210.0,
+        40.0
+      ],
+      [
+        16.98596859999998,
+        285.0,
+        41.0
+      ],
+      [
+        17.527643999999782,
+        2610.0,
+        41.0
+      ],
+      [
+        18.056940899999972,
+        2610.0,
+        43.0
+      ],
+      [
+        18.586582500000077,
+        2715.0,
+        50.0
+      ],
+      [
+        19.114435800000138,
+        2715.0,
+        50.0
+      ],
+      [
+        19.64199749999898,
+        2715.0,
+        42.0
+      ],
+      [
+        20.170974799999385,
+        2715.0,
+        42.0
+      ],
+      [
+        20.701971000000412,
+        2715.0,
+        41.0
+      ],
+      [
+        21.230556200000137,
+        2715.0,
+        41.0
+      ],
+      [
+        21.760129500000403,
+        570.0,
+        40.0
+      ],
+      [
+        22.29150739999932,
+        495.0,
+        40.0
+      ],
+      [
+        22.8230951000005,
+        375.0,
+        40.0
+      ],
+      [
+        23.352752099999634,
+        330.0,
+        40.0
+      ],
+      [
+        23.884155899999314,
+        255.0,
+        40.0
+      ],
+      [
+        24.413139199999932,
+        255.0,
+        40.0
+      ],
+      [
+        24.943326700000398,
+        255.0,
+        39.0
+      ],
+      [
+        25.475936299999375,
+        210.0,
+        39.0
+      ],
+      [
+        26.005329199999323,
+        210.0,
+        39.0
+      ],
+      [
+        26.5403038000004,
+        240.0,
+        39.0
+      ],
+      [
+        27.068592499999795,
+        300.0,
+        40.0
+      ],
+      [
+        27.59987899999942,
+        1290.0,
+        40.0
+      ],
+      [
+        28.128253999999288,
+        1470.0,
+        39.0
+      ],
+      [
+        28.660669900000357,
+        2265.0,
+        42.0
+      ],
+      [
+        29.191091499998947,
+        2265.0,
+        40.0
+      ],
+      [
+        29.721869200000583,
+        2265.0,
+        40.0
+      ],
+      [
+        30.25553410000066,
+        2265.0,
+        41.0
+      ],
+      [
+        30.782932099999016,
+        1155.0,
+        39.0
+      ],
+      [
+        31.310197999999218,
+        2715.0,
+        49.0
+      ],
+      [
+        31.83933429999888,
+        2715.0,
+        48.0
+      ],
+      [
+        32.36714860000029,
+        2730.0,
+        41.0
+      ],
+      [
+        32.89530299999933,
+        2730.0,
+        40.0
+      ],
+      [
+        33.42696269999942,
+        2730.0,
+        40.0
+      ],
+      [
+        33.95484969999961,
+        675.0,
+        39.0
+      ],
+      [
+        34.491779099998894,
+        570.0,
+        39.0
+      ],
+      [
+        35.02629999999954,
+        450.0,
+        39.0
+      ],
+      [
+        35.55764950000048,
+        390.0,
+        38.0
+      ],
+      [
+        36.08576019999964,
+        270.0,
+        38.0
+      ],
+      [
+        36.615437599999495,
+        255.0,
+        38.0
+      ],
+      [
+        37.150777499999094,
+        255.0,
+        38.0
+      ],
+      [
+        37.68440919999921,
+        210.0,
+        38.0
+      ],
+      [
+        38.213841499999035,
+        210.0,
+        38.0
+      ],
+      [
+        38.74592209999901,
+        210.0,
+        38.0
+      ],
+      [
+        39.273708599999736,
+        210.0,
+        38.0
+      ],
+      [
+        39.8077957000005,
+        210.0,
+        38.0
+      ],
+      [
+        40.337299599999824,
+        210.0,
+        38.0
+      ],
+      [
+        40.86945039999955,
+        210.0,
+        37.0
+      ],
+      [
+        41.39967009999964,
+        210.0,
+        37.0
+      ],
+      [
+        41.92890919999991,
+        210.0,
+        37.0
+      ],
+      [
+        42.4617875999993,
+        210.0,
+        37.0
+      ],
+      [
+        42.9914921999989,
+        210.0,
+        37.0
+      ],
+      [
+        43.52570139999989,
+        210.0,
+        37.0
+      ],
+      [
+        44.0589044999997,
+        210.0,
+        37.0
+      ],
+      [
+        44.58996639999896,
+        210.0,
+        37.0
+      ],
+      [
+        45.11927470000046,
+        210.0,
+        37.0
+      ],
+      [
+        45.651027599999,
+        210.0,
+        37.0
+      ],
+      [
+        46.17948819999947,
+        210.0,
+        37.0
+      ],
+      [
+        46.70615589999943,
+        2610.0,
+        38.0
+      ],
+      [
+        47.23401360000025,
+        2610.0,
+        38.0
+      ],
+      [
+        47.764036900000065,
+        2610.0,
+        38.0
+      ],
+      [
+        48.29286200000024,
+        2610.0,
+        39.0
+      ],
+      [
+        48.82264050000049,
+        1185.0,
+        37.0
+      ],
+      [
+        49.350814999999784,
+        1095.0,
+        38.0
+      ],
+      [
+        49.87992189999932,
+        960.0,
+        37.0
+      ],
+      [
+        50.40839009999945,
+        2715.0,
+        45.0
+      ],
+      [
+        50.93680789999962,
+        2715.0,
+        45.0
+      ],
+      [
+        51.46911309999996,
+        2730.0,
+        39.0
+      ],
+      [
+        51.99983289999909,
+        2730.0,
+        38.0
+      ],
+      [
+        52.54036369999994,
+        2730.0,
+        38.0
+      ],
+      [
+        53.068010900000445,
+        675.0,
+        38.0
+      ],
+      [
+        53.59998450000057,
+        450.0,
+        37.0
+      ],
+      [
+        54.12786950000009,
+        390.0,
+        37.0
+      ],
+      [
+        54.67161739999938,
+        300.0,
+        37.0
+      ],
+      [
+        55.20203589999983,
+        255.0,
+        37.0
+      ],
+      [
+        55.73501009999927,
+        255.0,
+        37.0
+      ],
+      [
+        56.26389620000009,
+        210.0,
+        36.0
+      ],
+      [
+        56.795502200000556,
+        210.0,
+        36.0
+      ],
+      [
+        57.328543399999035,
+        210.0,
+        36.0
+      ],
+      [
+        57.86105409999982,
+        210.0,
+        36.0
+      ],
+      [
+        58.38954310000008,
+        210.0,
+        36.0
+      ],
+      [
+        58.92022209999959,
+        210.0,
+        36.0
+      ],
+      [
+        59.44978450000053,
+        210.0,
+        36.0
+      ],
+      [
+        59.980112799999915,
+        210.0,
+        36.0
+      ],
+      [
+        60.51112759999887,
+        210.0,
+        36.0
+      ],
+      [
+        61.03908849999971,
+        210.0,
+        36.0
+      ],
+      [
+        61.581179599999814,
+        210.0,
+        36.0
+      ],
+      [
+        62.1133090000003,
+        210.0,
+        36.0
+      ],
+      [
+        62.64434210000036,
+        210.0,
+        36.0
+      ],
+      [
+        63.178232899999784,
+        210.0,
+        36.0
+      ],
+      [
+        63.709186500000214,
+        210.0,
+        35.0
+      ],
+      [
+        64.23924749999969,
+        210.0,
+        35.0
+      ]
+    ],
+    "max_temperature_c": 52.0,
+    "mean_sm_clock_mhz": 1237.1,
+    "peak_vram_bytes": 3317015040,
+    "started_utc": "2026-09-07T17:28:24Z",
+    "warmup_frames": 3
+  },
+  "schema_version": 2
+}

@@ -43,8 +43,10 @@ Two constraints on the implementation:
 from __future__ import annotations
 
 import hashlib
+from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
 
+from detection import Box
 from render_plan import DEFAULT_SEED_POLICY, FIXED, RANDOM
 
 # The VAE's downscale: a 512x512 canvas is a 64x64 latent, and a region's noise is
@@ -95,6 +97,46 @@ def latent_box(box, width: int, height: int,
     if x1 <= x0 or y1 <= y0:
         return None
     return x0, y0, x1, y1
+
+
+@dataclass(frozen=True)
+class CanvasGeometry:
+    """How a region in captured pixels lands on the engine's canvas (issue #39).
+
+    The selection's boxes are in *capture* coordinates, and since the capture is no
+    longer the diffusion canvas they have to be mapped before they can be read as
+    latent cells. Two mappings, one expression: under `masked` the whole capture is
+    squeezed onto the canvas, and under `crop` the crop box is - so the source
+    rectangle is the crop or the frame, and everything else is the same scaling.
+
+    `identity` is the shipped 512x512-onto-512x512 case, where the mapping is a
+    no-op and `NoiseField` skips it entirely.
+    """
+
+    capture_width: int
+    capture_height: int
+    canvas_width: int
+    canvas_height: int
+    crop: Optional[Box] = None
+
+    @property
+    def identity(self) -> bool:
+        return (self.crop is None and self.capture_width == self.canvas_width
+                and self.capture_height == self.canvas_height)
+
+    def region(self, box: Box) -> Box:
+        """`box`, in captured pixels, as the canvas pixels the engine diffuses it at."""
+        box = Box(*box)
+        if self.identity:
+            return box
+        source = (Box(0, 0, self.capture_width, self.capture_height)
+                  if self.crop is None else Box(*self.crop))
+        scale_x = self.canvas_width / max(1, source.width)
+        scale_y = self.canvas_height / max(1, source.height)
+        return Box(int(round((box.x0 - source.x0) * scale_x)),
+                   int(round((box.y0 - source.y0) * scale_y)),
+                   int(round((box.x1 - source.x0) * scale_x)),
+                   int(round((box.y1 - source.y0) * scale_y)))
 
 
 def noise_tensor(stream):
@@ -155,12 +197,18 @@ class NoiseField:
         self._generator = None
         self._dirty = False
 
-    def apply(self, stream, selection) -> bool:
+    def apply(self, stream, selection,
+              geometry: Optional[CanvasGeometry] = None) -> bool:
         """Build this frame's noise field. True when the engine's noise was written.
 
         Runs on the frame path, before the diffusion call the field feeds, and does
         nothing at all under `fixed` until some other policy has dirtied the field -
         so the default costs the loop no tensor operation.
+
+        `geometry` says how the selection's captured-pixel boxes land on the
+        engine's canvas (issue #39). None is the identity, which is what the
+        512x512 capture the app shipped with means and what every committed
+        stability arm was measured under.
         """
         if not self.writes and not self._dirty:
             return False
@@ -176,7 +224,7 @@ class NoiseField:
         # `writes` has already excluded `fixed`, and `validate_plan` admits no
         # fourth policy, so these two are the whole vocabulary here.
         noise.copy_(self._random_like(noise) if self.policy == RANDOM
-                    else self._per_track_field(noise, selection))
+                    else self._per_track_field(noise, selection, geometry))
         self._dirty = True
         return True
 
@@ -197,20 +245,27 @@ class NoiseField:
         return torch.randn(noise.shape, generator=self._generator,
                            device=noise.device, dtype=noise.dtype)
 
-    def _per_track_field(self, noise, selection):
+    def _per_track_field(self, noise, selection,
+                         geometry: Optional[CanvasGeometry] = None):
         """The prepared field, with each region's cells taken from its track's own.
 
         The track's realisation is rolled to the track's current latent centre, so
         the pattern under an object is the same pattern wherever the object has
         moved to - which is the whole of what a per-track seed can mean when one
         noise field covers every region (see this module's docstring).
+
+        Each region is read through `geometry` first: the boxes are in captured
+        pixels and the latent canvas is the engine's, and since issue #39 those are
+        two coordinate systems rather than one.
         """
         import torch
 
         field = self._prepared.clone()
         height, width = noise.shape[-2], noise.shape[-1]
         for region in selection.regions:
-            cells = latent_box(region.box, width, height)
+            box = (region.box if geometry is None or geometry.identity
+                   else geometry.region(region.box))
+            cells = latent_box(box, width, height)
             if cells is None:
                 continue
             x0, y0, x1, y1 = cells

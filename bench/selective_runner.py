@@ -115,7 +115,8 @@ def open_detector(models_root: Path, concepts: Sequence[str],
     return detector
 
 
-def render_frame(stream, tensor, compositor, render, source, noise, selection):
+def render_frame(stream, tensor, compositor, render, source, noise, selection,
+                 canvas: int):
     """One frame of the shipped path: seed, diffuse, then composite through the mask.
 
     Returns the output frame and the milliseconds the frame path spent, split into
@@ -131,10 +132,20 @@ def render_frame(stream, tensor, compositor, render, source, noise, selection):
     engine call. The composite figure therefore now carries that copy, which the
     host figure it is compared against did not - the comparison is conservative in
     the direction that matters.
+
+    `canvas` is the engine's square, which since issue #39 need not be the capture
+    geometry the rest of the arguments are in. Both composited actions go through
+    one branch for the same reason: `crop` differs from `masked` only in what the
+    engine is handed - one region filling the canvas rather than the whole capture
+    squeezed onto it - and in where the render is pasted back, which is the `crop`
+    argument the blend already takes. Every committed run in this directory is
+    `masked` at a capture that *is* the canvas, so both are no-ops there.
     """
     import numpy as np
     import torch
-    from compositor import MASKED
+    from compositor import CROP, MASKED
+    from device_compositor import crop_to_canvas, to_canvas
+    from seeding import CanvasGeometry
 
     torch.cuda.synchronize()
     started = time.perf_counter()
@@ -144,18 +155,23 @@ def render_frame(stream, tensor, compositor, render, source, noise, selection):
         # and the end of the EMA's history, for the reason the worker ends it.
         compositor.reset_ema()
         output = source
-    elif render.action == MASKED:
+    elif render.action in (MASKED, CROP):
         # The plan's seed policy, written into the engine's noise before the call
         # that reads it (issue #32). Inside the timed region because it is inside
         # the worker's frame loop: whatever it costs, the frame pays it.
-        noise.apply(stream, selection)
-        rendered = stream.img2img(tensor, output_type="pt")
+        noise.apply(stream, selection,
+                    CanvasGeometry(source.shape[1], source.shape[0], canvas, canvas,
+                                   render.crop))
+        frame_canvas = (to_canvas(tensor, canvas, canvas) if render.crop is None
+                        else crop_to_canvas(tensor, render.crop, canvas, canvas))
+        rendered = stream.img2img(frame_canvas, output_type="pt")
         torch.cuda.synchronize()
         composite_started = time.perf_counter()
-        output = compositor.blend_device(tensor, rendered, render.alpha)[-1]
+        output = compositor.blend_device(tensor, rendered, render.alpha,
+                                         render.crop)[-1]
         composite_ms = (time.perf_counter() - composite_started) * 1000.0
     else:
-        output = np.asarray(stream.img2img(tensor))
+        output = np.asarray(stream.img2img(to_canvas(tensor, canvas, canvas)))
     torch.cuda.synchronize()
     return output, (time.perf_counter() - started) * 1000.0, composite_ms
 
@@ -321,7 +337,8 @@ def run_selective(
             selection = scheduler.select(tracks, plan, canvas, canvas)
             render = compositor.frame(selection, canvas, canvas)
             output, frame_ms, blend_ms = render_frame(
-                stream, tensor, compositor, render, sources[index], noise, selection)
+                stream, tensor, compositor, render, sources[index], noise, selection,
+                canvas)
             outputs.append(output)
             per_frame_ms.append(frame_ms)
             if render.diffuses:

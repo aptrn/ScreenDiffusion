@@ -10,11 +10,14 @@ top of the file.
 """
 
 import json
-from typing import Any, Dict, NamedTuple, Optional
+from typing import Any, Dict, NamedTuple, Optional, Tuple
 
 import pytest
 from render_plan import (
+    CROP,
+    DEFAULT_MAX_INSTANCES,
     DEFAULT_REGION,
+    MASKED,
     GLOBAL,
     MAX_CONCEPT_CHARS,
     SELECTIVE,
@@ -26,12 +29,18 @@ from sourceloader import load_symbols
 
 _symbols = load_symbols(
     "main_gpu_addon.py",
-    ["PlanUpdate", "_plan_status_line", "_plan_update_from_fields"],
+    ["PlanUpdate", "_plan_status_line", "_plan_update_from_fields",
+     "DETAIL_PRESETS", "DETAIL_ALL_OBJECTS", "DETAIL_ONE_OBJECT", "detail_plan"],
     extra_globals={"plan_from_fields": plan_from_fields, "NamedTuple": NamedTuple,
-                   "Optional": Optional, "Dict": Dict, "Any": Any},
+                   "Optional": Optional, "Dict": Dict, "Any": Any, "Tuple": Tuple,
+                   "PLAN_MASKED": MASKED, "PLAN_CROP": CROP,
+                   "DEFAULT_MAX_INSTANCES": DEFAULT_MAX_INSTANCES},
 )
 _plan_status_line = _symbols["_plan_status_line"]
 _plan_update_from_fields = _symbols["_plan_update_from_fields"]
+DETAIL_PRESETS = _symbols["DETAIL_PRESETS"]
+DETAIL_ALL_OBJECTS = _symbols["DETAIL_ALL_OBJECTS"]
+DETAIL_ONE_OBJECT = _symbols["DETAIL_ONE_OBJECT"]
 
 PROMPT = "flip book animation, black and white rough sketch"
 NEGATIVE = "low quality, blurry"
@@ -146,3 +155,67 @@ def test_the_validators_notes_are_surfaced():
     plan = plan_from_fields("person", "wet denim").plan
     line = _plan_status_line(plan, ("box_scale clamped to 2.0",))
     assert "box_scale clamped to 2.0" in line
+
+
+# --- the detail control (issue #39, spec 8.2) --------------------------------
+#
+# The third field: which rendering primitive the plan asks for. `crop` gives one
+# object the engine's whole 512x512 canvas, which only makes sense at K=1, so the
+# two travel together and the GUI offers them as one choice rather than as two
+# fields a user could set inconsistently.
+
+
+def test_the_default_detail_is_what_the_app_has_always_done():
+    from render_plan import DEFAULT_MAX_INSTANCES, MASKED
+
+    plan = _plan_of(_plan_update_from_fields("person", "wet denim", PROMPT, NEGATIVE))
+    assert plan.settings.primitive == MASKED
+    assert plan.targets[0].max_instances == DEFAULT_MAX_INSTANCES
+
+
+def test_asking_for_one_object_at_full_canvas_sends_crop_at_k_one():
+    from render_plan import CROP
+
+    plan = _plan_of(_plan_update_from_fields(
+        "person", "wet denim", PROMPT, NEGATIVE, detail=DETAIL_ONE_OBJECT))
+    assert plan.settings.primitive == CROP
+    assert plan.targets[0].max_instances == 1, (
+        "crop above one slot falls back to masked on every frame")
+
+
+def test_asking_for_all_objects_is_the_masked_primitive():
+    from render_plan import DEFAULT_MAX_INSTANCES, MASKED
+
+    plan = _plan_of(_plan_update_from_fields(
+        "person", "wet denim", PROMPT, NEGATIVE, detail=DETAIL_ALL_OBJECTS))
+    assert plan.settings.primitive == MASKED
+    assert plan.targets[0].max_instances == DEFAULT_MAX_INSTANCES
+
+
+def test_an_unknown_detail_label_falls_back_rather_than_refusing():
+    """The label comes from a widget a stale preference could have set; the plan
+    the app has always rendered is a better answer than no plan."""
+    from render_plan import MASKED
+
+    plan = _plan_of(_plan_update_from_fields(
+        "person", "wet denim", PROMPT, NEGATIVE, detail="every third object"))
+    assert plan.settings.primitive == MASKED
+
+
+def test_the_status_line_says_which_object_is_being_restyled():
+    """"every person" and "one person at a time" are different promises, and the
+    round-robin makes the second one true rather than "the first person"."""
+    one = _plan_update_from_fields("person", "wet denim", PROMPT, NEGATIVE,
+                                   detail=DETAIL_ONE_OBJECT)
+    every = _plan_update_from_fields("person", "wet denim", PROMPT, NEGATIVE)
+    assert "one person" in one.status
+    assert "every person" in every.status
+
+
+def test_the_detail_choice_is_ignored_by_a_global_plan():
+    """`crop` names one region to spend the canvas on; a blank target names none."""
+    from render_plan import GLOBAL as GLOBAL_MODE
+
+    plan = _plan_of(_plan_update_from_fields("", "", PROMPT, NEGATIVE,
+                                             detail=DETAIL_ONE_OBJECT))
+    assert plan.mode == GLOBAL_MODE

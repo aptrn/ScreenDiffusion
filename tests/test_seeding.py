@@ -204,3 +204,43 @@ def test_a_policy_that_writes_says_so(policy):
 
 def test_fixed_says_it_writes_nothing():
     assert NoiseField(policy=FIXED).writes is False
+
+
+# --- the capture geometry the boxes are read in (issue #39) ------------------
+#
+# The selection's boxes are in *captured* pixels, and since the capture is no
+# longer the engine's canvas they have to be mapped onto it before they can be
+# read as latent cells. Under `crop` the mapping is the whole point: the one
+# region the frame renders occupies the entire canvas.
+
+
+def test_the_identity_geometry_leaves_a_box_alone():
+    from seeding import CanvasGeometry
+
+    geometry = CanvasGeometry(512, 512, 512, 512)
+    assert geometry.region(Box(10, 20, 30, 40)) == Box(10, 20, 30, 40)
+    assert geometry.identity
+
+
+def test_a_larger_capture_shrinks_a_box_onto_the_canvas():
+    from seeding import CanvasGeometry
+
+    geometry = CanvasGeometry(1024, 1024, 512, 512)
+    assert geometry.region(Box(100, 200, 300, 400)) == Box(50, 100, 150, 200)
+    assert not geometry.identity
+
+
+def test_under_crop_the_rendered_region_is_the_whole_canvas():
+    from seeding import CanvasGeometry
+
+    crop = Box(200, 100, 400, 300)
+    geometry = CanvasGeometry(1920, 1080, 512, 512, crop=crop)
+    assert geometry.region(crop) == Box(0, 0, 512, 512)
+
+
+def test_under_crop_half_the_crop_box_is_half_the_canvas():
+    from seeding import CanvasGeometry
+
+    crop = Box(0, 0, 200, 200)
+    geometry = CanvasGeometry(1920, 1080, 512, 512, crop=crop)
+    assert geometry.region(Box(0, 0, 100, 200)) == Box(0, 0, 256, 512)

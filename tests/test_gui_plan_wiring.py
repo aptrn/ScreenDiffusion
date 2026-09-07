@@ -150,3 +150,47 @@ def test_the_existing_runtime_controls_still_send_their_messages():
     sent = {node.value for node in ast.walk(GUI)
             if isinstance(node, ast.Constant) and isinstance(node.value, str)}
     assert {"set_prompt", "set_negative_prompt", "set_region", "set_t_index_list"} <= sent
+
+
+# --- the Detail box (issue #39) ----------------------------------------------
+
+
+def test_the_detail_choice_has_a_variable_the_gui_holds():
+    init = _method("__init__")
+    assigned = {node.attr for node in ast.walk(init)
+                if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Store)}
+    assert "detail_var" in assigned
+
+
+def test_the_detail_box_offers_exactly_the_presets():
+    build = _method("_build_ui")
+    combos = [call for call in _calls_named(build, "CTkComboBox")
+              if _mentions(call, "detail_var")]
+    assert len(combos) == 1, "the Detail box is not built, or is built twice"
+    values = [keyword for keyword in combos[0].keywords if keyword.arg == "values"]
+    assert values and "DETAIL_PRESETS" in ast.unparse(values[0].value), (
+        "the box offers labels that are not the ones `detail_plan` reads")
+
+
+def test_choosing_a_detail_goes_through_the_same_debounced_handler():
+    """A combo change is a plan change like any other, and it re-encodes the
+    detector's vocabulary through the same door a target edit does."""
+    build = _method("_build_ui")
+    combos = [call for call in _calls_named(build, "CTkComboBox")
+              if _mentions(call, "detail_var")]
+    assert _mentions(combos[0], "_on_plan_field_changed")
+
+
+def test_the_detail_box_stays_usable_while_generation_runs():
+    """Same rule as the two fields beside it: `primitive` is a plan field, so
+    changing it costs no engine rebuild and must not cost a restart."""
+    build = _method("_build_ui")
+    for call in _calls_named(build, "_register_lockables"):
+        assert not _mentions(call, "_w_detail_combo")
+
+
+def test_the_detail_choice_travels_with_the_plan():
+    push = _method("_push_plan_runtime")
+    update, = _calls_named(push, "_plan_update_from_fields")
+    assert any("detail_var" in ast.unparse(argument) for argument in update.args), (
+        "the plan is built without the Detail box's choice")
