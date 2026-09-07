@@ -9,6 +9,8 @@ GPU-free: `bench.cadence` reads committed JSON and formats it, like every other
 `bench.*` results module.
 """
 
+import dataclasses
+
 import pytest
 
 from bench.cadence import (
@@ -47,19 +49,19 @@ def an_arm(detect_every_n, ms_per_frame=24.5, detect_ms=23.0, gpu=DEPLOY_GPU,
     case = CASES[PRIORITY_CASE].replace(detect_every_n=detect_every_n)
     amortised = round(detect_ms / detect_every_n, 4)
     with_detection = round(ms_per_frame + amortised, 4)
-    run = a_selective_result().run
     fields = dict(
         case=case, plan=plan_record(case.plan()),
-        run=type(run)(**{**run.to_dict(),
-                         "render": LatencySummary.from_samples([ms_per_frame]),
-                         "composite": LatencySummary.from_samples([2.7]),
-                         "detect": LatencySummary.from_samples([detect_ms]),
-                         "finished_utc": finished,
-                         "detect_every_n": detect_every_n,
-                         "amortised_detect_ms": amortised,
-                         "ms_per_frame": ms_per_frame,
-                         "ms_per_frame_with_detection": with_detection,
-                         "fps": round(1000.0 / with_detection, 4)}),
+        run=dataclasses.replace(
+            a_selective_result().run,
+            render=LatencySummary.from_samples([ms_per_frame]),
+            composite=LatencySummary.from_samples([2.7]),
+            detect=LatencySummary.from_samples([detect_ms]),
+            finished_utc=finished,
+            detect_every_n=detect_every_n,
+            amortised_detect_ms=amortised,
+            ms_per_frame=ms_per_frame,
+            ms_per_frame_with_detection=with_detection,
+            fps=round(1000.0 / with_detection, 4)),
         staleness=staleness_summary([tracks_of(5)] * 6,
                                     detect_every_n=detect_every_n,
                                     ms_per_frame=ms_per_frame),

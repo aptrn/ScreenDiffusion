@@ -36,6 +36,7 @@ from bench.portability import (
     FRAME_BUDGET_MS,
     TARGET_FPS,
     criterion_verdict,
+    detect_ms,
     fps_spread,
     ms_per_frame_with_detection,
     regions_per_frame,
@@ -48,6 +49,7 @@ from bench.results import (
     gpu_of,
     latest_per,
     measured_on,
+    sentence_case,
     table_separator,
 )
 
@@ -86,11 +88,6 @@ def staleness_of(result: Mapping) -> dict:
 def amortised_detect_ms(result: Mapping) -> Optional[float]:
     value = result["run"].get("amortised_detect_ms")
     return None if value is None else float(value)
-
-
-def detect_ms(result: Mapping) -> Optional[float]:
-    block = result["run"].get("detect")
-    return None if block is None else float(block["mean_ms"])
 
 
 def background_passed(result: Mapping) -> bool:
@@ -177,12 +174,13 @@ class Recommendation:
         return asdict(self)
 
 
-def _reason(meets: bool, headroom: bool, required: float, budget: float) -> str:
+def _reason(meets_budget: bool, has_headroom: bool, required: float,
+            budget: float) -> str:
     """Why this arm and not another - the rule, in the words it was applied in."""
-    if headroom:
+    if has_headroom:
         return (f"the freshest cadence measured that leaves at least "
                 f"{required:.2f} ms of the {budget:.2f} ms budget free")
-    if meets:
+    if meets_budget:
         return (f"the freshest cadence measured that fits the {budget:.2f} ms "
                 f"budget, though without the {required:.2f} ms of headroom a "
                 f"machine that is also capturing a screen and driving a GUI wants")
@@ -194,18 +192,19 @@ def _cadence_list(cadences: Sequence[int]) -> str:
     return ", ".join(f"detect_every_n {cadence}" for cadence in cadences)
 
 
-def _choose(qualified: Sequence[dict], results: Sequence[dict], budget_ms: float,
+def _choose(qualified: Sequence[dict], every_arm: Sequence[dict], budget_ms: float,
             required: float) -> dict:
     """The freshest arm that clears the budget by `required`, else that clears it
     at all, else the cheapest measured - which is not a recommendation and says so.
 
-    `qualified` is in cadence order, so the first match is the freshest one.
+    `qualified` is in cadence order, so the first match is the freshest one, and
+    `every_arm` is what is left to name when nothing qualified.
     """
     for wanted in (required, 0.0):
         for result in qualified:
             if headroom_ms(result, budget_ms) >= wanted:
                 return result
-    return min(qualified or results, key=ms_per_frame_with_detection)
+    return min(qualified or every_arm, key=ms_per_frame_with_detection)
 
 
 def recommend_cadence(results: Sequence[dict], budget_ms: float = FRAME_BUDGET_MS,
@@ -224,24 +223,26 @@ def recommend_cadence(results: Sequence[dict], budget_ms: float = FRAME_BUDGET_M
                        key=cadence_of)
     required = budget_ms * headroom_fraction
     chosen = _choose(qualified, results, budget_ms, required)
+    cadence, gpu = cadence_of(chosen), gpu_of(chosen)
+    cost = ms_per_frame_with_detection(chosen)
     headroom = headroom_ms(chosen, budget_ms)
+    meets_budget, has_headroom = headroom >= 0.0, headroom >= required
     refused = ("" if not disqualified else
                f"; {_cadence_list(disqualified)} disqualified for leaving "
                f"non-target pixels other than bit-identical")
     return Recommendation(
-        gpu=gpu_of(chosen), detect_every_n=cadence_of(chosen), arms=len(results),
-        disqualified=disqualified,
-        ms_per_frame_with_detection=ms_per_frame_with_detection(chosen),
+        gpu=gpu, detect_every_n=cadence, arms=len(results),
+        disqualified=disqualified, ms_per_frame_with_detection=cost,
         budget_ms=round(budget_ms, 4), headroom_ms=round(headroom, 4),
-        headroom_required_ms=round(required, 4), meets_budget=headroom >= 0.0,
-        has_headroom=headroom >= required,
+        headroom_required_ms=round(required, 4), meets_budget=meets_budget,
+        has_headroom=has_headroom,
         staleness=staleness_of(chosen).get("statement", ""),
         statement=(
-            f"`detect_every_n: {cadence_of(chosen)}` on {gpu_of(chosen)} - "
-            f"{ms_per_frame_with_detection(chosen):.2f} ms per frame with detection "
+            f"`detect_every_n: {cadence}` on {gpu} - "
+            f"{cost:.2f} ms per frame with detection "
             f"amortised, {headroom:+.2f} ms against the {budget_ms:.2f} ms a "
             f"{TARGET_FPS:.0f} FPS budget allows: "
-            f"{_reason(headroom >= 0.0, headroom >= required, required, budget_ms)}"
+            f"{_reason(meets_budget, has_headroom, required, budget_ms)}"
             f"{refused}"),
     )
 
@@ -283,7 +284,7 @@ def _by_cadence(results: Sequence[dict]) -> Dict[int, List[float]]:
 def repeat_spread(results: Sequence[dict], budget_ms: float = FRAME_BUDGET_MS,
                   headroom_fraction: float = HEADROOM_FRACTION) -> RepeatSpread:
     """Every committed run of each cadence - all of them, not the newest."""
-    costs = _by_cadence(list(results))
+    costs = _by_cadence(results)
     spreads = [max(runs) - min(runs) for runs in costs.values() if len(runs) > 1]
     worst = max(spreads) if spreads else 0.0
     line = budget_ms * (1.0 - headroom_fraction)
@@ -316,6 +317,16 @@ def repeat_spread(results: Sequence[dict], budget_ms: float = FRAME_BUDGET_MS,
 # --- step 1: the gap this sweep was contingent on ----------------------------
 
 
+# What there is to say when nothing on disk was measured on a deploy card. The
+# sweep still reports its arms; what it cannot report is whether the unmodified
+# path needed them.
+NO_BASELINE = (
+    "Step 1 has no deploy-hardware baseline to read: nothing in "
+    "`bench/results/selective/` was measured on a 3090 Ti or a 4090, so "
+    "whether the unmodified path has a gap is unanswered (issue #24)."
+)
+
+
 def baseline_statement(baseline: Optional[Mapping[str, dict]]) -> str:
     """Whether the unmodified 512x512 path had a gap, from #24's own records.
 
@@ -324,15 +335,9 @@ def baseline_statement(baseline: Optional[Mapping[str, dict]]) -> str:
     computed from the committed baseline JSON by the same function spec 7.4's
     verdict comes from.
     """
-    if not baseline:
-        return ("Step 1 has no deploy-hardware baseline to read: nothing in "
-                "`bench/results/selective/` was measured on a 3090 Ti or a 4090, so "
-                "whether the unmodified path has a gap is unanswered (issue #24).")
-    _, deploy = split_by_role(baseline)
+    _, deploy = split_by_role(baseline or {})
     if not deploy:
-        return ("Step 1 has no deploy-hardware baseline to read: nothing in "
-                "`bench/results/selective/` was measured on a 3090 Ti or a 4090, so "
-                "whether the unmodified path has a gap is unanswered (issue #24).")
+        return NO_BASELINE
     verdict = criterion_verdict(deploy[0])
     spread = fps_spread(baseline, verdict.gpu)
     if verdict.met:
@@ -341,9 +346,10 @@ def baseline_statement(baseline: Optional[Mapping[str, dict]]) -> str:
                    "engine would trade what the model can see for speed nobody "
                    "needs")
     else:
+        short_by = verdict.ms_per_frame_with_detection - verdict.budget_ms
         finding = (f"so the unmodified path is short of the budget by "
-                   f"{-1 * (verdict.budget_ms - verdict.ms_per_frame_with_detection):.2f} "
-                   f"ms, which is the gap the other levers have to close")
+                   f"{short_by:.2f} ms, which is the gap the other levers have "
+                   f"to close")
     return (f"Step 1, taken from issue #24's committed baseline rather than "
             f"re-derived: {verdict.statement}. {spread.statement} - {finding}.")
 
@@ -423,10 +429,10 @@ def _machine_sections(reduced: Sequence[dict], every_run: Sequence[dict],
             continue
         sections.append(f"**Recommended: {recommendation.statement}.**")
         if recommendation.staleness:
-            statement = recommendation.staleness
-            sections.append(f"What that costs: {statement[:1].upper()}{statement[1:]}.")
+            sections.append(
+                f"What that costs: {sentence_case(recommendation.staleness)}.")
         spread = repeat_spread(measured_on(every_run, gpu), budget_ms)
-        sections.append(f"{spread.statement[:1].upper()}{spread.statement[1:]}.")
+        sections.append(f"{sentence_case(spread.statement)}.")
         chosen = _recommended_arm(arms, recommendation)
         if chosen and chosen.get("comparison_clip"):
             sections.append(

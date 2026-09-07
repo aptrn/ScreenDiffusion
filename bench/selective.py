@@ -53,6 +53,7 @@ from bench.results import (
     measured_on,
     normalised_cell,
     require_recordable,
+    sentence_case,
     table_row,
     table_separator,
     timestamp_from,
@@ -152,6 +153,16 @@ CASES: Dict[str, SelectiveCase] = {
 }
 
 
+def is_cadence_arm(case: SelectiveCase) -> bool:
+    """Is this a run of the cadence sweep rather than a baseline? (issue #23)
+
+    The one predicate the two routing decisions below share, so a run cannot end
+    up in the sweep's directory under the baselines' heading or the other way
+    round.
+    """
+    return case.detect_every_n is not None
+
+
 def results_subdir(case: SelectiveCase) -> str:
     """Which results directory a run of `case` belongs in.
 
@@ -159,8 +170,8 @@ def results_subdir(case: SelectiveCase) -> str:
     because the selective directory is reduced to the newest run per (case, GPU)
     and an arm at another cadence would take that row over.
     """
-    return (SELECTIVE_RESULTS_SUBDIR if case.detect_every_n is None
-            else CADENCE_RESULTS_SUBDIR)
+    return (CADENCE_RESULTS_SUBDIR if is_cadence_arm(case)
+            else SELECTIVE_RESULTS_SUBDIR)
 
 
 def plan_record(plan) -> dict:
@@ -448,13 +459,15 @@ def _centre_shift_px(before, after) -> float:
     return (dx * dx + dy * dy) ** 0.5
 
 
-def _refresh_movement(snapshots: Sequence) -> Tuple[List[float], List[float]]:
-    """Per surviving track, `(iou, centre shift)` across each pair of consecutive ticks."""
+def _refresh_movement(ticks: Sequence) -> Tuple[List[float], List[float]]:
+    """Per surviving track, `(iou, centre shift)` across each pair of consecutive ticks.
+
+    Takes the per-tick snapshots `_first_per_tick` returns, not the per-frame ones.
+    """
     from detection import iou
 
     ious: List[float] = []
     shifts: List[float] = []
-    ticks = _first_per_tick(snapshots)
     for before, after in zip(ticks, ticks[1:]):
         later = {track.track_id: track.box for track in after.tracks}
         for track in before.tracks:
@@ -476,13 +489,13 @@ def staleness_summary(snapshots: Sequence, detect_every_n: int,
     """
     ages = [index - snapshot.frame_index
             for index, snapshot in enumerate(snapshots) if snapshot.ticks]
-    ious, shifts = _refresh_movement(snapshots)
+    ticks = _first_per_tick(snapshots)
+    ious, shifts = _refresh_movement(ticks)
     ids = {track.track_id for snapshot in snapshots for track in snapshot.tracks}
     concurrent = max((snapshot.count for snapshot in snapshots), default=0)
-    ticks = len(_first_per_tick(snapshots))
     mean_age = round(statistics.fmean(ages), 4) if ages else 0.0
     summary = StalenessSummary(
-        detect_every_n=detect_every_n, frames=len(snapshots), ticks=ticks,
+        detect_every_n=detect_every_n, frames=len(snapshots), ticks=len(ticks),
         frames_without_tracks=sum(1 for snapshot in snapshots if not snapshot.ticks),
         mean_age_frames=mean_age, worst_age_frames=max(ages) if ages else 0,
         mean_age_ms=(None if ms_per_frame is None
@@ -724,10 +737,23 @@ CADENCE_README_INTRO = (
     "to the newest run per (case, GPU) for spec 8.8 and 7.4, and an arm at another\n"
     "cadence sitting there would quietly become the figure those sections quote.\n"
 )
+CADENCE_README_TITLE = "# Detector cadence sweep results"
 CADENCE_README_PREAMBLE = (
-    f"# Detector cadence sweep results\n\n{CADENCE_README_INTRO}\n"
+    f"{CADENCE_README_TITLE}\n\n{CADENCE_README_INTRO}\n"
     f"{SELECTIVE_README_HEADER}\n{SELECTIVE_README_SEPARATOR}\n"
 )
+
+
+def readme_preamble(case: SelectiveCase) -> str:
+    """Which table a run of `case` is appended to, heading and all.
+
+    The other half of `results_subdir`, decided by the same `is_cadence_arm`
+    predicate: the two directories keep the same columns, so the row builder is
+    shared, but they exist for different reasons, so the paragraph above the table
+    is not.
+    """
+    return (CADENCE_README_PREAMBLE if is_cadence_arm(case)
+            else SELECTIVE_README_PREAMBLE)
 
 
 def append_selective_readme_row(result: ResultLike, readme_path: Path,
@@ -735,9 +761,9 @@ def append_selective_readme_row(result: ResultLike, readme_path: Path,
                                 preamble: str = SELECTIVE_README_PREAMBLE) -> None:
     """Append this run's row, creating the table if this is the first run.
 
-    `preamble` because the cadence sweep keeps the same table under a different
-    heading: same columns, so the row builder is shared, and a different reason to
-    exist, so the paragraph above it is not.
+    `preamble` is `readme_preamble(case)` for a run. A parameter rather than
+    something read back off the record, because a record does not know which of
+    the two tables it is about to join.
     """
     data = _as_dict(result)
     require_recordable(data)
@@ -798,7 +824,7 @@ def _gate_lines(result: dict) -> List[str]:
         statement = gate[name]["statement"]
         lines.append(f"- **{GATE_TITLES[name]}** - "
                      f"{'yes' if gate[name]['passed'] else 'NO'}. "
-                     f"{statement[:1].upper()}{statement[1:]}.")
+                     f"{sentence_case(statement)}.")
     return lines
 
 

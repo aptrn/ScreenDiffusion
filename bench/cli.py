@@ -40,12 +40,11 @@ from bench.primitive_results import format_primitive_report, load_primitive_resu
 from bench.primitives import CASES, CaseConfig
 from bench.scenarios import SCENARIOS, ScenarioConfig
 from bench.selective import (
-    CADENCE_README_PREAMBLE,
     CASES as SELECTIVE_CASES,
-    SELECTIVE_README_PREAMBLE,
     SelectiveCase,
     format_selective_report,
     load_selective_results,
+    readme_preamble,
     results_subdir,
 )
 
@@ -448,9 +447,9 @@ def run_selective_target(args: argparse.Namespace, case: SelectiveCase) -> int:
     Rendered through the same cached engine both primitives were compared on, so it
     passes the same engine-build guard a diffusion run does.
 
-    Where the record lands is `results_subdir`'s decision, not this function's: an
-    arm of the cadence sweep (issue #23) must not sit beside the baselines that
-    spec 8.8 and 7.4 quote.
+    Where the record lands, and under which heading, is `bench.selective`'s
+    decision rather than this function's: an arm of the cadence sweep (issue #23)
+    must not sit beside the baselines that spec 8.8 and 7.4 quote.
     """
     from bench.selective import ENGINE_SCENARIO
     from bench.selective_runner import run_selective
@@ -460,8 +459,7 @@ def run_selective_target(args: argparse.Namespace, case: SelectiveCase) -> int:
         case,
         cooldown=args.cooldown,
         results_dir=args.results_dir / results_subdir(case),
-        readme_preamble=(SELECTIVE_README_PREAMBLE if case.detect_every_n is None
-                         else CADENCE_README_PREAMBLE),
+        readme_preamble=readme_preamble(case),
         threshold_c=args.cooldown_threshold,
         cap_s=args.cooldown_cap,
         poll_interval_s=args.cooldown_poll,
