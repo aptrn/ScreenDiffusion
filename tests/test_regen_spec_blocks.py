@@ -34,15 +34,16 @@ def test_every_block_it_regenerates_still_has_its_anchors_in_the_spec():
         assert f"<!-- END {name} -->" in text, name
 
 
-def test_the_eight_generated_blocks_are_all_of_them():
+def test_the_nine_generated_blocks_are_all_of_them():
     """One entry per spec block generated from a committed result: 7.2's marginal
-    table, 8.1's detectors, 8.2's primitives, 8.8's selective path and its cadence
-    sweep, 7.4's deploy hardware, 8.9's plan swap, 8.5's stability sweep. A ninth
-    block added without an entry here is a hand-copy waiting."""
+    table, 8.1's detectors, 8.2's primitives and its capture geometry, 8.8's
+    selective path and its cadence sweep, 7.4's deploy hardware, 8.9's plan swap,
+    8.5's stability sweep. A tenth block added without an entry here is a hand-copy
+    waiting."""
     assert set(regen.BLOCKS) == {
         "MEASURED TABLE", "DETECTOR TABLE", "PRIMITIVE DECISION",
-        "SELECTIVE PATH", "DEPLOY HARDWARE", "CADENCE SWEEP", "PLAN SWAP",
-        "STABILITY SWEEP",
+        "CAPTURE GEOMETRY", "SELECTIVE PATH", "DEPLOY HARDWARE", "CADENCE SWEEP",
+        "PLAN SWAP", "STABILITY SWEEP",
     }
 
 

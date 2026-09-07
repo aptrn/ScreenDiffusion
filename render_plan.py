@@ -731,6 +731,8 @@ def validate_plan(raw: Any, previous_version: int = INITIAL_PLAN_VERSION,
 
 def plan_from_fields(target: str, style: str, negative_prompt: str = "",
                      region: str = DEFAULT_REGION, denoise: float = DEFAULT_DENOISE,
+                     primitive: str = DEFAULT_PRIMITIVE,
+                     max_instances: int = DEFAULT_MAX_INSTANCES,
                      previous_version: int = INITIAL_PLAN_VERSION,
                      detector: Optional[DetectorVocabulary] = None) -> PlanValidation:
     """The GUI's producer: a target field and a style field become a plan.
@@ -747,6 +749,7 @@ def plan_from_fields(target: str, style: str, negative_prompt: str = "",
     raw: Dict[str, Any] = {
         "source_prompt": style,
         "negative_prompt": negative_prompt,
+        GLOBAL_KEY: {"primitive": primitive},
     }
     if concept:
         raw["targets"] = [{
@@ -756,6 +759,7 @@ def plan_from_fields(target: str, style: str, negative_prompt: str = "",
             "prompt": style,
             "negative_prompt": negative_prompt,
             "denoise": denoise,
+            "max_instances": max_instances,
         }]
     return validate_plan(raw, previous_version=previous_version, detector=detector)
 

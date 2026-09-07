@@ -154,8 +154,25 @@ steadiness for response roughly one for one (0.25 → −14% flicker, −13%
 response). 1.49/255 is the floor this path renders at, not a figure waiting to
 be improved.
 
-All six case-table blocks (`--detector-report`, `--primitive-report`,
-`--selective-report`, `--cadence-report`, `--swap-report`, `--stability-report`)
+The same slot also takes a **capture-geometry case** (`capture-people`,
+`capture-dog`) - issue #39. One run renders the same committed clip at 512x512,
+1280x720 and 1920x1080 under *both* rendering primitives at K=1, through the
+shipped scheduler and compositor and the one 512x512 engine, and writes to
+`bench/results/capture/`. Each arm sweeps its own denoise ladder first, because
+spec 8.2 measured that the two primitives need different strengths for the same
+job. It records the cost **per stage** - the resize onto the canvas, the diffusion
+call, the composite, the device-to-host copy, and the IPC and preview the GUI
+process pays - and how many canvas pixels across the rendered region actually got,
+which is the whole claim in numbers. The timed pass renders and does nothing else:
+folding the metrics, the host copy and the queue into it charged their allocator
+churn to the diffusion call, which then appeared to grow from 15.8 ms to 43 ms as
+the capture grew. It does not - the canvas is fixed, and a bare probe measures
+15.5 / 15.3 / 16.8 ms at the three geometries. `--capture-report` regenerates the
+block in spec 8.2.
+
+All seven case-table blocks (`--detector-report`, `--primitive-report`,
+`--capture-report`, `--selective-report`, `--cadence-report`, `--swap-report`,
+`--stability-report`)
 keep the newest run **per (thing measured, GPU)**, not per name. A 4090 run
 therefore adds a row beside the 3080's instead of erasing it, which is what keeps
 spec 7.4's portability table checkable. When rows span GPUs the table grows a
@@ -175,7 +192,7 @@ of them is the wrong answer in a quotable shape. The 30 FPS verdict it prints is
 judged on `ms/frame with detection`, carries the region count and the clock
 regime, and says whether every committed run on the card landed on the same side
 of the target — a verdict inside the run-to-run spread is labelled one.
-`scripts/regen_spec_blocks.py` pastes all eight generated blocks back into the
+`scripts/regen_spec_blocks.py` pastes all nine generated blocks back into the
 spec, so a regeneration is never a hand-copy that drops a digit.
 
 The clips in `bench/clips/` are committed and so are their box tracks
@@ -204,6 +221,24 @@ runtime control means adding a message type there, not a shared object.
 
 The capture thread always yields the newest frame and sheds the rest. Under load the
 pipeline drops frames rather than falling behind — preserve that.
+
+**The capture is not the diffusion canvas** (issue #39, spec 8.2). Every TensorRT
+engine this app builds is 512x512 whatever its directory name claims (spec 7.2),
+and until this issue the capture window was the same 512x512 - too small to get a
+whole object into frame. `DIFFUSION_CANVAS` and `CAPTURE_PRESETS` in
+`main_gpu_addon.py` split the two: the capture-size box sets what is *grabbed* and
+the capture thread's resolution, the wrapper is always built at the canvas, and the
+frame loop resizes between them with `device_compositor.to_canvas`. Raising the
+capture *alone* is a regression - under `masked` a bigger frame gives each object
+fewer diffusion pixels - which is why the plan's `global.primitive` lands with it.
+`crop` spends the frame's one diffusion call on a single region instead of on the
+whole squeezed frame (`crop_to_canvas`), so an object gets the whole 512x512 canvas;
+it is honoured only on a frame that selected exactly one region, and falls back to
+`masked` on any other, because two regions would be two calls. `validate_plan` says
+so in its notes the moment a producer asks for `crop` at `max_instances` above 1.
+The composite is unchanged: `composite(source, rendered, alpha, origin)` is one body
+for both primitives, and outside the alpha the output is the captured byte at any
+capture size.
 
 `render_plan.py` is the **Render Plan** — spec §6, what to restyle and how. Stdlib
 only, so both processes import it and neither pays for it. `validate_plan` is the
@@ -469,6 +504,15 @@ ever, so an empty field cannot overwrite it.
   flicker of 1.49/255 there is nothing worth buying, which is why the default is
   0.0. That verdict is about *this* denoise on *this* case: a stronger `denoise`
   boils more, and the answer could change.
+- **`crop` wins the sub-region restyle and loses the identity change, measured
+  twice.** At K=1 the two primitives cost within 8% of each other at every capture
+  geometry, so §8.2's 5.87x - which was entirely A's call count at six objects -
+  does not apply; crop diffuses the region at 512 px against masked's 69 at 1080p
+  and expresses the priority case. It still cannot do `identity-dog`: 9-10 frames
+  of 48 read as a cat against masked's 38-39, because a 424x280 box stretched onto
+  a square canvas comes back at the wrong aspect, and a bigger capture does not fix
+  a distortion that is proportional. Spec 8.2. Do not read "crop is the primitive"
+  as a general statement - it is a per-case one.
 - **A feather that bleeds outside its region breaks the whole criterion.** The
   selective path's promise is that non-target pixels are the captured bytes, so
   the alpha ramp climbs inwards from the region's own edge and is exactly 0 one

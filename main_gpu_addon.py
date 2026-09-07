@@ -20,6 +20,8 @@ import ctypes.wintypes as wint
 # The Render Plan (issue #6, spec 6). Stdlib only, no torch and no GUI, so both this
 # process and the worker can import it and a plan can be validated on either side.
 from render_plan import (
+    CROP as PLAN_CROP,
+    MASKED as PLAN_MASKED,
     INITIAL_PLAN_VERSION,
     ActivePlan,
     RenderPlan,
@@ -648,17 +650,44 @@ class PlanUpdate(NamedTuple):
     message: Optional[Dict[str, Any]] = None
     reason: str = ""
 
+# The Detail box beside the two plan fields (issue #39, spec 8.2). One choice
+# rather than two, because `crop` only makes sense at K=1 - above one slot the
+# compositor falls back to `masked` on every frame - and a user should not be able
+# to set the two inconsistently. The default is what the app has always done and
+# what every committed measurement in this repo was taken under.
+DETAIL_ALL_OBJECTS = "All objects, one frame (masked)"
+DETAIL_ONE_OBJECT = "One object, full canvas (crop)"
+DETAIL_PRESETS: Dict[str, Tuple[str, int]] = {
+    DETAIL_ALL_OBJECTS: (PLAN_MASKED, DEFAULT_MAX_INSTANCES),
+    DETAIL_ONE_OBJECT: (PLAN_CROP, 1),
+}
+
+
+def detail_plan(label: str) -> Tuple[str, int]:
+    """The primitive and the slot count a Detail label asks for.
+
+    Unknown falls back to today's behaviour rather than raising: the label reaches
+    here from a widget whose value a stale preference could have set, and the plan
+    this app has always rendered is a better answer than no plan at all.
+    """
+    return DETAIL_PRESETS.get(label, DETAIL_PRESETS[DETAIL_ALL_OBJECTS])
+
+
 def _plan_status_line(plan: RenderPlan, notes: Sequence[str] = ()) -> str:
     """The line the status bar carries for a plan the GUI just built.
 
     Names one concept and one region because that is all a plan built from two
-    fields can hold, and says "every" rather than naming instances: issue #5 chose
-    the full-frame masked primitive, so one prompt embedding covers every match and
-    there are no per-object styles to imply.
+    fields can hold. It says "every" or "one at a time" from the plan's own slot
+    count: under `crop` the frame renders a single object and the scheduler's
+    round-robin moves on to the next one, which is a different promise from
+    restyling all of them and should read as one.
     """
     target = plan.honoured_target
     if target is None:
         line = "Plan: whole frame, no target"
+    elif target.max_instances == 1:
+        line = (f"Plan: restyle one {target.concept} ({target.region}) at a time, "
+                f"at the full canvas")
     else:
         line = f"Plan: restyle every {target.concept} ({target.region})"
     if notes:
@@ -666,7 +695,8 @@ def _plan_status_line(plan: RenderPlan, notes: Sequence[str] = ()) -> str:
     return line
 
 def _plan_update_from_fields(target: str, style: str, prompt: str,
-                             negative_prompt: str) -> PlanUpdate:
+                             negative_prompt: str,
+                             detail: str = DETAIL_ALL_OBJECTS) -> PlanUpdate:
     """The GUI's fields as a control message, or the reason there is not one.
 
     The producer validates so a refusal is visible where it was typed instead of
@@ -679,8 +709,10 @@ def _plan_update_from_fields(target: str, style: str, prompt: str,
     hand the engine an empty embedding and call it a style. The boxes arrive with
     the newline Tk's `get` appends, so everything is stripped on the way in.
     """
+    primitive, max_instances = detail_plan(detail)
     result = plan_from_fields(target.strip(), style.strip() or prompt.strip(),
-                              negative_prompt=negative_prompt.strip())
+                              negative_prompt=negative_prompt.strip(),
+                              primitive=primitive, max_instances=max_instances)
     if result.plan is None:
         return PlanUpdate(status=f"Plan rejected: {result.reason}", reason=result.reason)
     return PlanUpdate(status=_plan_status_line(result.plan, result.notes),
@@ -1410,6 +1442,7 @@ class StreamGUI(ctk.CTk):
         # `mode: "global"` - the whole frame under the prompt box, as it always was.
         self.target_var = ctk.StringVar(value="")
         self.style_var = ctk.StringVar(value="")
+        self.detail_var = ctk.StringVar(value=DETAIL_ALL_OBJECTS)
         self.seed_var = ctk.StringVar(value="1")
         # The capture geometry, which since issue #39 is not the engine's canvas.
         # `width_var`/`height_var` are what reaches the worker; `capture_var` is
@@ -1948,6 +1981,15 @@ class StreamGUI(ctk.CTk):
         self._w_style_entry = ctk.CTkEntry(plan_frame, textvariable=self.style_var)
         self._w_style_entry.grid(row=1, column=1, sticky="ew", padx=10, pady=(4, 10))
         self._w_style_entry.bind("<KeyRelease>", self._on_plan_field_changed)
+        # Detail: where the frame's one diffusion call is spent (issue #39). Not a
+        # lockable - like the two fields beside it, changing what is restyled must
+        # not mean stopping the run - and it is a plan field, so it costs no
+        # engine rebuild.
+        ctk.CTkLabel(plan_frame, text="Detail  -  where the frame's one diffusion call goes", anchor="w").grid(row=2, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 0))
+        self._w_detail_combo = ctk.CTkComboBox(
+            plan_frame, values=list(DETAIL_PRESETS), variable=self.detail_var,
+            command=self._on_plan_field_changed)
+        self._w_detail_combo.grid(row=3, column=0, columnspan=2, sticky="ew", padx=10, pady=(4, 10))
         prompt_frame = ctk.CTkFrame(prompts_row, corner_radius=10); prompt_frame.grid(row=1, column=0, sticky="nsew", padx=(0, 6))
         prompt_frame.grid_rowconfigure(1, weight=1); prompt_frame.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(prompt_frame, text="Prompt", anchor="w").grid(row=0, column=0, sticky="ew", padx=10, pady=(8, 0))
@@ -2135,6 +2177,7 @@ class StreamGUI(ctk.CTk):
         update = _plan_update_from_fields(
             self.target_var.get(), self.style_var.get(),
             self.prompt_txt.get("1.0", "end"), self.neg_prompt_txt.get("1.0", "end"),
+            self.detail_var.get(),
         )
         self.status_var.set(update.status)
         if update.message is not None and getattr(self, "control_q", None):
