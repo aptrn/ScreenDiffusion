@@ -22,8 +22,8 @@ import pytest
 from bench.detector_results import format_detector_report, latest_per_detector
 from bench.primitive_results import format_primitive_report
 from bench.primitive_results import latest_per_case as latest_primitive_per_case
-from bench.results import UNKNOWN_GPU, gpu_of, latest_per
-from bench.selective import format_selective_report
+from bench.results import UNKNOWN_GPU, GpuColumn, gpu_of, latest_per
+from bench.selective import CASES, PRIORITY_CASE, format_selective_report
 from bench.selective import latest_per_case as latest_selective_per_case
 
 from test_bench_detector_results import a_detector_result
@@ -86,6 +86,24 @@ def test_two_records_with_no_machine_do_not_delete_each_other():
     assert sorted(kept) == ["a.json", "b.json"]
 
 
+# --- the column ---------------------------------------------------------------
+
+
+def test_the_gpu_column_lands_in_the_same_place_in_the_header_and_in_a_row():
+    """One field places both, so a table cannot head the wrong cells."""
+    column = GpuColumn.for_gpus([LAPTOP, DESKTOP], index=2)
+    assert column.header("| a | b | c |") == "| a | b | GPU | c |"
+    row = column.row(["a", "b", "c"], {"hardware": {"gpu_name": LAPTOP}})
+    assert row == f"| a | b | {LAPTOP} | c |"
+
+
+def test_one_machine_leaves_the_header_and_the_row_exactly_as_they_were():
+    column = GpuColumn.for_gpus([LAPTOP])
+    assert column.header("| a | b | c |") == "| a | b | c |"
+    row = column.row(["a", "b", "c"], {"hardware": {"gpu_name": LAPTOP}})
+    assert row == "| a | b | c |"
+
+
 # --- the selective block (spec 8.8) -------------------------------------------
 
 
@@ -108,8 +126,8 @@ def test_a_selective_case_from_two_gpus_survives_as_two_labelled_rows():
     report = format_selective_report(two_gpu_selective())
     rows = table_rows(report, "selective-people")
     assert len(rows) == 2
-    assert [gpu for gpu in (LAPTOP, DESKTOP) if any(gpu in row for row in rows)] == \
-        [LAPTOP, DESKTOP]
+    assert any(LAPTOP in row for row in rows)
+    assert any(DESKTOP in row for row in rows)
 
 
 def test_the_selective_table_grows_a_gpu_column_only_when_it_needs_one():
@@ -140,8 +158,6 @@ def test_one_machine_still_says_the_gate_was_measured_without_qualifying_it():
 
 def test_the_selective_rows_are_deterministic_and_group_a_case_by_machine():
     """Two cases over two GPUs, fed in shuffled: the order must not depend on it."""
-    from bench.selective import CASES, PRIORITY_CASE
-
     other = CASES[PRIORITY_CASE].replace(name="selective-dogs")
     records = {
         "d-desktop.json": a_selective_result(case=other, hardware=on(DESKTOP)).to_dict(),
@@ -203,6 +219,15 @@ def test_a_detector_measured_on_two_gpus_survives_as_labelled_rows():
     report = format_detector_report(two_gpu_detector())
     assert "| GPU |" in report
     assert LAPTOP in report and DESKTOP in report
+
+
+def test_the_detector_evidence_table_carries_the_column_too_after_its_detector():
+    """Two tables in one block, and the evidence rows are the ones a reader
+    mistakes for the laptop's when they are not labelled."""
+    report = format_detector_report(two_gpu_detector())
+    header = next(line for line in report.splitlines()
+                  if line.startswith("| concept |"))
+    assert header.split(" | ").index("GPU") == 3
 
 
 def test_the_detector_recommendation_is_made_per_machine():

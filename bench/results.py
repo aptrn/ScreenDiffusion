@@ -270,8 +270,9 @@ def latest_per(results: Mapping[str, dict],
         # A record that does not name its machine cannot be shown to supersede
         # another one, so it stands alone under its own filename rather than
         # joining a group of anonymous results and losing to the newest of them.
-        key = (name_of(result), gpu if gpu != UNKNOWN_GPU else filename)
+        machine = gpu if gpu != UNKNOWN_GPU else filename
         finished = str(result["run"]["finished_utc"])
+        key = (name_of(result), machine)
         if key not in newest or finished > newest[key][1]:
             newest[key] = (filename, finished)
     return {filename: results[filename] for filename, _ in newest.values()}
@@ -280,6 +281,25 @@ def latest_per(results: Mapping[str, dict],
 def distinct_gpus(results: Sequence[dict]) -> List[str]:
     """Every machine these records come from, sorted - the report's grouping axis."""
     return sorted({gpu_of(result) for result in results})
+
+
+def measured_on(results: Sequence[dict], gpu: str) -> List[dict]:
+    """The records from one machine, in the order they were given.
+
+    A verdict - a recommendation, a decision, a Gate line - is a claim about one
+    machine, so a report that spans two takes each verdict from one machine's
+    records at a time (issue #25).
+    """
+    return [result for result in results if gpu_of(result) == gpu]
+
+
+def gpu_suffix(gpu: str, gpus: Sequence[str]) -> str:
+    """` (<GPU>)` to qualify a line, or nothing when the block is from one machine.
+
+    What it avoids is two identical-looking bullets the first time a second machine
+    measures the same case; with one machine the line reads as it always did.
+    """
+    return "" if len(gpus) == 1 else f" ({gpu})"
 
 
 def table_row(cells: Sequence[str]) -> str:
@@ -303,24 +323,34 @@ class GpuColumn:
     what it rendered before, so the three committed spec blocks do not churn and
     their byte-match tests keep passing while this lands (issue #25's third trap).
     On with two, so no row implies a machine it was not measured on.
+
+    `index` is where the column sits, and it is a field rather than an argument to
+    both `header` and `row` because a table whose two disagreed would put the
+    heading over the wrong cells.
     """
 
     shown: bool
+    index: int = 1
 
-    def header(self, header: str, index: int = 1) -> str:
-        """`header` with `GPU` inserted at `index`, or unchanged."""
-        return header if not self.shown else \
-            " | ".join(self._inserted(header.split(" | "), GPU_COLUMN, index))
+    @classmethod
+    def for_gpus(cls, gpus: Sequence[str], index: int = 1) -> "GpuColumn":
+        """The column a table of records from `gpus` needs: shown past one machine."""
+        return cls(shown=len(gpus) > 1, index=index)
 
-    def row(self, cells: Sequence[str], result: dict, index: int = 1) -> str:
-        """One row, carrying its machine at `index` when the table has that column."""
-        cells = list(cells)
-        return table_row(cells if not self.shown
-                         else self._inserted(cells, gpu_of(result), index))
+    def header(self, header: str) -> str:
+        """`header` with `GPU` inserted at `self.index`, or unchanged."""
+        if not self.shown:
+            return header
+        return " | ".join(self._inserted(header.split(" | "), GPU_COLUMN))
 
-    @staticmethod
-    def _inserted(cells: List[str], value: str, index: int) -> List[str]:
-        return cells[:index] + [value] + cells[index:]
+    def row(self, cells: Sequence[str], result: dict) -> str:
+        """One row, carrying its machine when the table has that column."""
+        if not self.shown:
+            return table_row(cells)
+        return table_row(self._inserted(cells, gpu_of(result)))
+
+    def _inserted(self, cells: Sequence[str], value: str) -> List[str]:
+        return [*cells[:self.index], value, *cells[self.index:]]
 
 
 def format_number(value: Optional[float], digits: int = 1) -> str:

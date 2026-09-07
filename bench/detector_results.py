@@ -40,8 +40,10 @@ from bench.results import (
     distinct_gpus,
     format_number,
     gpu_of,
+    gpu_suffix,
     latest_per,
     load_records,
+    measured_on,
     normalised_cell,
     require_recordable,
     table_row,
@@ -397,6 +399,9 @@ REPORT_HEADER = ("| detector | role | vocabulary | ms/detect | p95 ms |"
                  " vocabulary change (ms) |")
 EVIDENCE_HEADER = ("| concept | kind | detector | asked for | resolved |"
                    " top confidence | strongest other label | frame |")
+# Where the `GPU` column goes in the evidence table: after `detector`, because a
+# row there is identified by the concept *and* the detector that was asked for it.
+EVIDENCE_GPU_INDEX = 3
 
 
 def _report_preamble(results: Sequence[dict], gpus: Sequence[str]) -> str:
@@ -444,11 +449,6 @@ def _other_cell(item: dict) -> str:
     return "-" if not others else f"{others[0]['label']} {others[0]['confidence']:.2f}"
 
 
-# Where the `GPU` column goes in the evidence table: after `detector`, because a
-# row there is identified by the concept *and* the detector that was asked for it.
-EVIDENCE_GPU_INDEX = 3
-
-
 def _evidence_rows(results: Sequence[dict], column: GpuColumn) -> List[str]:
     rows = []
     for result in results:
@@ -462,7 +462,7 @@ def _evidence_rows(results: Sequence[dict], column: GpuColumn) -> List[str]:
                 format_number(item["top_confidence"], 3),
                 _other_cell(item),
                 item["frame"],
-            ], result, EVIDENCE_GPU_INDEX))
+            ], result))
     return rows
 
 
@@ -522,10 +522,10 @@ def _recommendation_lines(results: Sequence[dict], gpus: Sequence[str],
     """
     lines = []
     for gpu in gpus:
-        measured = [result for result in results if gpu_of(result) == gpu]
+        measured = measured_on(results, gpu)
         recommendation = recommend(candidates_from(measured), cadence=cadence)
-        label = "Recommendation" if len(gpus) == 1 else f"Recommendation ({gpu})"
-        lines.append(f"**{label}: {recommendation.name}.** {recommendation.reason}"
+        lines.append(f"**Recommendation{gpu_suffix(gpu, gpus)}: "
+                     f"{recommendation.name}.** {recommendation.reason}"
                      f"{_ranking_basis(measured)}")
     return lines
 
@@ -548,9 +548,10 @@ def format_detector_report(results: Mapping[str, dict],
         return "no detector result committed yet"
 
     gpus = distinct_gpus(ordered)
-    column = GpuColumn(shown=len(gpus) > 1)
+    column = GpuColumn.for_gpus(gpus)
+    evidence_column = GpuColumn.for_gpus(gpus, EVIDENCE_GPU_INDEX)
     header = column.header(REPORT_HEADER)
-    evidence_header = column.header(EVIDENCE_HEADER, EVIDENCE_GPU_INDEX)
+    evidence_header = evidence_column.header(EVIDENCE_HEADER)
     sections = [
         _report_preamble(ordered, gpus),
         "\n".join([header, table_separator(header)]

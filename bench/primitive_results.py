@@ -44,8 +44,10 @@ from bench.results import (
     distinct_gpus,
     format_number,
     gpu_of,
+    gpu_suffix,
     latest_per,
     load_records,
+    measured_on,
     require_recordable,
     table_row,
     table_separator,
@@ -408,12 +410,12 @@ def decision_from(results: Sequence[dict]) -> Decision:
 
 
 def _on(result: dict, gpus: Sequence[str]) -> str:
-    """` (<GPU>)`, or nothing when every line in the block is from one machine.
+    """` (<GPU>)` for the machine one record came from - `gpu_suffix`, given a record.
 
     A bullet that names only its case would be two identical-looking bullets once a
     second machine measured the same case (issue #25).
     """
-    return "" if len(gpus) == 1 else f" ({gpu_of(result)})"
+    return gpu_suffix(gpu_of(result), gpus)
 
 
 def _denoise_lines(results: Sequence[dict], gpus: Sequence[str]) -> List[str]:
@@ -464,11 +466,9 @@ def _decision_lines(results: Sequence[dict], gpus: Sequence[str]) -> List[str]:
     """
     lines = []
     for gpu in gpus:
-        decision = decision_from([result for result in results
-                                  if gpu_of(result) == gpu])
-        label = "Decision" if len(gpus) == 1 else f"Decision ({gpu})"
+        decision = decision_from(measured_on(results, gpu))
         lines.append(
-            f"**{label}: "
+            f"**Decision{gpu_suffix(gpu, gpus)}: "
             f"{decision.primitive or 'none of the implemented primitives'}.** "
             f"{decision.statement}")
     return lines
@@ -492,7 +492,7 @@ def format_primitive_report(results: Mapping[str, dict]) -> str:
         return "no primitive comparison committed yet"
 
     gpus = distinct_gpus(ordered)
-    column = GpuColumn(shown=len(gpus) > 1)
+    column = GpuColumn.for_gpus(gpus)
     header = column.header(REPORT_HEADER)
     clips = [f"`{result['comparison_clip']}`" for result in ordered
              if result.get("comparison_clip")]

@@ -48,6 +48,7 @@ from bench.results import (
     gpu_of,
     latest_per,
     load_records,
+    measured_on,
     normalised_cell,
     require_recordable,
     table_row,
@@ -604,6 +605,12 @@ def _measured_phrase(result: dict) -> str:
             f"{case['canvas']}x{case['canvas']} capture canvas")
 
 
+def _clock_states(results: Sequence[dict]) -> str:
+    """The clock regimes these records were measured under, deduplicated."""
+    return ", ".join(sorted({result["hardware"]["clock_lock"]["state"]
+                             for result in results}))
+
+
 def _clock_phrase(results: Sequence[dict], gpus: Sequence[str]) -> str:
     """Which regime produced these figures, and whose figures they are.
 
@@ -611,15 +618,11 @@ def _clock_phrase(results: Sequence[dict], gpus: Sequence[str]) -> str:
     the other one's rows were measured on it (issue #25 step 3), so every machine
     is named with its own regime and the reader is pointed at the row.
     """
-    def state(result: dict) -> str:
-        return result["hardware"]["clock_lock"]["state"]
-
     if len(gpus) == 1:
-        return (f"Clocks {', '.join(sorted({state(r) for r in results}))}; "
+        return (f"Clocks {_clock_states(results)}; "
                 f"absolute figures belong to this GPU (spec 7.4)")
-    per_gpu = ", ".join(
-        f"{gpu} {', '.join(sorted({state(r) for r in results if gpu_of(r) == gpu}))}"
-        for gpu in gpus)
+    per_gpu = ", ".join(f"{gpu} {_clock_states(measured_on(results, gpu))}"
+                        for gpu in gpus)
     return (f"Clocks: {per_gpu}; absolute figures belong to the GPU in the row "
             f"(spec 7.4)")
 
@@ -641,7 +644,7 @@ def _gate_sections(results: Sequence[dict], gpus: Sequence[str]) -> List[str]:
     """
     sections = []
     for gpu in gpus:
-        primary = next(result for result in results if gpu_of(result) == gpu)
+        primary = measured_on(results, gpu)[0]
         sections.append("The Gate, measured:" if len(gpus) == 1
                         else f"The Gate, measured on {gpu}:")
         sections.append("\n".join(_gate_lines(primary)))
@@ -669,7 +672,7 @@ def format_selective_report(results: Mapping[str, dict]) -> str:
         return "no selective render run committed yet"
 
     gpus = distinct_gpus(ordered)
-    column = GpuColumn(shown=len(gpus) > 1)
+    column = GpuColumn.for_gpus(gpus)
     header = column.header(REPORT_HEADER)
     sections = [
         _report_preamble(ordered, gpus),
