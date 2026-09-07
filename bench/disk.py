@@ -20,9 +20,10 @@ from typing import Callable, Sequence, Union
 
 from bench.fingerprint import utc_now
 
-BYTES_PER_GIB = 1024 ** 3
-# 15 GB, the floor issue #3 names: room for two engines plus their ONNX scratch.
-MIN_FREE_BYTES_FOR_ENGINE_BUILD = 15 * BYTES_PER_GIB
+# One floor, in the one place the app reads it from too: `StreamGUI` refuses the
+# same build at the same number before Start (issue #38 step 6), and two floors is
+# one floor too many.
+from engine_cache import BYTES_PER_GIB, MIN_FREE_BYTES_FOR_ENGINE_BUILD
 
 # `shutil.disk_usage`: (total, used, free).
 Usage = Callable[[Union[str, Path]], Sequence[int]]

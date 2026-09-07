@@ -35,8 +35,13 @@ def usage(free_gib: float, total_gib: float = 954.0):
     return _usage
 
 
-def test_the_threshold_is_the_fifteen_gigabytes_the_issue_names():
-    assert MIN_FREE_BYTES_FOR_ENGINE_BUILD == 15 * GIB
+def test_the_threshold_is_the_one_floor_the_app_and_the_harness_share():
+    """Issue #3 set it at 15 GB; issue #38 raised it to 20 and moved it into
+    `engine_cache`, where `StreamGUI` reads the same number before Start - a
+    build the window allows and the harness refuses is two floors, not one."""
+    from engine_cache import MIN_FREE_BYTES_FOR_ENGINE_BUILD as shared
+
+    assert MIN_FREE_BYTES_FOR_ENGINE_BUILD == 20 * GIB == shared
 
 
 def test_a_reading_records_the_headroom_and_the_verdict(tmp_path):
@@ -64,7 +69,7 @@ def test_too_little_space_stops_cleanly_and_says_how_much_is_free(tmp_path):
     with pytest.raises(NotEnoughDiskSpace) as excinfo:
         require_free_space(record)
     message = str(excinfo.value)
-    assert "9.0" in message and "15.0" in message
+    assert "9.0" in message and "20.0" in message
 
 
 def test_the_record_serialises_to_plain_types(tmp_path):
@@ -83,7 +88,7 @@ def test_a_real_volume_can_be_read(tmp_path):
 
 
 def test_the_engine_build_guard_refuses_a_build_on_a_full_volume(tmp_path):
-    """Step 3 of the issue: check free disk before each build, stop cleanly under 15 GB."""
+    """Step 3 of the issue: check free disk before each build, stop cleanly under it."""
     trt = SCENARIOS["img2img-tensorrt-512x512-b4"]
 
     with pytest.raises(NotEnoughDiskSpace):

@@ -1,0 +1,176 @@
+{
+  "arms": [
+    {
+      "change_vs_base": 0.0,
+      "change_vs_source": 14.5756,
+      "control_change": 0.0,
+      "error": null,
+      "filename": "",
+      "flicker": 2.509093,
+      "format": "no LoRA",
+      "frames": 24,
+      "loaded": true,
+      "ms_per_frame": 53.3345,
+      "net_change": 14.5756,
+      "scale": 0.0,
+      "source": "",
+      "style": "base"
+    },
+    {
+      "change_vs_base": 19.2317,
+      "change_vs_source": 19.7412,
+      "control_change": 0.0,
+      "error": null,
+      "filename": "C:\\Users\\Davide Quayola\\Documents\\code\\ScreenDiffusion\\models\\loras\\style-loving-vincent.safetensors",
+      "flicker": 1.306584,
+      "format": "LoRA (kohya, linear only)",
+      "frames": 24,
+      "loaded": true,
+      "ms_per_frame": 46.6917,
+      "net_change": 19.7412,
+      "scale": 0.9,
+      "source": "vislupus/SD1.5-LoRA-Loving-Vincent-Style",
+      "style": "loving-vincent"
+    },
+    {
+      "change_vs_base": 5.3248,
+      "change_vs_source": 15.1669,
+      "control_change": 0.0,
+      "error": null,
+      "filename": "C:\\Users\\Davide Quayola\\Documents\\code\\ScreenDiffusion\\models\\loras\\style-illusion-pattern.safetensors",
+      "flicker": 2.553667,
+      "format": "LoRA (kohya, linear only)",
+      "frames": 24,
+      "loaded": true,
+      "ms_per_frame": 46.7164,
+      "net_change": 15.1669,
+      "scale": 0.9,
+      "source": "Norod78/SD15-IllusionDiffusionPattern-LoRA",
+      "style": "illusion-pattern"
+    },
+    {
+      "change_vs_base": 0.0,
+      "change_vs_source": 0.0,
+      "control_change": 0.0,
+      "error": "Failed to load LoRA 'style-locon-probe.safetensors': 'UNet2DConditionModel' object has no attribute 'conv'\n\nThe LoRA must match the base model's architecture (sd-turbo is SD 2.1-based), and LoRAs containing convolution layers (LoCon/LyCORIS) are not supported by diffusers 0.24.0.",
+      "filename": "C:\\Users\\Davide Quayola\\Documents\\code\\ScreenDiffusion\\models\\loras\\style-locon-probe.safetensors",
+      "flicker": 0.0,
+      "format": "LoCon / LyCORIS (198 conv keys)",
+      "frames": 24,
+      "loaded": false,
+      "ms_per_frame": 0.0,
+      "net_change": 0.0,
+      "scale": 0.9,
+      "source": "pmczip/SD1.5_LyCORIS_Models",
+      "style": "locon-probe"
+    }
+  ],
+  "case": {
+    "base_scenario": "img2img-none-512x512-b1-sd15",
+    "canvas": 512,
+    "clip": "people.mp4",
+    "denoise": 0.62,
+    "frames": 24,
+    "name": "style-sd15",
+    "note": "Do style LoRAs load on SD 1.5 + LCM-LoRA and visibly change the output? Rendered on the `none` accelerator, which is the hot-swappable path - under `tensorrt` each of these would be its own ~5 GB engine, which is the decision step 4 makes.",
+    "prompt": "a painting",
+    "start_frame": 0,
+    "steps": 4,
+    "styles": [
+      "loving-vincent",
+      "illusion-pattern",
+      "locon-probe"
+    ],
+    "warmup_frames": 3
+  },
+  "clip": {
+    "fps": 25.0,
+    "frames_used": 24,
+    "height": 720,
+    "name": "people.mp4",
+    "sha256": "c509b3699045b605d62e66abf534ce096078b983a0b666e04039b1168dc7b54d",
+    "start_frame": 0,
+    "total_frames": 377,
+    "width": 1280
+  },
+  "clock_normalization": {
+    "basis_mhz": 3150.0,
+    "basis_source": "clocks.max.sm",
+    "method": "ms_per_frame * time-weighted mean SM clock / basis clock",
+    "ms_per_frame": 39.0708,
+    "note": "Clocks were not locked (unlocked), so the raw figure carries this run's clock. This is a first-order estimate of the same work at 3150 MHz, not a measurement, and not a substitute for `nvidia-smi --lock-gpu-clocks` from an elevated shell.",
+    "regime": "unlocked",
+    "sampled_mean_sm_clock_mhz": 2307.6
+  },
+  "comparison_clip": "style-sd15-20260907-183158Z-styles.mp4",
+  "comparison_still": "style-sd15-20260907-183158Z-styles.jpg",
+  "cooldown": {
+    "cap_s": 120.0,
+    "enabled": true,
+    "final_temperature_c": 34.0,
+    "outcome": "reached",
+    "reached": true,
+    "samples": [
+      [
+        0.031000000000858563,
+        34.0
+      ]
+    ],
+    "threshold_c": 62.0,
+    "waited_s": 0.031000000000858563
+  },
+  "hardware": {
+    "clock_lock": {
+      "applied_clock_mhz": null,
+      "current_sm_clock_mhz": 210.0,
+      "evidence": "clocks_event_reasons.applications_clocks_setting=Not Active",
+      "max_sm_clock_mhz": 3150.0,
+      "state": "unlocked"
+    },
+    "cuda_version": "12.8",
+    "driver_version": "610.47",
+    "enforced_power_limit_w": 500.0,
+    "gpu_name": "NVIDIA GeForce RTX 4090",
+    "hostname": "DESKTOP-7OBJQKB",
+    "nvidia_smi_captured_utc": "2026-09-07T18:31:36Z",
+    "nvidia_smi_raw": "Mon Sep  7 20:31:36 2026       \n+-----------------------------------------------------------------------------------------+\n| NVIDIA-SMI 610.47                 KMD Version: 610.47        CUDA UMD Version: 13.3     |\n+-----------------------------------------+------------------------+----------------------+\n| GPU  Name                  Driver-Model | Bus-Id          Disp.A | Volatile Uncorr. ECC |\n| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |\n|                                         |                        |               MIG M. |\n|=========================================+========================+======================|\n|   0  NVIDIA GeForce RTX 4090      WDDM  |   00000000:01:00.0  On |                  Off |\n|  0%   34C    P8             28W /  500W |     593MiB /  24564MiB |     10%      Default |\n|                                         |                        |                  N/A |\n+-----------------------------------------+------------------------+----------------------+\n\n+-----------------------------------------------------------------------------------------+\n| Processes:                                                                              |\n|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |\n|        ID   ID                                                               Usage      |\n|=========================================================================================|\n|    0   N/A  N/A            1724    C+G   ...ntrolPanel\\SystemSettings.exe      N/A      |\n|    0   N/A  N/A            2816    C+G   C:\\Windows\\explorer.exe               N/A      |\n|    0   N/A  N/A            3648    C+G   ...5n1h2txyewy\\TextInputHost.exe      N/A      |\n|    0   N/A  N/A            3692    C+G   ...32-x64\\open-stage-control.exe      N/A      |\n|    0   N/A  N/A            4452    C+G   ...yb3d8bbwe\\WindowsTerminal.exe      N/A      |\n|    0   N/A  N/A           12072    C+G   ...vv_gamma_7.1-win-x64\\vvvv.exe      N/A      |\n|    0   N/A  N/A           12208    C+G   ...h_cw5n1h2txyewy\\SearchApp.exe      N/A      |\n|    0   N/A  N/A           12660    C+G   ...App_cw5n1h2txyewy\\LockApp.exe      N/A      |\n|    0   N/A  N/A           12752    C+G   ...ms\\t3code\\T3 Code (Alpha).exe      N/A      |\n|    0   N/A  N/A           12864    C+G   ...mmaLauncher\\GammaLauncher.exe      N/A      |\n|    0   N/A  N/A           13024    C+G   ...bs-studio\\bin\\64bit\\obs64.exe      N/A      |\n|    0   N/A  N/A           14768    C+G   ...6)\\Dropbox\\Client\\Dropbox.exe      N/A      |\n|    0   N/A  N/A           17148    C+G   ...xyewy\\ShellExperienceHost.exe      N/A      |\n|    0   N/A  N/A           19156    C+G   ...Chrome\\Application\\chrome.exe      N/A      |\n+-----------------------------------------------------------------------------------------+\n",
+    "power_limit_w": 500.0,
+    "torch_version": "2.7.0+cu128",
+    "total_vram_mib": 24564.0
+  },
+  "kind": "style",
+  "occupancy": {
+    "clear": false,
+    "mean_utilization_pct": 11.75,
+    "outcome": "busy",
+    "samples": [
+      12.0,
+      12.0,
+      13.0,
+      10.0
+    ],
+    "threshold_pct": 10.0
+  },
+  "run": {
+    "finished_utc": "2026-09-07T18:31:58Z",
+    "started_utc": "2026-09-07T18:31:38Z"
+  },
+  "schema_version": 2,
+  "verdicts": [
+    {
+      "passed": true,
+      "statement": "`loving-vincent` loaded and moved the output 19.2/255 against the same arm without it (threshold 4), on a render that is itself 19.7/255 from the source net of the control",
+      "style": "loving-vincent"
+    },
+    {
+      "passed": true,
+      "statement": "`illusion-pattern` loaded and moved the output 5.3/255 against the same arm without it (threshold 4), on a render that is itself 15.2/255 from the source net of the control",
+      "style": "illusion-pattern"
+    },
+    {
+      "passed": false,
+      "statement": "`locon-probe` (LoCon / LyCORIS (198 conv keys)) did not load: Failed to load LoRA 'style-locon-probe.safetensors': 'UNet2DConditionModel' object has no attribute 'conv'\n\nThe LoRA must match the base model's architecture (sd-turbo is SD 2.1-based), and LoRAs containing convolution layers (LoCon/LyCORIS) are not supported by diffusers 0.24.0.",
+      "style": "locon-probe"
+    }
+  ]
+}

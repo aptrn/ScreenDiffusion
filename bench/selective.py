@@ -43,6 +43,7 @@ from bench.fingerprint import Fingerprint
 from bench.flicker import FlickerScore, ResponseScore
 from bench.paths import (
     CADENCE_RESULTS_SUBDIR,
+    MODEL_RESULTS_SUBDIR,
     SELECTIVE_RESULTS_SUBDIR,
     STABILITY_RESULTS_SUBDIR,
 )
@@ -83,6 +84,33 @@ DEVICE_COMPOSITE = "device"
 # engine issue #5 compared both primitives on, so a millisecond here is comparable
 # with a millisecond there.
 ENGINE_SCENARIO = "img2img-tensorrt-512x512-b1"
+
+
+def engine_scenario_for(case: "SelectiveCase"):
+    """The scenario this arm renders through, at the step count its model needs.
+
+    The shipped one for a baseline; for a base-model arm (issue #38) the same
+    accelerator and geometry with another checkpoint and `BASE_MODELS`' own step
+    count, so the arm differs from the baseline in the model and nothing else a
+    reader has to go looking for.
+    """
+    # Late, and it has to be: `bench.models` reaches this module through
+    # `bench.portability`, so importing it at the top would be a cycle.
+    from bench.models import BASE_MODELS, DEFAULT_BASE
+    from bench.scenarios import SCENARIOS, base_model_name
+    from bench.steps import step_arm
+
+    # No arm, or the shipped model, which is not a variant of itself: the
+    # registry's own cell is what every committed baseline was measured through,
+    # and naming it any other way would key an engine nothing has built. So
+    # `--base-model sd-turbo` is the same-session *control* on the comparison
+    # rather than a second configuration.
+    if case.base_model is None or case.base_model == DEFAULT_BASE:
+        return SCENARIOS[ENGINE_SCENARIO]
+    base = BASE_MODELS[case.base_model]
+    return step_arm(SCENARIOS[base_model_name("tensorrt", case.base_model)],
+                    base.steps)
+
 
 # Mean absolute difference inside the rendered region, in 0-255 units, below which
 # the restyle is not visible. The threshold issue #5 selected its denoise by, used
@@ -131,6 +159,10 @@ class SelectiveCase:
     # still a run of it.
     seed_policy: Optional[str] = None
     output_ema: Optional[float] = None
+    # The base model this arm renders through (issue #38). `None` is the shipped
+    # SD-Turbo engine every committed baseline was measured on; a key in
+    # `bench.models.BASE_MODELS` names another, with the step count it needs.
+    base_model: Optional[str] = None
 
     def plan(self):
         """The hardcoded priority-case plan, from the shipped producer.
@@ -190,6 +222,15 @@ def is_cadence_arm(case: SelectiveCase) -> bool:
     return case.detect_every_n is not None
 
 
+def is_model_arm(case: SelectiveCase) -> bool:
+    """Is this an arm on another base model? (issue #38)
+
+    Third predicate, third reason it exists: an arm rendered through SD 1.5 at four
+    steps must not become the row spec 8.8 and 7.4 quote for the shipped path.
+    """
+    return case.base_model is not None
+
+
 def is_stability_arm(case: SelectiveCase) -> bool:
     """Is this an arm of the temporal-stability sweep? (issue #32)
 
@@ -221,6 +262,8 @@ def results_subdir(case: SelectiveCase) -> str:
         return CADENCE_RESULTS_SUBDIR
     if is_stability_arm(case):
         return STABILITY_RESULTS_SUBDIR
+    if is_model_arm(case):
+        return MODEL_RESULTS_SUBDIR
     return SELECTIVE_RESULTS_SUBDIR
 
 

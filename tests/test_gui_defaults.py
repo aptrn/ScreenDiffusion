@@ -18,6 +18,8 @@ import pytest
 from guisource import assignment_to, calls_named, gui_method, mentions
 from sourceloader import load_symbols
 
+import engine_cache
+
 FAKE_APP_ROOT = Path(r"C:\Program Files\Screen Diffusion")
 
 _symbols = load_symbols(
@@ -42,7 +44,8 @@ _symbols = load_symbols(
         "resolve_local_model_path",
         "resolve_models_dir",
     ],
-    extra_globals={"os": os, "Path": Path, "APP_ROOT": FAKE_APP_ROOT},
+    extra_globals={"os": os, "Path": Path, "APP_ROOT": FAKE_APP_ROOT,
+                   "engine_cache": engine_cache},
 )
 ACCELERATIONS = _symbols["ACCELERATIONS"]
 DEFAULT_ACCELERATION = _symbols["DEFAULT_ACCELERATION"]
@@ -168,9 +171,12 @@ def test_the_warning_names_the_setting_and_both_halves_of_the_cost(setting):
 
 
 def test_the_cost_is_the_measured_one():
-    """Measured at 512^2 on an RTX 3080 laptop - CLAUDE.md and spec 7.2."""
+    """Measured at 512^2 on both machines - CLAUDE.md and spec 7.2 - and read from
+    `engine_cache`, so the window and the harness quote one figure (issue #38)."""
     assert "5 GB" in ENGINE_BUILD_SIZE
-    assert ENGINE_BUILD_TIME == "15-25 minutes"
+    assert ENGINE_BUILD_SIZE == engine_cache.ENGINE_BUILD_SIZE
+    assert ENGINE_BUILD_TIME == engine_cache.ENGINE_BUILD_TIME
+    assert "minutes" in ENGINE_BUILD_TIME
 
 
 def test_only_the_path_that_compiles_an_engine_warns():
@@ -194,11 +200,12 @@ def test_changing_the_step_count_asks_before_it_happens(handler):
     assert mentions(gui_method(handler), "_confirm_engine_rebuild")
 
 
-def test_the_loras_and_the_batch_size_ask_at_start():
-    """Neither is editable while running, so start is before the build either way."""
-    asked = calls_named(gui_method("_on_start"), "_confirm_engine_rebuild")
-    settings = {call.args[0].value for call in asked if call.args}
-    assert {"LoRA set", "batch size"} <= settings, f"only warned about {settings}"
+def test_start_asks_about_the_engine_this_configuration_actually_needs():
+    """Since issue #38 the LoRA set and the batch size are not asked about one at a
+    time from a guess: both key the engine directory, so Start looks that directory
+    up on disk and asks once about what is really missing."""
+    assert mentions(gui_method("_on_start"), "_confirm_engine_available")
+    assert not calls_named(gui_method("_on_start"), "_confirm_engine_rebuild")
 
 
 def test_a_blank_model_path_says_where_to_point_it():

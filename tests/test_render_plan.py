@@ -37,13 +37,16 @@ from render_plan import (
     PASSTHROUGH,
     PRIORITY_RANGE,
     REGIONS,
+    SCHEDULE_T_INDEX_RANGE,
     SELECTIVE,
     STYLIZE,
     ActivePlan,
     DetectorVocabulary,
     RenderPlan,
     global_plan,
+    noise_amplitude,
     plan_from_fields,
+    t_index_ladder,
     validate_plan,
 )
 
@@ -633,3 +636,47 @@ def test_crop_at_one_slot_is_noted_about_nothing():
     })
     assert result.plan is not None
     assert not any("max_instances" in note for note in result.notes)
+
+
+# --- the step ladder a multi-step base model needs (issue #38) ---------------
+
+
+def test_one_step_ladder_is_the_index_the_denoise_chose():
+    """The shipped path. One step is `[first]` and nothing else."""
+    assert t_index_ladder(30, 1) == [30]
+
+
+def test_a_four_step_ladder_opens_where_the_denoise_asked():
+    """`denoise` still picks the opening index; the extra steps are spent after it."""
+    ladder = t_index_ladder(30, 4)
+    assert ladder[0] == 30
+    assert len(ladder) == 4
+
+
+def test_a_ladder_descends_in_noise_towards_the_end_of_the_schedule():
+    """A higher index is *less* noise, so a denoising trajectory ascends in index."""
+    ladder = t_index_ladder(20, 4)
+    assert ladder == sorted(ladder)
+    assert ladder[-1] == SCHEDULE_T_INDEX_RANGE[1]
+    assert all(noise_amplitude(later) <= noise_amplitude(earlier)
+               for earlier, later in zip(ladder, ladder[1:]))
+
+
+def test_a_ladder_stays_inside_the_schedule_range():
+    for first in (1, 25, 49):
+        for steps in (1, 2, 4, 8):
+            ladder = t_index_ladder(first, steps)
+            assert len(ladder) == steps
+            low, high = SCHEDULE_T_INDEX_RANGE
+            assert all(low <= index <= high for index in ladder)
+
+
+def test_a_ladder_with_no_room_left_repeats_rather_than_dropping_a_step():
+    """The step *count* keys a TensorRT engine, so it is not the ladder's to change.
+
+    A plan asking for four steps at a denoise that lands on the last index has
+    nowhere to spend three of them; repeating the index is the honest answer, and
+    silently returning two would build a different engine than the one asked for.
+    """
+    ladder = t_index_ladder(SCHEDULE_T_INDEX_RANGE[1], 4)
+    assert ladder == [SCHEDULE_T_INDEX_RANGE[1]] * 4

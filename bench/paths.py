@@ -58,6 +58,29 @@ SWAP_RESULTS_DIR = RESULTS_DIR / SWAP_RESULTS_SUBDIR
 CAPTURE_RESULTS_SUBDIR = "capture"
 CAPTURE_RESULTS_DIR = RESULTS_DIR / CAPTURE_RESULTS_SUBDIR
 
+# The step-count sweep (issue #38) writes plain diffusion records, and that is
+# exactly why it cannot write them here: `bench --marginal` reads every JSON in
+# RESULTS_DIR as a (resolution, batch) cell of spec 7.2's committed curve, so a
+# 2-step arm at batch 1 would join that curve as a second batch-1 point.
+STEPS_RESULTS_SUBDIR = "steps"
+STEPS_RESULTS_DIR = RESULTS_DIR / STEPS_RESULTS_SUBDIR
+
+# A selective run on another base model (issue #38) is the selective record shape
+# again, swept on the model instead of the cadence - so it needs its own directory
+# for exactly the reason the cadence and stability arms do. `base-models` rather
+# than `models`, because `.gitignore` carries a bare `models/` for the multi-GB
+# downloads and it matches at any depth: named the obvious way, every record in
+# here would be silently untracked, which for a directory whose whole point is
+# being committed is the worst kind of quiet.
+MODEL_RESULTS_SUBDIR = "base-models"
+MODEL_RESULTS_DIR = RESULTS_DIR / MODEL_RESULTS_SUBDIR
+
+# Style-LoRA runs (issue #38) are a record shape of their own - one row per fused
+# LoRA, with whether it loaded at all - so they get their own directory like every
+# other shape does.
+STYLE_RESULTS_SUBDIR = "styles"
+STYLE_RESULTS_DIR = RESULTS_DIR / STYLE_RESULTS_SUBDIR
+
 SD_MODELS_DIR_ENV = "SD_MODELS_DIR"
 SD_ENGINES_DIR_ENV = "SD_ENGINES_DIR"
 

@@ -37,15 +37,26 @@ from bench.detectors import (
 )
 from bench.disk import DiskRecord, Usage, read_disk, require_free_space
 from bench.fingerprint import read_clock_lock
+from bench.models import (
+    BASE_MODELS,
+    STYLE_LORAS,
+    format_model_report,
+    lora_dict_for,
+    with_style,
+)
 from bench.paths import (
     CADENCE_RESULTS_SUBDIR,
     CAPTURE_RESULTS_SUBDIR,
     DETECTOR_RESULTS_SUBDIR,
+    MODEL_RESULTS_SUBDIR,
     PRIMITIVE_RESULTS_SUBDIR,
     RESULTS_DIR,
     SELECTIVE_RESULTS_DIR,
     SELECTIVE_RESULTS_SUBDIR,
     STABILITY_RESULTS_SUBDIR,
+    STEPS_RESULTS_DIR,
+    STEPS_RESULTS_SUBDIR,
+    STYLE_RESULTS_SUBDIR,
     SWAP_RESULTS_SUBDIR,
     resolve_engines_dir,
 )
@@ -58,6 +69,7 @@ from bench.plan_swap import (
 from bench.portability import format_portability_report
 from bench.primitive_results import format_primitive_report, load_primitive_results
 from bench.primitives import CASES, CaseConfig
+from bench.results import load_records
 from bench.scenarios import SCENARIOS, ScenarioConfig
 from bench.selective import (
     CASES as SELECTIVE_CASES,
@@ -69,23 +81,29 @@ from bench.selective import (
     results_subdir,
 )
 from bench.stability import format_stability_report
-# The shipped vocabulary, so `--seed-policy` cannot drift from what a plan accepts.
-# Stdlib, like every other import here: the CLI has to stay loadable without CUDA.
+from bench.steps import format_steps_report, is_step_arm, step_arm
+from bench.styles import (
+    CASES as STYLE_CASES,
+    StyleCase,
+    format_style_report,
+    load_style_results,
+)
+# Two shipped stdlib modules, imported for the reason every `bench.*` import here
+# is stdlib: the CLI has to stay loadable without CUDA. `engine_cache` is the app's
+# own answer to "which engine does this configuration need, and is it built"; the
+# seed vocabulary is the app's own, so `--seed-policy` cannot drift from what a
+# plan accepts.
+from engine_cache import UNET_ENGINE, engine_dir_name as engine_dir_for
 from render_plan import SEED_POLICIES
-
-# The directory name `create_prefix()` in wrapper.py builds for a UNet engine, with
-# `--lora-none` because no scenario fuses a LoRA. Mirrored here so the guard can
-# answer "is this configuration already built?" without loading torch.
-ENGINE_DIR_TEMPLATE = ("{model}--lcm_lora-{lcm}--tiny_vae-{tiny}--max_batch-{batch}"
-                       "--min_batch-{batch}--res-{width}x{height}--lora-none--mode-{mode}")
 
 # What the one positional slot can name: a diffusion scenario, a detector, a
 # rendering-primitive case (issue #5), an end-to-end selective render (issue #8), a
-# plan swap (issue #30) or a capture-geometry comparison (issue #39). One slot for
-# all six - a run measures one thing, the names cannot collide, and someone holding
-# a name should not have to know which flag it belongs behind.
+# plan swap (issue #30), a capture-geometry comparison (issue #39) or a style-LoRA
+# comparison (issue #38). One slot for all seven - a run measures one thing, the
+# names cannot collide, and someone holding a name should not have to know which
+# flag it belongs behind.
 Target = Union[ScenarioConfig, DetectorConfig, CaseConfig, SelectiveCase, SwapCase,
-              CaptureCase]
+              CaptureCase, StyleCase]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -129,6 +147,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cadence-report", action="store_true",
                         help="report the detect_every_n sweep spec 8.8 carries, from "
                              "the committed arms, and exit")
+    parser.add_argument("--steps-report", action="store_true",
+                        help="report the step-count block spec 7.2 carries - what "
+                             "one more denoising step costs - from the committed "
+                             "arms, and exit")
+    parser.add_argument("--model-report", action="store_true",
+                        help="report the base-model block spec 7.5 carries - the "
+                             "shipped path on SD-Turbo against SD 1.5 + LCM-LoRA "
+                             "- from the committed arms, and exit")
+    parser.add_argument("--style-report", action="store_true",
+                        help="report the style-LoRA block spec 8.10 carries - "
+                             "which LoRAs load on SD 1.5, which visibly change "
+                             "the output, and how styles should ship - and exit")
     parser.add_argument("--stability-report", action="store_true",
                         help="report the temporal-stability sweep spec 8.5 carries - "
                              "per-track seeds and the output EMA - from the "
@@ -207,6 +237,26 @@ def build_parser() -> argparse.ArgumentParser:
                                 "output EMA at E (0.0-0.9) instead of the plan's, "
                                 "as one arm of the same sweep")
 
+    model = parser.add_argument_group("base model and step count (issue #38)")
+    model.add_argument("--steps", type=int, metavar="N",
+                       help="run this diffusion scenario at N denoising steps "
+                            "instead of the registry's one, as one arm of the "
+                            "step-count sweep. The arm is named `<scenario>-sN` "
+                            "and is written under bench/results/steps/, never "
+                            "beside the batch curve spec 7.2 quotes - including "
+                            "at N=1, which is the sweep's own control")
+    model.add_argument("--base-model", choices=sorted(BASE_MODELS), metavar="NAME",
+                       help="render this selective case through another base "
+                            f"model ({', '.join(sorted(BASE_MODELS))}) at the "
+                            "step count it needs. The arm is named "
+                            "`<case>-<NAME>` and is written under "
+                            "bench/results/base-models/, never beside the baselines")
+    model.add_argument("--style-lora", choices=sorted(STYLE_LORAS), metavar="NAME",
+                       help="fuse this style LoRA into the arm "
+                            f"({', '.join(sorted(STYLE_LORAS))}). Under "
+                            "`tensorrt` that keys its own ~5 GB engine, which is "
+                            "the design question issue #38 asks")
+
     parser.add_argument("--allow-engine-build", action="store_true",
                         help="permit compiling a TensorRT engine that is not cached "
                              "(~5.1 GB and several minutes)")
@@ -244,6 +294,9 @@ def _selective_case(case: SelectiveCase, args: argparse.Namespace) -> SelectiveC
     if args.output_ema is not None:
         case = case.replace(name=f"{case.name}-{ema_suffix(args.output_ema)}",
                             output_ema=args.output_ema)
+    if args.base_model is not None:
+        case = case.replace(name=f"{case.name}-{args.base_model}",
+                            base_model=args.base_model)
     return case
 
 
@@ -263,7 +316,7 @@ def _swap_case(case: SwapCase, args: argparse.Namespace) -> SwapCase:
 def resolve_target(args: argparse.Namespace) -> Tuple[str, Target]:
     """The scenario, detector or case `args.scenario` names, with overrides applied.
 
-    One positional slot for all six registries. A run measures one thing, the
+    One positional slot for all seven registries. A run measures one thing, the
     kinds of name cannot collide, and someone holding a name should not have to know
     which of six flags it belongs behind.
 
@@ -275,7 +328,11 @@ def resolve_target(args: argparse.Namespace) -> Tuple[str, Target]:
         if args.prompt:
             changes["prompt"] = args.prompt
         scenario = SCENARIOS[args.scenario]
-        return "scenario", (scenario.replace(**changes) if changes else scenario)
+        scenario = scenario.replace(**changes) if changes else scenario
+        if args.style_lora:
+            scenario = with_style(scenario, args.style_lora)
+        return "scenario", (scenario if args.steps is None
+                            else step_arm(scenario, args.steps))
     if args.scenario in DETECTORS:
         changes = _rep_overrides(args)
         detector = DETECTORS[args.scenario]
@@ -290,17 +347,39 @@ def resolve_target(args: argparse.Namespace) -> Tuple[str, Target]:
     if args.scenario in CAPTURE_CASES:
         case = CAPTURE_CASES[args.scenario]
         return "capture", (case.replace(frames=args.frames) if args.frames else case)
+    if args.scenario in STYLE_CASES:
+        case = STYLE_CASES[args.scenario]
+        return "style", (case.replace(frames=args.frames) if args.frames else case)
     raise SystemExit(
         f"bench: unknown scenario, detector or case {args.scenario!r}. "
         f"Run `python -m bench --list`."
     )
 
 
+def scenario_results_dir(scenario: ScenarioConfig, results_dir: Path) -> Path:
+    """Where a diffusion record belongs: with the batch curve, or with the arms.
+
+    One rule in one place, the same rule `bench.selective.results_subdir` applies
+    to a swept selective arm - and here it has teeth in both directions, because a
+    step arm in `bench/results/` would be read as a batch cell and change the
+    committed curve spec 7.2 quotes.
+    """
+    if is_step_arm(scenario.name):
+        return results_dir / STEPS_RESULTS_SUBDIR
+    return results_dir
+
+
 def engine_dir_name(scenario: ScenarioConfig) -> str:
-    return ENGINE_DIR_TEMPLATE.format(
-        model=scenario.model, lcm=scenario.use_lcm_lora, tiny=scenario.use_tiny_vae,
-        batch=scenario.unet_batch_size, width=scenario.width, height=scenario.height,
-        mode=scenario.mode,
+    """Where this scenario's UNet engine would be, by the app's own naming rule.
+
+    `engine_cache` is that rule, shared with `StreamGUI` rather than mirrored here
+    a second time: the guard and the window have to agree about what is built.
+    """
+    return engine_dir_for(
+        scenario.model, use_lcm_lora=scenario.use_lcm_lora,
+        use_tiny_vae=scenario.use_tiny_vae, unet_batch=scenario.unet_batch_size,
+        width=scenario.width, height=scenario.height,
+        lora_dict=lora_dict_for(scenario), mode=scenario.mode,
     )
 
 
@@ -327,7 +406,7 @@ def engine_build_guard(scenario: ScenarioConfig, engines_root: Optional[Path] = 
         return None
     root = resolve_engines_dir() if engines_root is None else Path(engines_root)
     record = read_disk(root, usage=usage)
-    if (root / engine_dir_name(scenario) / "unet.engine").is_file():
+    if (root / engine_dir_name(scenario) / UNET_ENGINE).is_file():
         return record
     if not allow_build:
         raise SystemExit(
@@ -486,6 +565,40 @@ def report_cadence(results_dir: Path, out: TextIO = sys.stdout,
               + "\n")
 
 
+def report_steps(results_dir: Path, out: TextIO = sys.stdout) -> None:
+    """The step-count block spec 7.2 carries (issue #38).
+
+    What one more denoising step costs, per module, on the model already on disk -
+    the measurement that sizes a four-step base model before anything is compiled
+    for one.
+    """
+    out.write(format_steps_report(load_records(results_dir)) + "\n")
+
+
+def report_models(results_dir: Path, out: TextIO = sys.stdout) -> None:
+    """The base-model block spec 7.5 carries (issue #38, step 2).
+
+    The same selective records the other reports read, from the directory the
+    base-model arms land in - never the baselines', because an arm rendered
+    through another checkpoint at another step count must not become the row
+    spec 8.8 and 7.4 quote for the shipped path.
+    """
+    out.write(format_model_report(load_selective_results(results_dir)) + "\n")
+
+
+def report_styles(results_dir: Path, out: TextIO = sys.stdout,
+                  step_dir: Path = STEPS_RESULTS_DIR) -> None:
+    """The style-LoRA block spec 8.10 carries (issue #38).
+
+    Two directories, like the cadence and stability reports: the arms say whether
+    a style LoRA loads and does anything, and the step arms beside them say what
+    that style costs with a TensorRT engine and without one - which is the
+    delivery question step 4 asks and the arms themselves cannot answer.
+    """
+    out.write(format_style_report(load_style_results(results_dir),
+                                  step_records=load_records(step_dir)) + "\n")
+
+
 def report_stability(results_dir: Path, out: TextIO = sys.stdout,
                      baseline_dir: Path = SELECTIVE_RESULTS_DIR) -> None:
     """The temporal-stability block spec 8.5 carries (issue #32).
@@ -520,6 +633,10 @@ def list_targets(out: TextIO = sys.stdout) -> None:
         out.write(f"{name}\tswap case\t{case.clip}\t{case.before.target} -> "
                   f"{case.after.target}\t{case.frames} frames, swap on "
                   f"{case.swap_frame}\tacceptance criteria 1 and 3\n")
+    for name, case in STYLE_CASES.items():
+        out.write(f"{name}\tstyle case\t{case.clip}\t{case.base_scenario}"
+                  f"\t{len(case.styles)} LoRAs at {case.steps} steps"
+                  f"\tdo style LoRAs work on SD 1.5\n")
     for name, case in CAPTURE_CASES.items():
         geometries = ", ".join(f"{w}x{h}" for w, h in case.geometries)
         out.write(f"{name}\tcapture case\t{case.clip}\t{geometries}"
@@ -600,10 +717,11 @@ def run_selective_target(args: argparse.Namespace, case: SelectiveCase) -> int:
     decision rather than this function's: an arm of the cadence sweep (issue #23)
     must not sit beside the baselines that spec 8.8 and 7.4 quote.
     """
-    from bench.selective import ENGINE_SCENARIO
+    from bench.selective import engine_scenario_for
     from bench.selective_runner import run_selective
 
-    engine_build_guard(SCENARIOS[ENGINE_SCENARIO], allow_build=args.allow_engine_build)
+    engine_build_guard(engine_scenario_for(case),
+                       allow_build=args.allow_engine_build)
     run_selective(
         case,
         cooldown=args.cooldown,
@@ -663,6 +781,32 @@ def run_capture_target(args: argparse.Namespace, case: CaptureCase) -> int:
     return 0
 
 
+def run_style_target(args: argparse.Namespace, case: StyleCase) -> int:
+    """Try every style LoRA on the SD 1.5 arm (issue #38, steps 3-5). Imported late.
+
+    The case's own base scenario decides whether an engine is needed at all, and
+    every arm is guarded separately because a fused LoRA keys its own: the
+    committed case runs on `none`, which is the hot-swappable path and the one a
+    LoRA comparison belongs on, because under `tensorrt` each style would be its
+    own ~5 GB build before it could be looked at once.
+    """
+    from bench.style_runner import arm_scenario, run_style
+
+    for style in (None, *case.styles):
+        engine_build_guard(arm_scenario(case, style),
+                           allow_build=args.allow_engine_build)
+    run_style(
+        case,
+        cooldown=args.cooldown,
+        results_dir=args.results_dir / STYLE_RESULTS_SUBDIR,
+        threshold_c=args.cooldown_threshold,
+        cap_s=args.cooldown_cap,
+        poll_interval_s=args.cooldown_poll,
+        write_clips=args.write_clips,
+    )
+    return 0
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -695,6 +839,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         report_cadence(args.results_dir / CADENCE_RESULTS_SUBDIR,
                        baseline_dir=args.results_dir / SELECTIVE_RESULTS_SUBDIR)
         return 0
+    if args.steps_report:
+        report_steps(args.results_dir / STEPS_RESULTS_SUBDIR)
+        return 0
+    if args.model_report:
+        report_models(args.results_dir / MODEL_RESULTS_SUBDIR)
+        return 0
+    if args.style_report:
+        report_styles(args.results_dir / STYLE_RESULTS_SUBDIR,
+                      step_dir=args.results_dir / STEPS_RESULTS_SUBDIR)
+        return 0
     if args.stability_report:
         report_stability(args.results_dir / STABILITY_RESULTS_SUBDIR,
                          baseline_dir=args.results_dir / SELECTIVE_RESULTS_SUBDIR)
@@ -718,6 +872,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return run_swap_target(args, target)
     if kind == "capture":
         return run_capture_target(args, target)
+    if kind == "style":
+        return run_style_target(args, target)
 
     scenario = target
     disk = engine_build_guard(scenario, allow_build=args.allow_engine_build)
@@ -728,7 +884,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         scenario,
         cooldown=args.cooldown,
         per_module=args.per_module,
-        results_dir=args.results_dir,
+        results_dir=scenario_results_dir(scenario, args.results_dir),
         threshold_c=args.cooldown_threshold,
         cap_s=args.cooldown_cap,
         poll_interval_s=args.cooldown_poll,

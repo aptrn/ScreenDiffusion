@@ -342,6 +342,22 @@ def set_denoise(stream, t_index: int) -> Tuple[int, float]:
     return timestep, denoise_strength(float(inner.scheduler.alphas_cumprod[timestep]))
 
 
+def set_denoise_ladder(stream, t_index: int, steps: int) -> List[int]:
+    """One denoise setting over `steps` denoising steps; returns the schedule set.
+
+    `set_denoise` above writes a one-rung list, which is right everywhere this
+    harness measures SD-Turbo - it is distilled to one step. A base model that is
+    not (issue #38) needs the rest of the ladder, and rendering a four-step arm at
+    one step is not a weaker restyle, it is noise. At one step this is exactly what
+    `set_denoise` does, so no committed measurement changes meaning.
+    """
+    from render_plan import t_index_ladder
+
+    ladder = t_index_ladder(t_index, steps)
+    stream.set_t_index_list(ladder)
+    return ladder
+
+
 def sweep_denoise(
     stream, case: CaseConfig, frames: Sequence,
     regions_per_frame: Sequence[Sequence[Box]], primitive: str,

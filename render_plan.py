@@ -225,6 +225,33 @@ def t_index_for_denoise(denoise: float) -> int:
                key=lambda index: abs(noise_amplitude(index) - float(denoise)))
 
 
+def t_index_ladder(first: int, steps: int) -> List[int]:
+    """`steps` schedule indices to denoise through, opening at `first`.
+
+    SD-Turbo takes one step and the whole app is built on that: `t_index_for_denoise`
+    returns the single index the plan's `denoise` asked for, and the engine is
+    compiled for one. A base model that is not a turbo model needs more of them -
+    SD 1.5 with LCM-LoRA wants about four (issue #38) - and this is where they go.
+
+    The extra steps are spent *after* the first, walking towards the end of the
+    schedule, which is what a denoising trajectory does: index ascends, noise
+    amplitude falls. So `denoise` keeps meaning exactly what it meant at one step -
+    how much of the latent the *first* pass replaces - and the model is not asked
+    for a different strength because it was asked for more steps.
+
+    The count is never quietly changed, because the count keys a TensorRT engine
+    (spec 7.2). A `first` with no room left below it repeats rather than returning
+    a shorter list.
+    """
+    steps = max(1, int(steps))
+    low, high = SCHEDULE_T_INDEX_RANGE
+    first = min(max(int(first), low), high)
+    if steps == 1:
+        return [first]
+    span = (high - first) / (steps - 1)
+    return [min(high, int(round(first + span * step))) for step in range(steps)]
+
+
 # --- what a detector can be asked for ---------------------------------------
 
 # The 80 classes a COCO-trained detector has and cannot be asked past. Written out

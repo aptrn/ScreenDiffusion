@@ -1,0 +1,148 @@
+{
+  "clock_normalization": {
+    "basis_mhz": 3150.0,
+    "basis_source": "clocks.max.sm",
+    "method": "ms_per_frame * time-weighted mean SM clock / basis clock",
+    "ms_per_frame": 29.2809,
+    "note": "Clocks were not locked (unlocked), so the raw figure carries this run's clock. This is a first-order estimate of the same work at 3150 MHz, not a measurement, and not a substitute for `nvidia-smi --lock-gpu-clocks` from an elevated shell.",
+    "regime": "unlocked",
+    "sampled_mean_sm_clock_mhz": 2722.5
+  },
+  "cooldown": {
+    "cap_s": 120.0,
+    "enabled": true,
+    "final_temperature_c": 35.0,
+    "outcome": "reached",
+    "reached": true,
+    "samples": [
+      [
+        0.031000000000858563,
+        35.0
+      ]
+    ],
+    "threshold_c": 62.0,
+    "waited_s": 0.031000000000858563
+  },
+  "disk": {
+    "checked_utc": "2026-09-07T18:23:34Z",
+    "free_bytes": 1547562909696,
+    "free_gib": 1441.28,
+    "path": "C:\\Users\\Davide Quayola\\Documents\\code\\ScreenDiffusion\\engines",
+    "required_bytes": 16106127360,
+    "sufficient": true,
+    "total_bytes": 1999740669952
+  },
+  "hardware": {
+    "clock_lock": {
+      "applied_clock_mhz": null,
+      "current_sm_clock_mhz": 675.0,
+      "evidence": "clocks_event_reasons.applications_clocks_setting=Not Active",
+      "max_sm_clock_mhz": 3150.0,
+      "state": "unlocked"
+    },
+    "cuda_version": "12.8",
+    "driver_version": "610.47",
+    "enforced_power_limit_w": 500.0,
+    "gpu_name": "NVIDIA GeForce RTX 4090",
+    "hostname": "DESKTOP-7OBJQKB",
+    "nvidia_smi_captured_utc": "2026-09-07T18:23:35Z",
+    "nvidia_smi_raw": "Mon Sep  7 20:23:35 2026       \n+-----------------------------------------------------------------------------------------+\n| NVIDIA-SMI 610.47                 KMD Version: 610.47        CUDA UMD Version: 13.3     |\n+-----------------------------------------+------------------------+----------------------+\n| GPU  Name                  Driver-Model | Bus-Id          Disp.A | Volatile Uncorr. ECC |\n| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |\n|                                         |                        |               MIG M. |\n|=========================================+========================+======================|\n|   0  NVIDIA GeForce RTX 4090      WDDM  |   00000000:01:00.0  On |                  Off |\n| 30%   34C    P3             73W /  500W |     677MiB /  24564MiB |      3%      Default |\n|                                         |                        |                  N/A |\n+-----------------------------------------+------------------------+----------------------+\n\n+-----------------------------------------------------------------------------------------+\n| Processes:                                                                              |\n|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |\n|        ID   ID                                                               Usage      |\n|=========================================================================================|\n|    0   N/A  N/A            1724    C+G   ...ntrolPanel\\SystemSettings.exe      N/A      |\n|    0   N/A  N/A            2816    C+G   C:\\Windows\\explorer.exe               N/A      |\n|    0   N/A  N/A            3648    C+G   ...5n1h2txyewy\\TextInputHost.exe      N/A      |\n|    0   N/A  N/A            3692    C+G   ...32-x64\\open-stage-control.exe      N/A      |\n|    0   N/A  N/A            4452    C+G   ...yb3d8bbwe\\WindowsTerminal.exe      N/A      |\n|    0   N/A  N/A           12072    C+G   ...vv_gamma_7.1-win-x64\\vvvv.exe      N/A      |\n|    0   N/A  N/A           12208    C+G   ...h_cw5n1h2txyewy\\SearchApp.exe      N/A      |\n|    0   N/A  N/A           12660    C+G   ...App_cw5n1h2txyewy\\LockApp.exe      N/A      |\n|    0   N/A  N/A           12752    C+G   ...ms\\t3code\\T3 Code (Alpha).exe      N/A      |\n|    0   N/A  N/A           12864    C+G   ...mmaLauncher\\GammaLauncher.exe      N/A      |\n|    0   N/A  N/A           13024    C+G   ...bs-studio\\bin\\64bit\\obs64.exe      N/A      |\n|    0   N/A  N/A           14768    C+G   ...6)\\Dropbox\\Client\\Dropbox.exe      N/A      |\n|    0   N/A  N/A           17148    C+G   ...xyewy\\ShellExperienceHost.exe      N/A      |\n|    0   N/A  N/A           19156    C+G   ...Chrome\\Application\\chrome.exe      N/A      |\n+-----------------------------------------------------------------------------------------+\n",
+    "power_limit_w": 500.0,
+    "torch_version": "2.7.0+cu128",
+    "total_vram_mib": 24564.0
+  },
+  "run": {
+    "finished_utc": "2026-09-07T18:23:41Z",
+    "fps": 29.517,
+    "gpu_samples": [
+      [
+        0.027433600000222214,
+        2730.0,
+        35.0
+      ],
+      [
+        0.5575393999988592,
+        2715.0,
+        46.0
+      ]
+    ],
+    "max_ms_per_frame": 34.8854,
+    "max_temperature_c": 46.0,
+    "mean_ms_per_frame": 33.8787,
+    "mean_sm_clock_mhz": 2722.5,
+    "median_ms_per_frame": 33.8479,
+    "min_ms_per_frame": 33.2887,
+    "p95_ms_per_frame": 34.7323,
+    "peak_vram_bytes": 2803023360,
+    "peak_vram_mib": 2673.2,
+    "per_module_ms": {
+      "unet": 25.6945,
+      "vae_decode": 1.4134,
+      "vae_encode": 1.3749
+    },
+    "per_rep_ms": [
+      34.261,
+      33.8523,
+      33.8058,
+      34.1511,
+      34.0628,
+      33.3517,
+      33.3762,
+      33.5686,
+      34.0274,
+      33.6371,
+      34.3858,
+      33.4303,
+      34.566,
+      34.1114,
+      34.7323,
+      33.8435,
+      33.9155,
+      33.974,
+      34.2252,
+      33.4773,
+      33.7926,
+      33.5019,
+      33.3193,
+      33.8383,
+      33.5551,
+      33.9269,
+      33.4466,
+      33.2887,
+      34.0518,
+      34.8854
+    ],
+    "reps": 30,
+    "started_utc": "2026-09-07T18:23:40Z",
+    "stdev_ms_per_frame": 0.4203,
+    "warmup_reps": 5
+  },
+  "scenario": {
+    "acceleration": "tensorrt",
+    "batch_size": 1,
+    "cfg_type": "none",
+    "do_add_noise": true,
+    "height": 512,
+    "lcm_lora_id": null,
+    "lora_scale": 1.0,
+    "mode": "img2img",
+    "model": "sd-v1-5-fp16",
+    "name": "img2img-tensorrt-512x512-b1-sd15-s4",
+    "prompt": "a photograph of a city street, cinematic lighting",
+    "reps": 30,
+    "seed": 2,
+    "style_lora": null,
+    "t_index_list": [
+      35,
+      40,
+      44,
+      49
+    ],
+    "use_denoising_batch": true,
+    "use_lcm_lora": true,
+    "use_tiny_vae": true,
+    "warmup_reps": 5,
+    "width": 512
+  },
+  "schema_version": 2
+}
