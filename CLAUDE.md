@@ -275,6 +275,25 @@ names the measured cost before the change, and only on the acceleration path tha
 compiles one. `scripts/gui_screenshot.py` photographs the window; `docs/gui/` holds
 before and after.
 
+**The preview says where the mask is** (issue #47, spec 8.7). `mask_overlay.py` is
+both halves. The worker puts the boxes it *composited into* on the fps payload it
+already sends (`overlay_status`, one key, no new channel), and they are the
+compositor's decision rather than the plan's - a `crop` frame reports the one region
+its single call went to, and a `crop` plan the compositor refused reports the masked
+set it actually rendered. The GUI outlines them with `draw_overlay` on the **preview
+copy**, in the GUI process, after the frame has left the pipeline: an overlay drawn
+any earlier would reach the output and break the bit-identity criterion outright. It
+is behind a **Show mask** switch beside the preview and is **off by default**, so
+the preview stays a true view of what the worker sent; the drawing runs on the
+panel-sized canvas, so it costs the same at 1920x1080 as at 512x512. The same issue
+split the plan-state line into three readings that used to be one - no target set, a
+target with the detector holding nothing (`NOTHING_FOUND`, and that frame costs no
+diffusion call at all), and a target with N regions being restyled
+(`_restyling_phrase`, counting the regions the *scheduler* handed out rather than
+the objects the detector saw). Under `masked` the whole frame is diffused and only
+the composite is selective, which is why the two paths look alike and why the line
+now ends on what the mask protects.
+
 **The base model is a picker, and Start looks on disk** (issue #38, step 6).
 `local_model_paths()` offers every diffusers folder under the models root and
 `model_companions()` applies what the chosen one cannot render without - LCM-LoRA
