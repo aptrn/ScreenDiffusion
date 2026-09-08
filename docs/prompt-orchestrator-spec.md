@@ -2135,8 +2135,84 @@ CUDA start-up.
 `uv run python -m bench --quality-report`.
 
 <!-- BEGIN STEP QUALITY -->
-no step-quality sweep committed yet (issue #46)
+8 arms over 48 frames of `dog.mp4` at 512x512 through `img2img-tensorrt-512x512-b1`, on NVIDIA GeForce RTX 4090. Every arm renders the same frames of the same committed box track at the same denoise (0.45) under the same prompt ("a cat, feline face, whiskers, pointed ears, photograph"); only the step count and the route move. The opening schedule index is the one that denoise names and `render_plan.t_index_ladder` spends the extra steps after it, so a deeper arm is not also a strength change. `adherence` is the fraction of rendered frames the detector reads back as `cat`; `response` is the flicker metric over the pixels that *moved* in the source, which is where the batched route's pipelining shows. Detection is not in the millisecond figures - the boxes come from the track - so a rung is judged against 33.33 ms less the 4.3 ms spec 8.8 amortises for it.
+
+| arm | route | steps | t_index list | UNet batch | engine | swap s | ms/frame | FPS | adherence | conf | net change | flicker | response | background |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `s1` | pre-built ladder | 1 | 41 | 1 | cached | 3.4 | 67.40 | 14.8 | 33% | 0.28 | 15.04 | 5.35 | 18.98 | 48/48 |
+| `s2` | pre-built ladder | 2 | 41,49 | 2 | cached | 3.6 | 69.90 | 14.3 | 44% | 0.37 | 19.04 | 6.48 | 18.08 | 48/48 |
+| `s4` | pre-built ladder | 4 | 41,44,46,49 | 4 | cached | 3.6 | 107.47 | 9.3 | 52% | 0.45 | 24.23 | 7.68 | 15.46 | 48/48 |
+| `s8` | pre-built ladder | 8 | 41,42,43,44,46,47,48,49 | 8 | cached | 3.6 | 188.80 | 5.3 | 77% | 0.62 | 28.77 | 8.29 | 14.99 | 48/48 |
+| `s1-nobatch` | unbatched | 1 | 41 | 1 | cached | 3.5 | 69.09 | 14.5 | 33% | 0.28 | 15.04 | 5.35 | 18.98 | 48/48 |
+| `s2-nobatch` | unbatched | 2 | 41,49 | 1 | cached | 3.6 | 107.29 | 9.3 | 31% | 0.25 | 17.24 | 6.39 | 20.33 | 48/48 |
+| `s4-nobatch` | unbatched | 4 | 41,44,46,49 | 1 | cached | 3.5 | 210.84 | 4.7 | 12% | 0.10 | 35.04 | 15.99 | 31.26 | 48/48 |
+| `s8-nobatch` | unbatched | 8 | 41,42,43,44,46,47,48,49 | 1 | cached | 3.5 | 384.60 | 2.6 | 0% | 0.00 | 69.84 | 26.74 | 41.62 | 48/48 |
+
+Switching to a step count whose engine is already built took **3.5 s** on average and 3.6 s at worst, over 8 arms - the whole of it: letting the previous engine go, loading the new one and preparing it, which is exactly what the worker does when a step count changes. That is the figure the window may quote; the 5-25 minutes, depending on the GPU and ~5 GB it warns about belong to a count that has no engine yet.
+
+On the pre-built ladder route the best deeper rung is `s8`, which reads back as what the prompt asked for on 77% of frames against one step's 33% - +44%, worth the frame rate it costs.
+
+On the unbatched route the best deeper rung is `s2-nobatch`, which reads back as what the prompt asked for on 31% of frames against one step's 33% - -2%, under the 10% bar, so more steps have not been shown to buy a better picture on this case.
+
+Background bit-identity held at every arm: 384 frames over 8 arms left every pixel outside the rendered region exactly as captured.
+
+The artefact a human judges this by, source | one panel per rung: `steps-dog-20260908-133604Z-arms.jpg`, `steps-dog-20260908-133604Z-arms.mp4`.
+
+**The pre-built ladder route wins on the picture alone, before any millisecond.** Its deeper rungs buy +44% of adherence and the unbatched route's buy -2% - and adherence, net change and flicker are properties of the pixels, which another tenant on the card does not move. So this half of the decision stands whatever the occupancy gate said about the clock.
+
+**No route is recommended from this run: the GPU was `busy`** - the occupancy gate read 75% of the SMs in use before the run, against a 10% threshold. Which route ships turns on whether a rung fits a 33.33 ms frame, and a card another application is drawing on measures the neighbour (issue #33). The `ms/frame` and `FPS` columns above are that run's and are **not** this hardware's. Everything else here is a property of the pixels or of a disk load and stands: the adherence, the net change, the flicker, the response, the engine each arm keys and the bit-identity. Re-run with `--require-idle-gpu` on an idle machine to decide the route.
 <!-- END STEP QUALITY -->
+
+**The verdict, in one sentence: the ladder wins, and it wins on the picture before
+it wins on anything else.** More denoising steps do buy a better picture on the
+batched route — 33% → 44% → 52% → 77% of frames reading back as the thing the
+prompt asked for, at rising confidence and rising net change — and the unbatched
+route goes the other way: 33% → 31% → 12% → 0%, ending as a rectangle of noise
+that is 69.8/255 from the capture. The committed still is what that looks like: the
+fifth panel (`s8`) has a plainly feline head; the last two are garbage. Adherence,
+net change and flicker are properties of the pixels, so that half of the decision
+is not confounded by whatever else was on the card.
+
+**The cached-engine swap is 3.5 s, measured — and that is the whole of it.** Every
+arm of the run was preceded by letting the previous engine go and building this
+one, which is exactly what `image_generation_process` does when a step count
+changes; one priming build before the first arm means no arm's figure carries the
+process's own CUDA start-up. 3.4–3.6 s across all eight, and the spread is
+narrower than the difference between any two rungs. "Seconds, not minutes" was an
+inference from an `os.path.exists` call until this run; it is now a number, and it
+is the one the window is allowed to quote.
+
+**Why the batched route is nearly free, and where it is not.** Two steps cost 3.7%
+more frame path than one, because a batch of two is not two calls — the same
+finding §7.2 made at four steps, from the other end. Four and eight are 1.6× and
+2.8× the one-step call. The unbatched route pays close to linearly (1.0× / 1.6× /
+3.1× / 5.6×) because it really is N calls, which is what it is for.
+
+Three things this run does not settle.
+
+- **The route verdict is withheld, and the block says so.** The occupancy gate read
+  75% of the SMs in use before the run: another application was live on this 4090
+  throughout (issue #33). Which route *ships* turns on whether a rung fits a
+  33.33 ms frame, and those milliseconds are the neighbour's as much as this path's
+  — `s1` measured 67.40 ms where §8.11 measured 22.74 on the same clip, prompt and
+  denoise. `bench.quality.timing_is_decisive` is the door; one re-run with
+  `--require-idle-gpu` closes it, and nothing else in the block moves when it does.
+- **The unbatched route re-noises every rung with one field, and that is a choice.**
+  At `use_denoising_batch` off the pipeline's `init_noise` has exactly one row, so
+  there is no per-rung realisation to use as the batched path uses `init_noise[i]`
+  at rung `i`. `wrapper.unbatched_predict_x0` reuses that one row, which keeps the
+  field canvas-pinned and frame-stable the way §8.5 measured this app depends on;
+  upstream's own branch draws a fresh `randn_like` per rung instead, which is the
+  `random` seed policy §8.5 measured at nearly 6× the flicker. Perfectly correlated
+  noise across rungs is a plausible part of why the deeper unbatched arms diverge,
+  and the fresh-draw variant was **not** measured. What is settled is that the route
+  as implemented here is worse on both axes; what is not is whether some third
+  noising rule rescues it.
+- **One clip, one prompt, one identity change.** Adherence on a *restyle* (§8.2's
+  priority case) has no detector to read it back, so "does the style land better at
+  four steps" is still an eyeball question — and the ladder's rungs are now built,
+  so it is a cheap one to ask.
+
 
 
 ## 9. Risks

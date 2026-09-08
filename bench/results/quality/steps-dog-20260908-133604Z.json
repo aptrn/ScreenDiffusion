@@ -1,0 +1,477 @@
+{
+  "arms": [
+    {
+      "adherence": 0.3333,
+      "adherence_conf": 0.2775,
+      "adherence_frames": 48,
+      "adherence_hits": 16,
+      "background": {
+        "background_pixels": 213844,
+        "frames": 48,
+        "identical_frames": 48,
+        "passed": true,
+        "statement": "48/48 frames left every pixel outside the rendered regions exactly as captured (213844 background pixels on the frame with the most painted)",
+        "worst_pixels_changed": 0
+      },
+      "control_change": 0.0,
+      "engine_cached": true,
+      "engine_dir": "sd-turbo-fp16--lcm_lora-False--tiny_vae-True--max_batch-1--min_batch-1--res-512x512--lora-none--mode-img2img",
+      "error": null,
+      "fits_budget": false,
+      "flicker": 5.353887,
+      "frames": 48,
+      "keys_new_engine": false,
+      "loaded": true,
+      "ms_per_frame": 67.4016,
+      "name": "s1",
+      "net_change": 15.0402,
+      "region_change": 15.0402,
+      "response": 18.9823,
+      "retained_hits": 38,
+      "route": "pre-built ladder",
+      "steps": 1,
+      "swap_seconds": 3.355,
+      "t_index_list": [
+        41
+      ],
+      "unet_batch": 1,
+      "use_denoising_batch": true
+    },
+    {
+      "adherence": 0.4375,
+      "adherence_conf": 0.3704,
+      "adherence_frames": 48,
+      "adherence_hits": 21,
+      "background": {
+        "background_pixels": 213844,
+        "frames": 48,
+        "identical_frames": 48,
+        "passed": true,
+        "statement": "48/48 frames left every pixel outside the rendered regions exactly as captured (213844 background pixels on the frame with the most painted)",
+        "worst_pixels_changed": 0
+      },
+      "control_change": 0.0,
+      "engine_cached": true,
+      "engine_dir": "sd-turbo-fp16--lcm_lora-False--tiny_vae-True--max_batch-2--min_batch-2--res-512x512--lora-none--mode-img2img",
+      "error": null,
+      "fits_budget": false,
+      "flicker": 6.483608,
+      "frames": 48,
+      "keys_new_engine": true,
+      "loaded": true,
+      "ms_per_frame": 69.8973,
+      "name": "s2",
+      "net_change": 19.0408,
+      "region_change": 19.0408,
+      "response": 18.084853,
+      "retained_hits": 34,
+      "route": "pre-built ladder",
+      "steps": 2,
+      "swap_seconds": 3.587,
+      "t_index_list": [
+        41,
+        49
+      ],
+      "unet_batch": 2,
+      "use_denoising_batch": true
+    },
+    {
+      "adherence": 0.5208,
+      "adherence_conf": 0.4499,
+      "adherence_frames": 48,
+      "adherence_hits": 25,
+      "background": {
+        "background_pixels": 213844,
+        "frames": 48,
+        "identical_frames": 48,
+        "passed": true,
+        "statement": "48/48 frames left every pixel outside the rendered regions exactly as captured (213844 background pixels on the frame with the most painted)",
+        "worst_pixels_changed": 0
+      },
+      "control_change": 0.0,
+      "engine_cached": true,
+      "engine_dir": "sd-turbo-fp16--lcm_lora-False--tiny_vae-True--max_batch-4--min_batch-4--res-512x512--lora-none--mode-img2img",
+      "error": null,
+      "fits_budget": false,
+      "flicker": 7.676624,
+      "frames": 48,
+      "keys_new_engine": true,
+      "loaded": true,
+      "ms_per_frame": 107.465,
+      "name": "s4",
+      "net_change": 24.2343,
+      "region_change": 24.2343,
+      "response": 15.463097,
+      "retained_hits": 26,
+      "route": "pre-built ladder",
+      "steps": 4,
+      "swap_seconds": 3.603,
+      "t_index_list": [
+        41,
+        44,
+        46,
+        49
+      ],
+      "unet_batch": 4,
+      "use_denoising_batch": true
+    },
+    {
+      "adherence": 0.7708,
+      "adherence_conf": 0.6227,
+      "adherence_frames": 48,
+      "adherence_hits": 37,
+      "background": {
+        "background_pixels": 213844,
+        "frames": 48,
+        "identical_frames": 48,
+        "passed": true,
+        "statement": "48/48 frames left every pixel outside the rendered regions exactly as captured (213844 background pixels on the frame with the most painted)",
+        "worst_pixels_changed": 0
+      },
+      "control_change": 0.0,
+      "engine_cached": true,
+      "engine_dir": "sd-turbo-fp16--lcm_lora-False--tiny_vae-True--max_batch-8--min_batch-8--res-512x512--lora-none--mode-img2img",
+      "error": null,
+      "fits_budget": false,
+      "flicker": 8.289268,
+      "frames": 48,
+      "keys_new_engine": true,
+      "loaded": true,
+      "ms_per_frame": 188.7977,
+      "name": "s8",
+      "net_change": 28.7743,
+      "region_change": 28.7743,
+      "response": 14.994712,
+      "retained_hits": 17,
+      "route": "pre-built ladder",
+      "steps": 8,
+      "swap_seconds": 3.632,
+      "t_index_list": [
+        41,
+        42,
+        43,
+        44,
+        46,
+        47,
+        48,
+        49
+      ],
+      "unet_batch": 8,
+      "use_denoising_batch": true
+    },
+    {
+      "adherence": 0.3333,
+      "adherence_conf": 0.2775,
+      "adherence_frames": 48,
+      "adherence_hits": 16,
+      "background": {
+        "background_pixels": 213844,
+        "frames": 48,
+        "identical_frames": 48,
+        "passed": true,
+        "statement": "48/48 frames left every pixel outside the rendered regions exactly as captured (213844 background pixels on the frame with the most painted)",
+        "worst_pixels_changed": 0
+      },
+      "control_change": 0.0,
+      "engine_cached": true,
+      "engine_dir": "sd-turbo-fp16--lcm_lora-False--tiny_vae-True--max_batch-1--min_batch-1--res-512x512--lora-none--mode-img2img",
+      "error": null,
+      "fits_budget": false,
+      "flicker": 5.353887,
+      "frames": 48,
+      "keys_new_engine": false,
+      "loaded": true,
+      "ms_per_frame": 69.0884,
+      "name": "s1-nobatch",
+      "net_change": 15.0402,
+      "region_change": 15.0402,
+      "response": 18.9823,
+      "retained_hits": 38,
+      "route": "unbatched",
+      "steps": 1,
+      "swap_seconds": 3.536,
+      "t_index_list": [
+        41
+      ],
+      "unet_batch": 1,
+      "use_denoising_batch": false
+    },
+    {
+      "adherence": 0.3125,
+      "adherence_conf": 0.2497,
+      "adherence_frames": 48,
+      "adherence_hits": 15,
+      "background": {
+        "background_pixels": 213844,
+        "frames": 48,
+        "identical_frames": 48,
+        "passed": true,
+        "statement": "48/48 frames left every pixel outside the rendered regions exactly as captured (213844 background pixels on the frame with the most painted)",
+        "worst_pixels_changed": 0
+      },
+      "control_change": 0.0,
+      "engine_cached": true,
+      "engine_dir": "sd-turbo-fp16--lcm_lora-False--tiny_vae-True--max_batch-1--min_batch-1--res-512x512--lora-none--mode-img2img",
+      "error": null,
+      "fits_budget": false,
+      "flicker": 6.387555,
+      "frames": 48,
+      "keys_new_engine": false,
+      "loaded": true,
+      "ms_per_frame": 107.2929,
+      "name": "s2-nobatch",
+      "net_change": 17.2407,
+      "region_change": 17.2407,
+      "response": 20.334615,
+      "retained_hits": 41,
+      "route": "unbatched",
+      "steps": 2,
+      "swap_seconds": 3.59,
+      "t_index_list": [
+        41,
+        49
+      ],
+      "unet_batch": 1,
+      "use_denoising_batch": false
+    },
+    {
+      "adherence": 0.125,
+      "adherence_conf": 0.0993,
+      "adherence_frames": 48,
+      "adherence_hits": 6,
+      "background": {
+        "background_pixels": 213844,
+        "frames": 48,
+        "identical_frames": 48,
+        "passed": true,
+        "statement": "48/48 frames left every pixel outside the rendered regions exactly as captured (213844 background pixels on the frame with the most painted)",
+        "worst_pixels_changed": 0
+      },
+      "control_change": 0.0,
+      "engine_cached": true,
+      "engine_dir": "sd-turbo-fp16--lcm_lora-False--tiny_vae-True--max_batch-1--min_batch-1--res-512x512--lora-none--mode-img2img",
+      "error": null,
+      "fits_budget": false,
+      "flicker": 15.985664,
+      "frames": 48,
+      "keys_new_engine": false,
+      "loaded": true,
+      "ms_per_frame": 210.8362,
+      "name": "s4-nobatch",
+      "net_change": 35.0434,
+      "region_change": 35.0434,
+      "response": 31.262166,
+      "retained_hits": 26,
+      "route": "unbatched",
+      "steps": 4,
+      "swap_seconds": 3.459,
+      "t_index_list": [
+        41,
+        44,
+        46,
+        49
+      ],
+      "unet_batch": 1,
+      "use_denoising_batch": false
+    },
+    {
+      "adherence": 0.0,
+      "adherence_conf": 0.0,
+      "adherence_frames": 48,
+      "adherence_hits": 0,
+      "background": {
+        "background_pixels": 213844,
+        "frames": 48,
+        "identical_frames": 48,
+        "passed": true,
+        "statement": "48/48 frames left every pixel outside the rendered regions exactly as captured (213844 background pixels on the frame with the most painted)",
+        "worst_pixels_changed": 0
+      },
+      "control_change": 0.0,
+      "engine_cached": true,
+      "engine_dir": "sd-turbo-fp16--lcm_lora-False--tiny_vae-True--max_batch-1--min_batch-1--res-512x512--lora-none--mode-img2img",
+      "error": null,
+      "fits_budget": false,
+      "flicker": 26.739367,
+      "frames": 48,
+      "keys_new_engine": false,
+      "loaded": true,
+      "ms_per_frame": 384.6047,
+      "name": "s8-nobatch",
+      "net_change": 69.8377,
+      "region_change": 69.8377,
+      "response": 41.618309,
+      "retained_hits": 0,
+      "route": "unbatched",
+      "steps": 8,
+      "swap_seconds": 3.493,
+      "t_index_list": [
+        41,
+        42,
+        43,
+        44,
+        46,
+        47,
+        48,
+        49
+      ],
+      "unet_batch": 1,
+      "use_denoising_batch": false
+    }
+  ],
+  "case": {
+    "arms": [
+      {
+        "steps": 1,
+        "use_denoising_batch": true
+      },
+      {
+        "steps": 2,
+        "use_denoising_batch": true
+      },
+      {
+        "steps": 4,
+        "use_denoising_batch": true
+      },
+      {
+        "steps": 8,
+        "use_denoising_batch": true
+      },
+      {
+        "steps": 1,
+        "use_denoising_batch": false
+      },
+      {
+        "steps": 2,
+        "use_denoising_batch": false
+      },
+      {
+        "steps": 4,
+        "use_denoising_batch": false
+      },
+      {
+        "steps": 8,
+        "use_denoising_batch": false
+      }
+    ],
+    "base_model": "sd-turbo",
+    "base_scenario": "img2img-tensorrt-512x512-b1",
+    "canvas": 512,
+    "clip": "dog.mp4",
+    "concept": "dog",
+    "denoise": 0.45,
+    "frames": 48,
+    "max_instances": 1,
+    "name": "steps-dog",
+    "note": "What does a second, fourth and eighth denoising step buy, and which of the two ways of paying for one should ship? The identity change is the sharpest quality probe this repo has - the detector reads the rendered region back and says whether it is a cat - and it is what one-step SD-Turbo is most likely to fail.",
+    "prompt": "a cat, feline face, whiskers, pointed ears, photograph",
+    "reads_back_as": "cat",
+    "region": "full_box",
+    "start_frame": 0,
+    "warmup_frames": 3
+  },
+  "clip": {
+    "fps": 24.0,
+    "frames_used": 48,
+    "height": 540,
+    "name": "dog.mp4",
+    "sha256": "66d334a83a12344f39385878c7fbff7489748e3837292a7a1e636922af5b65c1",
+    "start_frame": 0,
+    "total_frames": 228,
+    "width": 960
+  },
+  "clock_normalization": {
+    "basis_mhz": 3150.0,
+    "basis_source": "clocks.max.sm",
+    "method": "ms_per_frame * time-weighted mean SM clock / basis clock",
+    "ms_per_frame": 58.0909,
+    "note": "Clocks were not locked (unlocked), so the raw figure carries this run's clock. This is a first-order estimate of the same work at 3150 MHz, not a measurement, and not a substitute for `nvidia-smi --lock-gpu-clocks` from an elevated shell.",
+    "regime": "unlocked",
+    "sampled_mean_sm_clock_mhz": 2714.9
+  },
+  "comparison_clip": "steps-dog-20260908-133604Z-arms.mp4",
+  "comparison_still": "steps-dog-20260908-133604Z-arms.jpg",
+  "cooldown": {
+    "cap_s": 120.0,
+    "enabled": true,
+    "final_temperature_c": 53.0,
+    "outcome": "reached",
+    "reached": true,
+    "samples": [
+      [
+        0.03199999999196734,
+        53.0
+      ]
+    ],
+    "threshold_c": 62.0,
+    "waited_s": 0.03199999999196734
+  },
+  "gains": [
+    {
+      "best_adherence": 0.7708,
+      "best_arm": "s8",
+      "best_steps": 8,
+      "control_adherence": 0.3333,
+      "gain": 0.4375,
+      "route": "pre-built ladder",
+      "statement": "On the pre-built ladder route the best deeper rung is `s8`, which reads back as a 77% of frames against one step's 33% - +44%, worth the frame rate it costs.",
+      "worthwhile": true
+    },
+    {
+      "best_adherence": 0.3125,
+      "best_arm": "s2-nobatch",
+      "best_steps": 2,
+      "control_adherence": 0.3333,
+      "gain": -0.0208,
+      "route": "unbatched",
+      "statement": "On the unbatched route the best deeper rung is `s2-nobatch`, which reads back as a 31% of frames against one step's 33% - -2%, under the 10% bar, so more steps have not been shown to buy a better picture on this case.",
+      "worthwhile": false
+    }
+  ],
+  "hardware": {
+    "clock_lock": {
+      "applied_clock_mhz": null,
+      "current_sm_clock_mhz": 2715.0,
+      "evidence": "clocks_event_reasons.applications_clocks_setting=Not Active",
+      "max_sm_clock_mhz": 3150.0,
+      "state": "unlocked"
+    },
+    "cuda_version": "12.8",
+    "driver_version": "610.47",
+    "enforced_power_limit_w": 500.0,
+    "gpu_name": "NVIDIA GeForce RTX 4090",
+    "hostname": "DESKTOP-7OBJQKB",
+    "nvidia_smi_captured_utc": "2026-09-08T13:33:55Z",
+    "nvidia_smi_raw": "Tue Sep  8 15:33:55 2026       \n+-----------------------------------------------------------------------------------------+\n| NVIDIA-SMI 610.47                 KMD Version: 610.47        CUDA UMD Version: 13.3     |\n+-----------------------------------------+------------------------+----------------------+\n| GPU  Name                  Driver-Model | Bus-Id          Disp.A | Volatile Uncorr. ECC |\n| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |\n|                                         |                        |               MIG M. |\n|=========================================+========================+======================|\n|   0  NVIDIA GeForce RTX 4090      WDDM  |   00000000:01:00.0  On |                  Off |\n| 30%   54C    P0            258W /  500W |    4364MiB /  24564MiB |     74%      Default |\n|                                         |                        |                  N/A |\n+-----------------------------------------+------------------------+----------------------+\n\n+-----------------------------------------------------------------------------------------+\n| Processes:                                                                              |\n|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |\n|        ID   ID                                                               Usage      |\n|=========================================================================================|\n|    0   N/A  N/A            1724    C+G   ...ntrolPanel\\SystemSettings.exe      N/A      |\n|    0   N/A  N/A            2816    C+G   C:\\Windows\\explorer.exe               N/A      |\n|    0   N/A  N/A            3648    C+G   ...5n1h2txyewy\\TextInputHost.exe      N/A      |\n|    0   N/A  N/A            3692    C+G   ...32-x64\\open-stage-control.exe      N/A      |\n|    0   N/A  N/A            4452    C+G   ...yb3d8bbwe\\WindowsTerminal.exe      N/A      |\n|    0   N/A  N/A            4840    C+G   ...ms\\t3code\\T3 Code (Alpha).exe      N/A      |\n|    0   N/A  N/A            7832    C+G   ...Chrome\\Application\\chrome.exe      N/A      |\n|    0   N/A  N/A           12208    C+G   ...h_cw5n1h2txyewy\\SearchApp.exe      N/A      |\n|    0   N/A  N/A           12556    C+G   ...mmaLauncher\\GammaLauncher.exe      N/A      |\n|    0   N/A  N/A           12660    C+G   ...App_cw5n1h2txyewy\\LockApp.exe      N/A      |\n|    0   N/A  N/A           13024    C+G   ...bs-studio\\bin\\64bit\\obs64.exe      N/A      |\n|    0   N/A  N/A           13724    C+G   ...vv_gamma_7.1-win-x64\\vvvv.exe      N/A      |\n|    0   N/A  N/A           14768    C+G   ...6)\\Dropbox\\Client\\Dropbox.exe      N/A      |\n|    0   N/A  N/A           14928    C+G   ...grams\\QuickLook\\QuickLook.exe      N/A      |\n|    0   N/A  N/A           17148    C+G   ...xyewy\\ShellExperienceHost.exe      N/A      |\n|    0   N/A  N/A           19156    C+G   ...Chrome\\Application\\chrome.exe      N/A      |\n+-----------------------------------------------------------------------------------------+\n",
+    "power_limit_w": 500.0,
+    "torch_version": "2.7.0+cu128",
+    "total_vram_mib": 24564.0
+  },
+  "kind": "quality",
+  "occupancy": {
+    "clear": false,
+    "mean_utilization_pct": 75.0,
+    "outcome": "busy",
+    "samples": [
+      77.0,
+      73.0,
+      76.0,
+      74.0
+    ],
+    "threshold_pct": 10.0
+  },
+  "recommendation": null,
+  "run": {
+    "finished_utc": "2026-09-08T13:36:04Z",
+    "started_utc": "2026-09-08T13:34:06Z"
+  },
+  "schema_version": 2,
+  "swap": {
+    "arms": 8,
+    "mean_seconds": 3.532,
+    "measured": true,
+    "statement": "Switching to a step count whose engine is already built took **3.5 s** on average and 3.6 s at worst, over 8 arms - the whole of it: letting the previous engine go, loading the new one and preparing it, which is exactly what the worker does when a step count changes. That is the figure the window may quote; the 5-25 minutes, depending on the GPU and ~5 GB it warns about belong to a count that has no engine yet.",
+    "uncached_arms": 0,
+    "worst_seconds": 3.632
+  }
+}

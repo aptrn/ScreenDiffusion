@@ -232,10 +232,41 @@ doors decide it: bit-identity, a 1.40x cost ceiling from §8.8's headroom, and a
 The controls ship in `Advanced` anyway. At one step `initialize` and `full`
 compute the *same thing* at delta 1.0 and the block says so from the numbers.
 
-All eleven case-table blocks (`--detector-report`, `--primitive-report`,
+The same slot also takes a **step-quality case** (`steps-dog`) - issue #46,
+`bench/results/quality/`, `--quality-report`, spec 8.12. A user asked for the
+trade by name: more denoising steps, a better picture, fewer frames per second,
+**chosen at runtime**. One run renders the same clip at 1 / 2 / 4 / 8 steps on
+*both* ways of paying for it - the pre-built ladder (`use_denoising_batch` on,
+one ~5 GB engine per rung) and the unbatched route (off, one engine for every
+rung) - over §8.11's clip, prompt, region and denoise, so 8.12 restates that
+baseline rather than opening a second. Route B had to be **written**:
+`wrapper.py` refused img2img unbatched, and upstream's own branch overwrites
+`init_noise` with the current frame's latent, which is harmless for txt2img and
+wrong for img2img. `wrapper.unbatched_predict_x0` is it as the batched path's
+analogue. The two routes do not compute the same thing - batched carries
+`x_t_latent_buffer` *across frames*, so an N-step batched render answers N-1
+frames late, which is why §7.2 measured four steps at 1.87x rather than 4x - so
+`response` (spec 8.5's metric over the pixels that moved) sits beside `flicker`
+in the table. Every arm is preceded by letting the previous engine go and
+building this one, which *is* the worker's swap, with one priming build before
+the first arm so no arm carries the process's CUDA start-up; a swap figure is
+read only from arms whose engine already existed, because an arm that compiled
+measured a build. Measured on a 4090: **a cached-engine swap is 3.5 s** (3.4-3.6
+across eight arms) - "seconds, not minutes" was an inference from an
+`os.path.exists` call and is now a number the window may quote. **The ladder wins
+on the picture before it wins on anything else**: 33% -> 44% -> 52% -> 77%
+adherence up the batched rungs against 33% -> 31% -> 12% -> **0%** up the
+unbatched ones, which end as a rectangle of noise 69.8/255 from the capture.
+384/384 frames bit-identical outside the region at every arm. **The route verdict
+itself is withheld**: the occupancy gate read 75% - another application was live
+on the card - so `timing_is_decisive` refuses to print a recommendation whose
+whole question is whether a rung fits 33.33 ms. The quality half is not
+confounded and the block says which half is which.
+
+All twelve case-table blocks (`--detector-report`, `--primitive-report`,
 `--capture-report`, `--selective-report`, `--cadence-report`, `--swap-report`,
 `--stability-report`, `--steps-report`, `--model-report`, `--style-report`,
-`--guidance-report`) keep the newest run **per (thing measured, GPU)**, not per
+`--guidance-report`, `--quality-report`) keep the newest run **per (thing measured, GPU)**, not per
 name. A 4090 run therefore adds a row beside the 3080's instead of erasing it,
 which is what keeps spec 7.4's portability table checkable. When rows span GPUs
 the table grows a `GPU` column, the preamble names every machine, and the
@@ -248,13 +279,13 @@ machine a record came from.
 `--portability-report` is the second question asked of those same records — not
 "does the path work" but "which of its numbers survived the move to the hardware
 this ships on" — and regenerates the block in spec 7.4, byte-matched by a test
-like the other ten. It refuses to draw a table at all when the two runs rendered
+like the other eleven. It refuses to draw a table at all when the two runs rendered
 different regions/frame, because region count drives cost and a table across two
 of them is the wrong answer in a quotable shape. The 30 FPS verdict it prints is
 judged on `ms/frame with detection`, carries the region count and the clock
 regime, and says whether every committed run on the card landed on the same side
 of the target — a verdict inside the run-to-run spread is labelled one.
-`scripts/regen_spec_blocks.py` pastes all thirteen generated blocks back into the
+`scripts/regen_spec_blocks.py` pastes all fourteen generated blocks back into the
 spec, so a regeneration is never a hand-copy that drops a digit.
 
 The clips in `bench/clips/` are committed and so are their box tracks
@@ -332,6 +363,23 @@ free-disk floor. `engine_cache.py` is that naming rule, stdlib, shared with
 `bench.cli`'s build guard **and with `wrapper.py` itself** since issue #44, and held
 to `create_prefix` by `tests/test_engine_cache.py`: a build the window allows and
 the harness refuses is two rules, not one.
+
+**Quality is a picker, and each rung says whether it is built** (issue #46, spec
+8.12). The step count keys a TensorRT engine like everything in `Advanced`, but
+unlike them it is a choice about what the app *makes*, so it sits beside the
+strength sliders as a ladder over `engine_cache.STEP_LADDER` - one list, shared
+with the sweep that priced the rungs, so the window cannot offer a quality nobody
+measured. `step_choices` labels each rung `engine ready` or `builds an engine` by
+looking the directory up through `engine_configuration`, the door Start uses, so
+the cost of the click is on the button *before* it is clicked; `_refresh_engine_state`
+redraws the ladder, because the model, the LoRA set, the batch size and the cfg
+type all change which rungs exist. An uncached rung still goes through
+`_confirm_engine_rebuild` and the 20 GB floor (`_confirm_step_change`), and the
+picker is deliberately **not** lockable - "chosen at runtime" is the request.
+`_apply_steps` opens the ladder at the index the sliders are already on, so more
+steps is not also more denoise. The worker's plan-denoise update went through
+`t_index_ladder` in the same change: it used to fire only at one step, which with
+a user-chosen count would have dropped Target/Style's strength at every other rung.
 
 **A style LoRA is picked from a list, and one file is one engine** (issue #44,
 spec 8.10). `local_lora_paths()` / `lora_label()` offer every LoRA staged under
@@ -588,13 +636,39 @@ ever, so an empty field cannot overwrite it.
   arm (issue #38, spec 8.10): a plain kohya LoRA loads and works, and a LoCon file
   with 198 conv keys fails with `'UNet2DConditionModel' object has no attribute
   'conv'`. Test the format, not the extension.
-- **A step count is an engine, not a setting.** `use_denoising_batch` puts the
-  denoising steps through the UNet as one batch, so four steps is a batch-4 UNet
-  engine and `--steps 4` on the TensorRT path is a ~5 GB build. `engine_cache.
-  unet_batch_size` is the one spelling of `frame_buffer_size * steps`, read by both
-  the window's warning and the harness's guard. The good news measured in spec 7.2:
-  four steps costs 1.87x the one-step *call*, not 4x, because a batch of four is not
-  four calls.
+- **A step count is an engine, not a setting - on the batched route.**
+  `use_denoising_batch` puts the denoising steps through the UNet as one batch, so
+  four steps is a batch-4 UNet engine and `--steps 4` on the TensorRT path is a
+  ~5 GB build. `engine_cache.unet_batch_size` is the one spelling of
+  `frame_buffer_size * steps`, read by the window's warning, the quality picker's
+  labels and the harness's guard. The good news measured in spec 7.2: four steps
+  costs 1.87x the one-step *call*, not 4x, because a batch of four is not four
+  calls. With batching **off** the batch is `frame_buffer_size` at every rung and
+  the step count keys nothing at all - which is the whole of issue #46's second
+  route, and why `unet_batch_size` takes the flag.
+- **`use_denoising_batch` off was not a switch, it was unimplemented.**
+  `wrapper.py` raised `NotImplementedError("img2img mode must use denoising batch
+  for now")`, and upstream's own unbatched branch does `self.init_noise =
+  x_t_latent` - it overwrites the prepared noise field with the current frame's
+  noised latent, which is harmless for txt2img and wrong for img2img, where
+  `encode_image` reads `init_noise[0]` on the next call. It also redraws
+  `torch.randn_like` at every intermediate rung. `wrapper.unbatched_predict_x0`
+  (issue #46) is the route written as the batched path's analogue - the prepared
+  field is left alone and read at every rung - and it is held to that by
+  `tests/test_unbatched_route.py`, which executes it against a stand-in stream.
+  Do not "simplify" it back onto the pipeline's own branch. And do not read spec
+  8.12's verdict as "unbatched denoising is bad": at batch 1 `init_noise` has one
+  row, so this route re-noises every rung with the *same* realisation where the
+  batched path uses `init_noise[i]` at rung `i`. Perfectly correlated noise across
+  rungs is a plausible part of why its deeper arms diverge, and the fresh-draw
+  variant was not measured. What is measured is the route as written.
+- **Batched multi-step is a pipeline, not N passes on this frame.**
+  `predict_x0_batch` carries `x_t_latent_buffer` *across frames*, so a frame's
+  later rungs are spent on earlier frames' latents and an N-step batched render
+  answers N-1 frames late. That is why four steps costs 1.87x a one-step call
+  rather than 4x (spec 7.2) - the good news and the cost are the same fact. Any
+  quality comparison across step counts has to carry `response` (spec 8.5's
+  metric over the pixels that *moved*) or it prices the lag at zero.
 - **Do not read "SD 1.5 misses 30 FPS" as "SD 1.5 is out."** Spec 7.5 measures 24.4
   FPS against SD-Turbo's 45.7 on the same clip and plan, and the whole point of the
   arm is that SD-Turbo can load no style LoRA at all. The trade is a product

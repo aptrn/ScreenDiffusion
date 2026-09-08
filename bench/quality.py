@@ -53,7 +53,7 @@ from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
 from bench import RESULT_SCHEMA_VERSION
 from bench.clocks import ClockNormalization
-from bench.contention import OccupancyRecord
+from bench.contention import CLEAR, UNKNOWN, OccupancyRecord
 from bench.cooldown import CooldownRecord
 from bench.fingerprint import Fingerprint
 from bench.primitive_results import ClipRecord
@@ -373,6 +373,46 @@ def arms_of(result: Mapping) -> List[QualityArm]:
     return [QualityArm.from_dict(arm) for arm in result["arms"]]
 
 
+def timing_is_decisive(result: Mapping) -> bool:
+    """Was this run's card its own? Only then may its milliseconds decide a route.
+
+    Issue #33's door, applied to the one verdict here that is an *absolute*
+    millisecond judgement: whether a rung fits a 30 FPS frame. A card another
+    application is drawing on measures the neighbour, and a route recommendation
+    read off those numbers is the wrong answer in a quotable shape - the same
+    reason spec 7.4 withholds a hardware ratio across two cadences. `unknown`
+    withholds too, for the reason it fails `--require-idle-gpu`: a gate that
+    cannot see the card has not seen an empty one.
+
+    Everything else in the block survives contention and is not withheld. The
+    adherence probe, the net change, the flicker and the bit-identity are
+    properties of the *pixels*, which another tenant does not move, and the swap
+    figure is a disk load rather than a frame path.
+    """
+    occupancy = result.get("occupancy")
+    return bool(occupancy) and occupancy.get("outcome") == CLEAR
+
+
+def contention_note(result: Mapping) -> str:
+    """Why no route was recommended, when the card was not this run's alone."""
+    occupancy = result.get("occupancy") or {}
+    utilization = occupancy.get("mean_utilization_pct")
+    seen = ("could not be read" if utilization is None
+            else f"read {utilization:.0f}% of the SMs in use before the run")
+    return (
+        f"**No route is recommended from this run: the GPU was "
+        f"`{occupancy.get('outcome', UNKNOWN)}`** - the occupancy gate {seen}, "
+        f"against a {occupancy.get('threshold_pct', 10):.0f}% threshold. Which "
+        f"route ships turns on whether a rung fits a {FRAME_BUDGET_MS:.2f} ms "
+        f"frame, and a card another application is drawing on measures the "
+        f"neighbour (issue #33). The `ms/frame` and `FPS` columns above are that "
+        f"run's and are **not** this hardware's. Everything else here is a "
+        f"property of the pixels or of a disk load and stands: the adherence, the "
+        f"net change, the flicker, the response, the engine each arm keys and the "
+        f"bit-identity. Re-run with `--require-idle-gpu` on an idle machine to "
+        f"decide the route.")
+
+
 def on_route(arms: Sequence[QualityArm], route: str) -> List[QualityArm]:
     return sorted((arm for arm in arms if arm.route == route),
                   key=lambda arm: arm.steps)
@@ -494,8 +534,36 @@ def step_gain(arms: Sequence[QualityArm], route: str) -> Optional[StepGain]:
         worthwhile=worthwhile,
         statement=(
             f"On the {route} route the best deeper rung is `{best.name}`, which "
-            f"reads back as a {best.adherence:.0%} of frames against one step's "
-            f"{control.adherence:.0%} - {gain:+.0%}, {verdict}."))
+            f"reads back as what the prompt asked for on {best.adherence:.0%} of "
+            f"frames against one step's {control.adherence:.0%} - {gain:+.0%}, "
+            f"{verdict}."))
+
+
+def quality_verdict(arms: Sequence[QualityArm]) -> Optional[str]:
+    """Which route's depth buys a better picture - judged without a clock.
+
+    The half of the decision no contention can confound, and therefore the half
+    worth stating even on a run whose milliseconds are withheld: adherence, net
+    change and flicker are properties of the *pixels*, and another tenant on the
+    card does not move a pixel. None when the two routes agree, where there is
+    nothing to separate them on and the timing is the whole question.
+    """
+    gains = {route: step_gain(arms, route)
+             for route in (ROUTE_LADDER, ROUTE_UNBATCHED)}
+    if any(gain is None for gain in gains.values()):
+        return None
+    winners = [route for route, gain in gains.items() if gain.worthwhile]
+    if len(winners) != 1:
+        return None
+    winner = winners[0]
+    loser = next(route for route in gains if route != winner)
+    return (
+        f"**The {winner} route wins on the picture alone, before any "
+        f"millisecond.** Its deeper rungs buy {gains[winner].gain:+.0%} of "
+        f"adherence and the {loser} route's buy {gains[loser].gain:+.0%} - and "
+        f"adherence, net change and flicker are properties of the pixels, which "
+        f"another tenant on the card does not move. So this half of the decision "
+        f"stands whatever the occupancy gate said about the clock.")
 
 
 # --- the recommendation (step 4) ---------------------------------------------
@@ -527,9 +595,19 @@ class RouteRecommendation:
 
 def _deepest_affordable(arms: Sequence[QualityArm],
                         route: str) -> Optional[QualityArm]:
-    """The deepest rung on `route` that still fits one 30 FPS frame."""
-    affordable = [arm for arm in qualified(arms)
-                  if arm.route == route and arm.fits_budget]
+    """The deepest rung on `route` that fits a 30 FPS frame and is worth reaching.
+
+    "Worth reaching" is the second half and it is not a nicety: the whole point of
+    a deeper rung is a better picture, so a rung that reads back *worse* than the
+    same route's one step is a step backwards wearing a bigger number. Without
+    this the comparison would reward a route for reaching a depth nobody would set
+    it to.
+    """
+    on = [arm for arm in qualified(arms) if arm.route == route]
+    control = next((arm for arm in on if arm.steps == 1), None)
+    floor = 0.0 if control is None else control.adherence
+    affordable = [arm for arm in on
+                  if arm.fits_budget and arm.adherence >= floor]
     return max(affordable, key=lambda arm: arm.steps) if affordable else None
 
 
@@ -563,8 +641,9 @@ def recommend_route(arms: Sequence[QualityArm]) -> Optional[RouteRecommendation]
         winner, loser = unbatched_arm, ladder_arm
     else:
         winner, loser = ladder_arm, unbatched_arm
+    rungs: List[int] = []
+    keyed: List[int] = []
     if winner.route == ROUTE_UNBATCHED:
-        rungs: List[int] = []
         cost = (f"and it compiles nothing at all: with `use_denoising_batch` off "
                 f"the UNet batch is {winner.unet_batch} at every rung, so every "
                 f"step count runs on the engine the app already ships")
@@ -580,10 +659,7 @@ def recommend_route(arms: Sequence[QualityArm]) -> Optional[RouteRecommendation]
         route=winner.route, deepest_affordable_steps=winner.steps,
         deepest_affordable_ms=winner.ms_per_frame, other_route=loser.route,
         other_deepest_steps=loser.steps, other_deepest_ms=loser.ms_per_frame,
-        engines_to_build=len([step for step in rungs
-                              if any(arm.steps == step and arm.keys_new_engine
-                                     for arm in on_route(arms, ROUTE_LADDER))]),
-        rungs_shipped=rungs,
+        engines_to_build=len(keyed), rungs_shipped=rungs,
         statement=(
             f"**The {winner.route} route ships.** It renders {winner.steps} "
             f"denoising steps at {winner.ms_per_frame:.2f} ms/frame - inside a "
@@ -766,10 +842,11 @@ def _machine_section(result: dict, prefix: str) -> str:
             f"Disqualified for painting outside the rendered region: "
             f"{', '.join(f'`{arm.name}`' for arm in broke)}.")
     else:
-        frames = sum(arm.background.frames for arm in arms if arm.measured)
-        lines.append(f"Background bit-identity held at every arm: {frames}/{frames} "
-                     f"frames left every pixel outside the rendered region exactly "
-                     f"as captured.")
+        measured = [arm for arm in arms if arm.measured]
+        frames = sum(arm.background.frames for arm in measured)
+        lines.append(f"Background bit-identity held at every arm: {frames} frames "
+                     f"over {len(measured)} arms left every pixel outside the "
+                     f"rendered region exactly as captured.")
     artefacts = [f"`{result[key]}`" for key in ("comparison_still", "comparison_clip")
                  if result.get(key)]
     if artefacts:
@@ -797,6 +874,12 @@ def format_quality_report(results: Mapping[str, dict]) -> str:
         for result in measured_on(ordered, gpu):
             sections.append(_machine_section(
                 result, "" if len(gpus) == 1 else f"{gpu}: "))
+            verdict = quality_verdict(arms_of(result))
+            if verdict is not None:
+                sections.append(verdict)
+            if not timing_is_decisive(result):
+                sections.append(contention_note(result))
+                continue
             recommendation = recommend_route(arms_of(result))
             if recommendation is not None:
                 sections.append(recommendation.statement)

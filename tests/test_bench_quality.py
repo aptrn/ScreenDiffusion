@@ -24,12 +24,15 @@ from bench.quality import (
     arm_name,
     engine_keying,
     ladder,
+    contention_note,
     on_route,
     qualified,
+    quality_verdict,
     recommend_route,
     rungs_to_build,
     step_gain,
     swap_summary,
+    timing_is_decisive,
 )
 from bench.selective import background_check
 
@@ -240,3 +243,62 @@ def test_arms_are_grouped_by_route_in_rung_order():
             arm(steps=2, batched=False)]
     assert [one.steps for one in on_route(arms, ROUTE_LADDER)] == [1, 4]
     assert [one.steps for one in on_route(arms, ROUTE_UNBATCHED)] == [2]
+
+
+# --- the half of the decision no contention can confound ---------------------
+
+def test_a_route_whose_deeper_rungs_read_back_worse_cannot_be_recommended():
+    """A rung that reads back worse than the same route's one step is a step
+    backwards wearing a bigger number, so it is not a depth reached."""
+    arms = [arm(steps=1, batched=True, ms=18.0, adherence=0.33),
+            arm(steps=4, batched=True, ms=20.0, adherence=0.52),
+            arm(steps=1, batched=False, ms=18.0, adherence=0.33),
+            arm(steps=8, batched=False, ms=20.0, adherence=0.0)]
+    recommendation = recommend_route(arms)
+    assert recommendation.route == ROUTE_LADDER
+    assert recommendation.deepest_affordable_steps == 4
+    assert recommendation.other_deepest_steps == 1
+
+
+def test_the_picture_alone_separates_the_routes_when_only_one_gains():
+    arms = [arm(steps=1, batched=True, adherence=0.33),
+            arm(steps=4, batched=True, adherence=0.52),
+            arm(steps=1, batched=False, adherence=0.33),
+            arm(steps=4, batched=False, adherence=0.31)]
+    verdict = quality_verdict(arms)
+    assert ROUTE_LADDER in verdict
+    assert "before any millisecond" in verdict
+
+
+def test_no_picture_verdict_when_both_routes_gain():
+    """Then there is nothing to separate them on but the clock, and the clock is
+    what the occupancy gate may have taken away."""
+    arms = [arm(steps=1, batched=True, adherence=0.33),
+            arm(steps=4, batched=True, adherence=0.52),
+            arm(steps=1, batched=False, adherence=0.33),
+            arm(steps=4, batched=False, adherence=0.50)]
+    assert quality_verdict(arms) is None
+
+
+def test_no_picture_verdict_without_both_routes():
+    arms = [arm(steps=1, batched=True, adherence=0.33),
+            arm(steps=4, batched=True, adherence=0.52)]
+    assert quality_verdict(arms) is None
+
+
+# --- the contention door on the millisecond verdict --------------------------
+
+def test_a_run_on_a_shared_card_may_not_recommend_a_route():
+    assert timing_is_decisive({"occupancy": {"outcome": "clear"}}) is True
+    assert timing_is_decisive({"occupancy": {"outcome": "busy"}}) is False
+    assert timing_is_decisive({"occupancy": {"outcome": "unknown"}}) is False
+    assert timing_is_decisive({"occupancy": None}) is False
+    assert timing_is_decisive({}) is False
+
+
+def test_the_withholding_says_what_it_withheld_and_what_still_stands():
+    note = contention_note({"occupancy": {"outcome": "busy",
+                                          "mean_utilization_pct": 75.0,
+                                          "threshold_pct": 10.0}})
+    assert "busy" in note and "75%" in note
+    assert "ms/frame" in note and "adherence" in note
