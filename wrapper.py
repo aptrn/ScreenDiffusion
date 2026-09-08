@@ -1,9 +1,20 @@
 ﻿import gc
 import os
-import hashlib
+import sys
 from pathlib import Path
 import traceback
 from typing import List, Literal, Mapping, Optional, Union, Dict
+
+# `engine_cache` is stdlib and sits beside this file. It holds the one spelling of
+# the engine-directory rule `create_prefix` below renders, shared with the window
+# and the bench guard - so it is imported rather than copied (issue #44). This
+# module is loaded by path (`spec_from_file_location`), which does not put its own
+# directory on the import path, hence the insert.
+_HERE = str(Path(__file__).resolve().parent)
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+# Aliased because `create_prefix`'s enclosing scope binds a local of the same name.
+from engine_cache import lora_fingerprint as engine_lora_fingerprint
 
 import numpy as np
 import torch
@@ -816,12 +827,13 @@ class StreamDiffusionWrapper:
                 # exact fused-LoRA weights it was compiled against. Both must be
                 # part of the cache key, otherwise a stale engine gets loaded and
                 # fed mismatched tensors -> CUDA illegal memory access.
-                if lora_dict:
-                    lora_fingerprint = hashlib.sha1(
-                        repr(sorted(lora_dict.items())).encode("utf-8")
-                    ).hexdigest()[:8]
-                else:
-                    lora_fingerprint = "none"
+                #
+                # The fingerprint comes from `engine_cache`, which is what the
+                # window and the bench guard ask too. A second copy here was the
+                # two-rules bug that module exists to prevent - and it was the copy
+                # that hashed the raw path string, so two spellings of one file were
+                # two engines and neither side could find the other's (issue #44).
+                lora_fingerprint = engine_lora_fingerprint(lora_dict)
 
                 def create_prefix(
                     model_id_or_path: str,
