@@ -40,6 +40,10 @@ from bench.clocks import clock_normalization, regime_summary
 from bench.cooldown import DEFAULT_CAP_S, DEFAULT_POLL_INTERVAL_S, DEFAULT_THRESHOLD_C
 from bench.fingerprint import capture_fingerprint, utc_now
 from bench.flicker import flicker_score, response_score
+# One frame of the shipped path, and letting an arm's model go before the next is
+# built. Both are exactly what issue #45's sweep needs and neither is about
+# guidance, so they are borrowed rather than copied - a second spelling of "render
+# one frame through the compositor" is how two sweeps start measuring two things.
 from bench.guidance_runner import free, render_frame
 from bench.paths import QUALITY_RESULTS_DIR, resolve_engines_dir, resolve_models_dir
 from bench.primitive_results import ClipRecord

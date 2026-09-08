@@ -47,6 +47,18 @@ def choices(root: Path, acceleration: str = "tensorrt"):
         frame_buffer_size=1, engines_root=root)
 
 
+
+def assignment_line(method, name: str) -> int:
+    """The line a method calls `self.<name>()` on - the two whose order matters."""
+    import ast
+
+    lines = [node.lineno for node in ast.walk(method)
+             if isinstance(node, ast.Call)
+             and getattr(node.func, "attr", None) == name]
+    assert lines, f"{method.name} never calls self.{name}()"
+    return min(lines)
+
+
 # --- the ladder is the one the sweep measured --------------------------------
 
 
@@ -169,3 +181,14 @@ def test_the_ladder_is_redrawn_by_everything_that_keys_an_engine():
     rungs are built, and a stale "engine ready" is the one thing this must not
     say."""
     assert mentions(gui_method("_refresh_engine_state"), "_refresh_step_choices")
+
+
+def test_the_resting_label_is_drawn_after_the_widget_exists():
+    """`step_count_var` is constructed before the engine cache is consulted - it
+    cannot be, the widget is not built yet - so the window has to redraw the ladder
+    once it is, or it opens saying `builds an engine` about an engine it has."""
+    init = gui_method("__init__")
+    build = assignment_line(init, "_build_ui")
+    refresh = assignment_line(init, "_refresh_engine_state")
+    assert build < refresh, \
+        "the ladder is drawn before the picker exists, so its labels never land"
