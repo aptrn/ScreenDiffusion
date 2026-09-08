@@ -376,5 +376,6 @@ def test_both_base_models_are_swept_by_the_same_ladder():
     step count only, or the comparison is two sweeps rather than one."""
     turbo, sd15 = CASES["cfg-dog"], CASES["cfg-dog-sd15"]
     assert turbo.specs() == sd15.specs()
-    assert (turbo.denoise, turbo.prompt, turbo.clip, turbo.region) ==         (sd15.denoise, sd15.prompt, sd15.clip, sd15.region)
+    assert (turbo.denoise, turbo.prompt, turbo.clip, turbo.region) == (
+        sd15.denoise, sd15.prompt, sd15.clip, sd15.region)
     assert (turbo.steps, turbo.base_model) != (sd15.steps, sd15.base_model)

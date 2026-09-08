@@ -114,16 +114,16 @@ def unet_batch_size(frame_buffer_size: int, steps: int,
     this wrong is not a cosmetic error - it is the guard and the window answering
     "cached" about a directory the build never writes.
     """
-    frames, count = int(frame_buffer_size), int(steps)
     if cfg_type not in CFG_TYPES:
-        raise ValueError(f"{cfg_type!r} is not one of the cfg vocabulary {CFG_TYPES}")
+        raise ValueError(f"{cfg_type!r} is not a cfg type; expected one of {CFG_TYPES}")
+    frames, count = int(frame_buffer_size), int(steps)
     if not use_denoising_batch:
         return frames
     if cfg_type == CFG_INITIALIZE:
         return (count + 1) * frames
     if cfg_type == CFG_FULL:
         return 2 * count * frames
-    return frames * count
+    return count * frames
 
 
 def engine_dir_name(model_id_or_path: _PathLike, use_lcm_lora: bool,

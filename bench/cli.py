@@ -329,7 +329,7 @@ def resolve_target(args: argparse.Namespace) -> Tuple[str, Target]:
 
     One positional slot for all eight registries. A run measures one thing, the
     kinds of name cannot collide, and someone holding a name should not have to know
-    which of six flags it belongs behind.
+    which of eight flags it belongs behind.
 
     An unmodified name resolves to the registry's own object, so a caller can tell a
     plain run from an overridden one by identity.
@@ -363,8 +363,7 @@ def resolve_target(args: argparse.Namespace) -> Tuple[str, Target]:
         return "style", (case.replace(frames=args.frames) if args.frames else case)
     if args.scenario in GUIDANCE_CASES:
         case = GUIDANCE_CASES[args.scenario]
-        return "guidance", (case.replace(frames=args.frames) if args.frames
-                            else case)
+        return "guidance", (case.replace(frames=args.frames) if args.frames else case)
     raise SystemExit(
         f"bench: unknown scenario, detector or case {args.scenario!r}. "
         f"Run `python -m bench --list`."

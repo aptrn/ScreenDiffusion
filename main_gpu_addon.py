@@ -659,9 +659,8 @@ def cfg_companions(cfg_type: str) -> CfgCompanions:
     leaving the scale at 1.0 is picking nothing, and nothing in the window would
     have said so. §8.11's fourth trap in the window rather than in the harness.
     """
-    if cfg_type == CFG_NONE:
-        return CfgCompanions(guidance_scale=GUIDANCE_OFF, delta=DEFAULT_DELTA)
-    return CfgCompanions(guidance_scale=GUIDANCE_WHEN_ON, delta=DEFAULT_DELTA)
+    scale = GUIDANCE_OFF if cfg_type == CFG_NONE else GUIDANCE_WHEN_ON
+    return CfgCompanions(guidance_scale=scale, delta=DEFAULT_DELTA)
 
 
 def _as_scale(value) -> float:
@@ -1153,6 +1152,7 @@ def _plan_note(update: PlanUpdate) -> Tuple[str, str]:
     if update.notes:
         return "Adjusted: " + "; ".join(update.notes), PLAN_NOTE_COLOR
     return "", PLAN_NOTE_COLOR
+
 
 # The line the three guidance controls draw under themselves. Down here rather
 # than with the rest of issue #45 because it needs the window colours.
@@ -3074,8 +3074,8 @@ class StreamGUI(ctk.CTk):
         # the reason it is in the warning: `full` at one step needs a batch-2
         # engine, and a line reading "no engine for sd-turbo-fp16 at 1 step" would
         # be denying the existence of one that is built (issue #45).
-        what = f"{model} at {_steps_phrase(configuration.steps)}" \
-               f"{configuration.cfg_phrase}"
+        what = (f"{model} at {_steps_phrase(configuration.steps)}"
+                f"{configuration.cfg_phrase}")
         if configuration.cached:
             self.engine_state_var.set(f"Engine: cached for {what}.")
         else:
@@ -3088,14 +3088,11 @@ class StreamGUI(ctk.CTk):
         nothing at all."""
         if not engine_rebuild_needed(self.accel_var.get()):
             return None
-        try:
-            buffer_size = int(self.buffer_var.get())
-        except (TypeError, ValueError):
-            buffer_size = DEFAULT_FRAME_BUFFER_SIZE
         return engine_configuration(
             model_path=self.model_var.get(), acceleration=self.accel_var.get(),
             use_lcm_lora=bool(self.use_lcm_lora_var.get()),
-            steps=len(self.t_index_list), frame_buffer_size=buffer_size,
+            steps=len(self.t_index_list),
+            frame_buffer_size=self._frame_buffer_size(),
             lora_dict=self._lora_dict() or None,
             cfg_type=self.cfg_type_var.get())
 

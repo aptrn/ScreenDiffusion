@@ -270,7 +270,7 @@ def run_guidance(
                             for index in indices]
                 control_change = round(statistics.fmean(
                     [mean_abs_diff(sources[index], output, masks[index])
-                     for index, output in zip(indices, controls)]), 4)
+                     for index, output in enumerate(controls)]), 4)
                 log(f"control: the capture round trip costs {control_change:.2f}/255")
                 # A fresh scheduler and compositor for the timed pass, so this arm
                 # walks the same rotation from the same cursor every other one

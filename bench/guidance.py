@@ -124,6 +124,16 @@ ADHERENCE_TIE = 0.05
 # whatever it reads back, because the default has to run.
 MAX_COST_RATIO = 1.4
 
+# The ladder issue #45 sweeps. Narrow on purpose: guidance on a 1-4 step LCM
+# schedule is not the same animal as on a 50-step one, and the issue's fifth trap
+# asks for the range actually tried to be stated rather than implied. Below 1.0 the
+# pipeline disables guidance entirely (`if self.guidance_scale > 1.0`), so 1.1 is
+# the first rung that does anything at all.
+GUIDANCE_LADDER: Tuple[float, ...] = (1.05, 1.1, 1.2, 1.4, 2.0, 3.0)
+# 1.0 is the pipeline's own default and the rung every guidance arm carries; 0.5 is
+# the probe that says whether the argument moves anything.
+DELTA_LADDER: Tuple[float, ...] = (0.5, 1.0)
+
 
 def uses_delta(cfg_type: str) -> bool:
     """Does this cfg type read `delta` at all?
@@ -220,17 +230,6 @@ def _showcase_spec(cfg_type: str) -> ArmSpec:
 def _extreme_spec(cfg_type: str) -> ArmSpec:
     """The rung that shows what over-guiding a short schedule looks like."""
     return ArmSpec(cfg_type, GUIDANCE_LADDER[-1], DELTA_LADDER[-1])
-
-
-# The ladder issue #45 sweeps. Narrow on purpose: guidance on a 1-4 step LCM
-# schedule is not the same animal as on a 50-step one, and the issue's fifth trap
-# asks for the range actually tried to be stated rather than implied. Below 1.0 the
-# pipeline disables guidance entirely (`if self.guidance_scale > 1.0`), so 1.1 is
-# the first rung that does anything at all.
-GUIDANCE_LADDER: Tuple[float, ...] = (1.05, 1.1, 1.2, 1.4, 2.0, 3.0)
-# 1.0 is the pipeline's own default and the rung every guidance arm carries; 0.5 is
-# the probe that says whether the argument moves anything.
-DELTA_LADDER: Tuple[float, ...] = (0.5, 1.0)
 
 
 @dataclass(frozen=True)
@@ -509,29 +508,30 @@ def _control_of(arms: Sequence[GuidanceArm]) -> Optional[GuidanceArm]:
 
 
 def affordable(arm: GuidanceArm, control: GuidanceArm) -> bool:
-    """Is this arm within the frame path's own headroom? See `MAX_COST_RATIO`."""
+    """Is this arm within the frame path's own headroom? See `MAX_COST_RATIO`.
+
+    The third disqualifier, and a disqualifier rather than a caveat: the default
+    has to run at 30 FPS, so an arm that reads back beautifully at half the frame
+    rate is a setting rather than a default. It is asked separately from
+    `qualified` because the arms it rules out are still worth naming - the block
+    says which arm was priced out and by how much.
+    """
     if control.ms_per_frame <= 0.0:
         return True
     return arm.ms_per_frame <= control.ms_per_frame * MAX_COST_RATIO
 
 
-def qualified(arms: Sequence[GuidanceArm],
-              control: Optional[GuidanceArm] = None) -> List[GuidanceArm]:
-    """The arms a recommendation may choose from, and the rule in one place.
+def qualified(arms: Sequence[GuidanceArm]) -> List[GuidanceArm]:
+    """The arms a recommendation may consider at all, and the rule in one place.
 
-    Three disqualifiers, and each is a disqualifier rather than a caveat. An arm
+    Two disqualifiers, and each is a disqualifier rather than a caveat. An arm
     that never ran cannot be recommended. Neither can one that painted a pixel
     outside the rendered region - that is the selective path's whole promise, and
     an arm that broke it is a different renderer however well the prompt landed.
-    And neither can one that costs more of the frame path than the budget has in
-    hand: the default has to run at 30 FPS, so an arm that reads back beautifully
-    at half the frame rate is a setting rather than a default.
+    What it costs is the third rule and `affordable`'s.
     """
-    candidates = [arm for arm in arms
-                  if arm.measured and not arm.is_control and arm.background.passed]
-    if control is None:
-        return candidates
-    return [arm for arm in candidates if affordable(arm, control)]
+    return [arm for arm in arms
+            if arm.measured and not arm.is_control and arm.background.passed]
 
 
 def _no_control() -> GuidanceRecommendation:
@@ -644,9 +644,9 @@ def recommend_guidance(arms: Sequence[GuidanceArm]) -> GuidanceRecommendation:
         [arm for arm in arms
          if arm.measured and not arm.is_control and not arm.background.passed],
         key=lambda arm: arm.adherence, reverse=True)
-    candidates = qualified(arms, control)
-    unaffordable = [arm for arm in qualified(arms)
-                    if not affordable(arm, control)]
+    eligible = qualified(arms)
+    candidates = [arm for arm in eligible if affordable(arm, control)]
+    unaffordable = [arm for arm in eligible if not affordable(arm, control)]
     if not candidates:
         return _stands(control, None, broke_identity, unaffordable)
     best = max(candidates, key=lambda arm: arm.adherence)
