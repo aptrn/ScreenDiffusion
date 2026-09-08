@@ -23,7 +23,7 @@ MODELS = ("local_model_paths", "model_label", "model_companions", "ModelCompanio
           "MODEL_STEPS_SD15", "MODEL_STEPS_TURBO", "DEFAULT_T_INDEX_LIST")
 ENGINE = ("engine_configuration", "EngineConfiguration", "_engine_missing_warning",
           "_not_enough_disk_message", "engine_rebuild_needed", "TENSORRT",
-          "model_label", "_steps_phrase")
+          "model_label", "_steps_phrase", "_lora_phrase", "lora_label")
 
 
 def helpers(*names, **extra):

@@ -95,3 +95,49 @@ def test_a_cached_engine_is_reused_from_a_different_cwd(shared_caches, monkeypat
 
     assert _snapshot(engines_root) == before, "the engine cache was rewritten, not reused"
     assert not (elsewhere / "engines").exists(), "an engines dir was created next to the cwd"
+
+
+# --- a style LoRA's engine, found from the spelling the window produces -------
+#
+# Issue #44's Gate: the committed style engines have to still be found after the
+# key was normalised, or ~5 GB apiece is orphaned. That is a question about this
+# machine's caches rather than about its GPU, which is why it sits here with the
+# other cache-dependent tests instead of in the merge gate's tier - a machine with
+# no `engines/` cannot answer it either way.
+
+STYLE_MODEL = "sd-v1-5-fp16"
+STYLE_LORA = "loras/style-loving-vincent.safetensors"
+# `bench.scenarios.ScenarioConfig.lora_scale`, which is what the committed
+# `bench/results/styles/` arms were fused at - and `DEFAULT_LORA_SCALE` in the
+# window, so the two ask about one engine.
+STYLE_SCALE = 1.0
+
+
+def test_a_style_lora_engine_is_found_from_either_spelling_of_its_path():
+    """Tk's dialog returns forward slashes and `pathlib` returns backslashes. Both
+    have to name the directory the harness built, or the window can never find a
+    release's engines and every style costs a second ~5 GB build (issue #44)."""
+    import engine_cache
+
+    models_root = _paths["resolve_models_dir"]()
+    engines_root = _paths["resolve_engines_dir"]()
+    lora = models_root / STYLE_LORA
+    if not lora.is_file():
+        pytest.skip(f"no {STYLE_LORA} under {models_root}")
+
+    from_pathlib = str(lora)
+    from_dialog = from_pathlib.replace("\\", "/")
+    names = {
+        spelling: engine_cache.engine_dir_name(
+            models_root / STYLE_MODEL, use_lcm_lora=True, use_tiny_vae=True,
+            unet_batch=engine_cache.unet_batch_size(frame_buffer_size=1, steps=4),
+            width=512, height=512, lora_dict={spelling: STYLE_SCALE})
+        for spelling in (from_pathlib, from_dialog)
+    }
+
+    assert len(set(names.values())) == 1, f"two spellings, two engines: {names}"
+    built = engines_root / next(iter(names.values()))
+    if not built.is_dir():
+        pytest.skip(f"no style engine at {built} - nothing committed to check")
+    assert engine_cache.engine_is_cached(engines_root, built.name), \
+        f"{built} holds no {engine_cache.UNET_ENGINE}"

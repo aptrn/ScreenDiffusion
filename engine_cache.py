@@ -26,6 +26,7 @@ one floor too many.
 from __future__ import annotations
 
 import hashlib
+import ntpath
 import shutil
 from pathlib import Path
 from typing import Mapping, Optional, Union
@@ -75,16 +76,60 @@ def is_turbo_model(model_id_or_path: _PathLike) -> bool:
     return "turbo" in str(model_id_or_path)
 
 
+def _is_filesystem_path(name: str) -> bool:
+    """A path, as opposed to a Hugging Face repo id like `org/model`.
+
+    A drive letter or a backslash is only ever a path. Anything else has to name
+    something on disk to be treated as one, because `org/model` and
+    `loras/style.safetensors` are the same shape and only the disk tells them
+    apart.
+    """
+    if not name:
+        return False
+    if ntpath.splitdrive(name)[0] or "\\" in name:
+        return True
+    return Path(name).exists()
+
+
+def normalize_lora_key(name: _PathLike) -> str:
+    """The spelling of one fused LoRA that keys the engine - one per *file*.
+
+    Issue #44: the key was the raw string, and two callers spell one file two ways.
+    Tk's file dialog returns forward slashes on Windows; `pathlib` returns
+    backslashes. So the same LoRA at the same scale hashed to two directories, the
+    window could never find an engine the harness had built, and adding one LoRA by
+    two routes cost two ~5 GB builds.
+
+    `Path.resolve()` is the normalisation: it absolutises, folds the separators,
+    follows links and on Windows returns the file's own case - the file rather than
+    the route taken to it. An absolute backslash spelling is already its own
+    resolution, which is why the engines built before this change are still found.
+
+    A name that is not a path is left alone: `stream.load_lora` also takes a repo
+    id, and absolutising `org/model` would key the engine on whatever directory the
+    app happened to be started from.
+    """
+    text = str(name)
+    if not _is_filesystem_path(text):
+        return text
+    return str(Path(text).resolve())
+
+
 def lora_fingerprint(lora_dict: Optional[Mapping[str, float]]) -> str:
     """The 8 hex characters `create_prefix` puts in the name for a fused LoRA set.
 
     This is why a style LoRA is a release-time decision on the TensorRT path: every
-    distinct set of LoRAs and scales is a different engine.
+    distinct set of LoRAs and scales is a different engine. Both halves of an entry
+    are read for what they *are* rather than for how they were written - the path
+    through `normalize_lora_key`, the scale as a float, so `1` and `1.0` are one
+    scale rather than two `repr`s.
     """
     if not lora_dict:
         return NO_LORA
+    fused = {normalize_lora_key(name): float(scale)
+             for name, scale in lora_dict.items()}
     return hashlib.sha1(
-        repr(sorted(lora_dict.items())).encode("utf-8")).hexdigest()[:8]
+        repr(sorted(fused.items())).encode("utf-8")).hexdigest()[:8]
 
 
 def unet_batch_size(frame_buffer_size: int, steps: int,

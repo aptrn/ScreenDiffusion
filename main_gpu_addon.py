@@ -616,6 +616,76 @@ def model_companions(path: _PathArg) -> ModelCompanions:
         t_index_list=t_index_ladder(opening, MODEL_STEPS_SD15))
 
 
+# --- choosing a style LoRA (issue #44, steps 3-5) ----------------------------
+#
+# The same shape as the model picker above, for the same reason: the style LoRAs
+# live in one known directory, there are three of them, and a file browser for
+# three files in a known place is the wrong control. It is also how the wrong path
+# spelling reached the engine key - Tk's dialog returns forward slashes - though
+# what fixed *that* is `engine_cache.normalize_lora_key`, not this list.
+
+# Where a staged LoRA lives, under the models root. `bench.models.LORAS_SUBDIR`
+# spells the same directory, so a machine set up for the harness is one set up
+# for the window.
+LORAS_SUBDIR = "loras"
+
+# What `_add_lora`'s dialog already accepts, as suffixes rather than as a glob -
+# the dropdown and the browser must offer the same set of files.
+LORA_SUFFIXES = (".safetensors", ".bin", ".pt")
+
+# In the same directory and *not* a style: it is fused by the LCM-LoRA switch,
+# which is a separate setting on the worker. Offering it here invites fusing it
+# twice (issue #44's third trap).
+LCM_LORA_FILENAME = "lcm-lora-sdv1-5.safetensors"
+
+# The picker's resting value, and what it shows when the models root holds no
+# style LoRA at all. Neither is a filename: a LoRA is *added* by choosing it, so a
+# menu resting on a name would read as a selection that is not one. Both fall
+# through `_on_lora_chosen`'s search for a listed file and add nothing.
+ADD_LORA_PROMPT = "+ Add a style LoRA"
+NO_LOCAL_LORAS = "no LoRAs in the models root"
+
+# What a newly added LoRA is fused at until the slider is moved. It is also what
+# `bench.scenarios.ScenarioConfig.lora_scale` defaults to, which is the scale the
+# committed style engines were built at - so a listed LoRA reports `cached`
+# without the user having to guess the number back (issue #44's fourth trap).
+DEFAULT_LORA_SCALE = 1.0
+
+
+def local_lora_paths(models_root: _PathArg = None,
+                     environ: Optional[Mapping[str, str]] = None) -> List[str]:
+    """Every style LoRA staged under the models root, in name order."""
+    root = resolve_models_dir(environ=environ) if models_root is None else Path(models_root)
+    try:
+        entries = sorted((root / LORAS_SUBDIR).iterdir())
+    except OSError:
+        # No models root, or no `loras` under it - a machine before setup.
+        return []
+    return [str(path) for path in entries
+            if path.is_file() and path.suffix.lower() in LORA_SUFFIXES
+            and path.name != LCM_LORA_FILENAME]
+
+
+def lora_label(path: _PathArg) -> str:
+    """What a LoRA is called in the picker: its filename, not its whole path."""
+    return Path(str(path)).name if path else ""
+
+
+def _lora_phrase(lora_dict: Optional[Dict[str, float]]) -> str:
+    """` with style-x.safetensors @ 0.90`, or nothing at all when none is fused.
+
+    The scale is in it because the scale keys the engine: a sentence naming only
+    the file would say `cached` about a build at another strength (issue #44's
+    fourth trap). Empty rather than "no LoRAs", so the sentence a user has always
+    read about the base model alone is unchanged.
+    """
+    if not lora_dict:
+        return ""
+    fused = ", ".join(f"{lora_label(path)} @ {scale:.2f}"
+                      for path, scale in sorted(lora_dict.items()))
+    return f" with {fused}"
+
+
 # StreamDiffusion's three acceleration paths. `tensorrt` is the default because it
 # is the only one this repo has ever measured: every figure in spec 7, every
 # committed benchmark and the ~5 GB engine cache under `engines/` belong to that
@@ -683,6 +753,10 @@ class EngineConfiguration(NamedTuple):
     steps: int
     free_bytes: int
     enough_disk: bool
+    # The fused set, already in words - `_lora_phrase` of the `lora_dict` this
+    # configuration was named from, so every sentence about the engine names the
+    # LoRA *and* the scale that keyed it rather than re-deriving them (issue #44).
+    loras: str = ""
 
 
 def engine_configuration(model_path: str, acceleration: str, use_lcm_lora: bool,
@@ -707,12 +781,24 @@ def engine_configuration(model_path: str, acceleration: str, use_lcm_lora: bool,
         model_path=str(model_path), engine_dir=directory, engines_root=str(root),
         cached=cached, builds=engine_rebuild_needed(acceleration) and not cached,
         steps=int(steps), free_bytes=free,
-        enough_disk=free >= engine_cache.MIN_FREE_BYTES_FOR_ENGINE_BUILD)
+        enough_disk=free >= engine_cache.MIN_FREE_BYTES_FOR_ENGINE_BUILD,
+        loras=_lora_phrase(lora_dict))
 
 
 def _steps_phrase(steps: int, noun: str = "step") -> str:
     """`1 step` / `4 steps`, so three messages cannot pluralise it three ways."""
     return f"{steps} {noun}{'' if steps == 1 else 's'}"
+
+
+def _engine_state_line(configuration: EngineConfiguration) -> str:
+    """The standing sentence under the model: which engine this needs, and if it
+    exists. One builder, so the LoRA set cannot be named in one of the two."""
+    model = model_label(configuration.model_path)
+    steps = _steps_phrase(configuration.steps)
+    if configuration.cached:
+        return f"Engine: cached for {model} at {steps}{configuration.loras}."
+    return (f"⚠  No engine yet for {model} at {steps}{configuration.loras} - "
+            f"Start will build one ({ENGINE_BUILD_TIME}, {ENGINE_BUILD_SIZE}).")
 
 
 def _engine_missing_warning(configuration: EngineConfiguration) -> str:
@@ -721,7 +807,8 @@ def _engine_missing_warning(configuration: EngineConfiguration) -> str:
         f"There is no compiled TensorRT engine for this configuration yet:\n\n"
         f"    {model_label(configuration.model_path) or configuration.model_path}, "
         f"{_steps_phrase(configuration.steps, 'denoising step')}, "
-        f"{DIFFUSION_CANVAS}x{DIFFUSION_CANVAS}\n"
+        f"{DIFFUSION_CANVAS}x{DIFFUSION_CANVAS}"
+        f"{configuration.loras}\n"
         f"    {configuration.engine_dir}\n\n"
         f"Starting will build one first: about {ENGINE_BUILD_TIME}, and "
         f"{ENGINE_BUILD_SIZE} under {configuration.engines_root}. The window will "
@@ -751,7 +838,7 @@ def _engine_rebuild_warning(setting: str) -> str:
 
 # Offline mode blocks diffusers' repo-id lookup, so prefer a local copy of the
 # LCM-LoRA when one has been staged in the models root.
-LOCAL_LCM_LORA = str(resolve_models_dir() / "loras" / "lcm-lora-sdv1-5.safetensors")
+LOCAL_LCM_LORA = str(resolve_models_dir() / LORAS_SUBDIR / LCM_LORA_FILENAME)
 PREVIEW_GAIN = 1.15
 
 def enforce_offline_mode():
@@ -1777,8 +1864,11 @@ class StreamGUI(ctk.CTk):
         self.model_choice_var = ctk.StringVar(value=model_label(self.model_var.get()))
         self.engine_state_var = ctk.StringVar(value="")
         # Each entry: {"path": str, "scale": float}. Converted to StreamDiffusion's
-        # lora_dict ({path: scale}) at start time.
+        # lora_dict ({path: scale}) at start time. `lora_choice_var` is the picker
+        # above them, which is a verb rather than a state: it rests on its prompt
+        # and choosing a name adds a row (issue #44).
         self.lora_items: List[Dict[str, Any]] = []
+        self.lora_choice_var = ctk.StringVar(value=ADD_LORA_PROMPT)
         self._lora_widgets: List[Any] = []
         self.prompt_var = ctk.StringVar(value="flip book animation, black and white rough sketch, rough drawing")
         self.neg_prompt_var = ctk.StringVar(value="low quality, bad quality, blurry, low resolution")
@@ -2243,10 +2333,19 @@ class StreamGUI(ctk.CTk):
             lf.grid_columnconfigure(0, weight=1)
             lh = ctk.CTkFrame(lf, fg_color="transparent")
             lh.grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 0))
-            ctk.CTkLabel(lh, text="LoRAs", font=ctk.CTkFont(weight="bold")).pack(side="left")
-            self._w_lora_add = ctk.CTkButton(lh, text="+ Add LoRA", width=90, command=self._add_lora)
+            ctk.CTkLabel(lh, text="Style LoRAs", font=ctk.CTkFont(weight="bold")).pack(side="left")
+            # Issue #44 step 4: Browse is kept. It is no longer the only way in, so
+            # it is labelled for what it is rather than for what it adds.
+            self._w_lora_add = ctk.CTkButton(lh, text="Browse", width=70, command=self._add_lora)
             self._w_lora_add.pack(side="right")
-            self._register_lockables(self._w_lora_add)
+            # Step 3: the styles are three files in one known directory, so they are
+            # picked from a list. Choosing one adds it - the same one door Browse
+            # goes through (`_add_lora_path`).
+            self._w_lora_combo = ctk.CTkOptionMenu(
+                lh, values=self._lora_choices(), variable=self.lora_choice_var,
+                command=self._on_lora_chosen)
+            self._w_lora_combo.pack(side="right", padx=(0, 6))
+            self._register_lockables(self._w_lora_add, self._w_lora_combo)
             self._loras_holder = ctk.CTkFrame(lf, fg_color="transparent")
             self._loras_holder.grid(row=1, column=0, sticky="ew", padx=6, pady=(4, 6))
             self._loras_holder.grid_columnconfigure(0, weight=1)
@@ -2717,30 +2816,63 @@ class StreamGUI(ctk.CTk):
 
     # ---------------- LoRA management ----------------
 
+    def _lora_choices(self) -> List[str]:
+        """What the picker offers: every style LoRA staged under the models root.
+
+        Three files in one known directory, which is what issue #44 replaced a file
+        browser with. Browse is still beside it, for a LoRA that lives elsewhere.
+        """
+        labels = [lora_label(path) for path in local_lora_paths()]
+        return [ADD_LORA_PROMPT] + labels if labels else [NO_LOCAL_LORAS]
+
+    def _on_lora_chosen(self, label: str):
+        """A LoRA picked from the list of what is on disk (issue #44, step 3).
+
+        The menu snaps back to its prompt: what it did was add a row below, and a
+        menu left showing a filename would claim to be the fused set - which it is
+        not, since more than one LoRA can be listed.
+        """
+        self.lora_choice_var.set(self._lora_choices()[0])
+        for path in local_lora_paths():
+            if lora_label(path) == label:
+                self._add_lora_path(path)
+                return
+
+    def _add_lora_path(self, path: str):
+        """Add one LoRA, unless that file is already fused. The one door.
+
+        Duplicates are matched on `engine_cache.normalize_lora_key`, not on the raw
+        string: two spellings of one file key a single engine (issue #44) but would
+        be two `lora_dict` entries, and the wrapper fuses every entry - so the same
+        weights would go in twice at the same scale.
+        """
+        if self.running: return
+        key = engine_cache.normalize_lora_key(path)
+        if any(engine_cache.normalize_lora_key(item["path"]) == key
+               for item in self.lora_items):
+            return
+        self.lora_items.append({"path": path, "scale": DEFAULT_LORA_SCALE})
+        self._build_loras_ui()
+        self._refresh_engine_state()
+
     def _add_lora(self):
+        """Browse - kept, because a LoRA outside the models root is a legal answer."""
         if self.running: return
         paths = filedialog.askopenfilenames(
             title="Select LoRA file(s)",
-            filetypes=[("LoRA weights", "*.safetensors *.bin *.pt"), ("All files", "*.*")],
+            initialdir=str(resolve_models_dir() / LORAS_SUBDIR),
+            filetypes=[("LoRA weights", " ".join(f"*{s}" for s in LORA_SUFFIXES)),
+                       ("All files", "*.*")],
         )
-        if not paths: return
-        existing = {item["path"] for item in self.lora_items}
-        added = 0
-        for path in paths:
-            # lora_dict is keyed by path, so duplicates would silently collapse.
-            if path in existing:
-                continue
-            self.lora_items.append({"path": path, "scale": 1.0})
-            existing.add(path)
-            added += 1
-        if added:
-            self._build_loras_ui()
+        for path in paths or ():
+            self._add_lora_path(path)
 
     def _remove_lora(self, index: int):
         if self.running: return
         if 0 <= index < len(self.lora_items):
             self.lora_items.pop(index)
             self._build_loras_ui()
+            self._refresh_engine_state()
 
     def _on_lora_scale_changed(self, index: int, value, disp_var):
         try:
@@ -2750,6 +2882,9 @@ class StreamGUI(ctk.CTk):
         if 0 <= index < len(self.lora_items):
             self.lora_items[index]["scale"] = scale
         disp_var.set(f"{scale:.2f}")
+        # The scale keys the engine as much as the file does, so the standing
+        # sentence has to follow the slider (issue #44's fourth trap).
+        self._refresh_engine_state()
 
     def _build_loras_ui(self):
         # Rows are rebuilt wholesale, so keep their widgets out of self._lockables
@@ -2829,19 +2964,15 @@ class StreamGUI(ctk.CTk):
         self._refresh_engine_state()
 
     def _refresh_engine_state(self):
-        """The standing line under the model: which engine this needs, and if it exists."""
+        """Draw that sentence for whatever the window currently adds up to.
+
+        Called by every control that keys an engine - the model, and since issue
+        #44 the LoRA set and each LoRA's scale - so what it says is the question
+        Start is about to ask on disk.
+        """
         configuration = self._engine_configuration()
-        if configuration is None:
-            self.engine_state_var.set("")
-            return
-        model = model_label(configuration.model_path)
-        steps = _steps_phrase(configuration.steps)
-        if configuration.cached:
-            self.engine_state_var.set(f"Engine: cached for {model} at {steps}.")
-        else:
-            self.engine_state_var.set(
-                f"⚠  No engine yet for {model} at {steps} - Start will build one "
-                f"({ENGINE_BUILD_TIME}, {ENGINE_BUILD_SIZE}).")
+        self.engine_state_var.set(
+            "" if configuration is None else _engine_state_line(configuration))
 
     def _engine_configuration(self) -> Optional[EngineConfiguration]:
         """What the settings in the window add up to, or None on a path that builds
