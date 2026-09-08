@@ -24,11 +24,11 @@ main checkout's `models/`, because a fresh worktree has none and the point of th
 shot is what a machine with a model does.
 
 `after-model-sd15.png`, `after-lora-choice.png`, `after-cfg.png` and
-`after-steps.png` were taken by driving `_on_model_chosen` /
-`_on_lora_chosen` / `_apply_cfg_type` / `_apply_steps` rather than by clicking, for the reason the selective shot uses a stand-in payload: this loop has
-no hands. What they photograph is the real handler's real effect on the real
-window - and in the LoRA and step shots, a real lookup against this machine's
-real engine cache.
+`after-steps.png` were taken by driving `_on_model_chosen` / `_on_lora_chosen` /
+`_apply_cfg_type` / `_apply_steps` rather than by clicking, for the reason the
+selective shot uses a stand-in payload: this loop has no hands. What they
+photograph is the real handler's real effect on the real window - and in the LoRA
+and step shots, a real lookup against this machine's real engine cache.
 
 The two mask shots were taken with `--mask`, which is a step less stand-in than
 `--selective`: the frame in the preview is a real frame of the committed clip

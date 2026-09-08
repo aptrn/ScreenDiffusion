@@ -83,6 +83,8 @@ def _broadcast_list(vals: Optional[List[float]], n: int, default: float = 1.0) -
     if len(vals) >= n:
         return vals[:n]
     return [vals[0]] * n
+
+
 # --- the unbatched denoising route (issue #46) --------------------------------
 #
 # `use_denoising_batch` decides whether the denoising steps go through the UNet as

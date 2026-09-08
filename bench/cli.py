@@ -50,12 +50,6 @@ from bench.models import (
     lora_dict_for,
     with_style,
 )
-from bench.quality import (
-    CASES as QUALITY_CASES,
-    QualityCase,
-    format_quality_report,
-    load_quality_results,
-)
 from bench.paths import (
     CADENCE_RESULTS_SUBDIR,
     CAPTURE_RESULTS_SUBDIR,
@@ -83,6 +77,12 @@ from bench.plan_swap import (
 from bench.portability import format_portability_report
 from bench.primitive_results import format_primitive_report, load_primitive_results
 from bench.primitives import CASES, CaseConfig
+from bench.quality import (
+    CASES as QUALITY_CASES,
+    QualityCase,
+    format_quality_report,
+    load_quality_results,
+)
 from bench.results import load_records
 from bench.scenarios import SCENARIOS, ScenarioConfig
 from bench.selective import (
@@ -339,8 +339,8 @@ def resolve_target(args: argparse.Namespace) -> Tuple[str, Target]:
     """The scenario, detector or case `args.scenario` names, with overrides applied.
 
     One positional slot for all nine registries. A run measures one thing, the
-    kinds of name cannot collide, and someone holding a name should not have to know
-    which of eight flags it belongs behind.
+    kinds of name cannot collide, and someone holding a name should not have to
+    know which of nine flags it belongs behind.
 
     An unmodified name resolves to the registry's own object, so a caller can tell a
     plain run from an overridden one by identity.
@@ -896,13 +896,12 @@ def run_quality_target(args: argparse.Namespace, case: QualityCase) -> int:
     should say so three times before it starts, not after the first one.
     """
     from bench.quality_runner import arm_scenario, run_quality
-
     from render_plan import t_index_for_denoise, t_index_ladder
 
     opening = t_index_for_denoise(case.denoise)
     for spec in case.specs():
-        engine_build_guard(arm_scenario(case, spec, t_index_ladder(opening,
-                                                                  spec.steps)),
+        ladder = t_index_ladder(opening, spec.steps)
+        engine_build_guard(arm_scenario(case, spec, ladder),
                            allow_build=args.allow_engine_build)
 
     run_quality(

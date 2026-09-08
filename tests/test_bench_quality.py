@@ -22,9 +22,9 @@ from bench.quality import (
     QualityArm,
     StepSpec,
     arm_name,
+    contention_note,
     engine_keying,
     ladder,
-    contention_note,
     on_route,
     qualified,
     quality_verdict,
@@ -222,9 +222,11 @@ def test_the_denoise_is_the_app_s_own_default():
 
 
 def test_the_identity_probe_uses_the_same_confidence_as_the_other_two_records():
+    """One confidence across all three, so "the detector saw it" means one thing."""
     from bench.guidance import ADHERENCE_CONF as GUIDANCE_CONF
+    from bench.primitive_runner import IDENTITY_CONF
 
-    assert ADHERENCE_CONF == GUIDANCE_CONF
+    assert ADHERENCE_CONF == GUIDANCE_CONF == IDENTITY_CONF
 
 
 def test_an_arm_can_be_round_tripped_through_its_record():

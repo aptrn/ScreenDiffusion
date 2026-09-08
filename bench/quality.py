@@ -56,6 +56,11 @@ from bench.clocks import ClockNormalization
 from bench.contention import CLEAR, UNKNOWN, OccupancyRecord
 from bench.cooldown import CooldownRecord
 from bench.fingerprint import Fingerprint
+# The confidence the identity probe requires, from the module whose probe
+# `bench.quality_runner` borrows to score these arms. Imported rather than
+# restated: "the detector saw it" has to mean one thing in spec 8.11's record and
+# in this one, and a second literal is how it stops meaning one thing.
+from bench.guidance import ADHERENCE_CONF
 from bench.primitive_results import ClipRecord
 from bench.results import (
     GpuColumn,
@@ -107,11 +112,6 @@ STEP_LADDER: Tuple[int, ...] = tuple(LADDER_RUNGS)
 # been shown to fit; spec 8.8 puts detection at ~4.3 ms/frame amortised on top.
 FRAME_BUDGET_MS = 33.33
 DETECTION_ALLOWANCE_MS = 4.3
-
-# The confidence the identity probe requires, and the figure
-# `bench.primitive_runner.IDENTITY_CONF` and `bench.guidance` already use, so "the
-# detector saw it" means one thing in all three records.
-ADHERENCE_CONF = 0.25
 
 # How much more of the clip a deeper rung has to read back as the prompt's concept
 # before more steps can be said to have bought anything. Ten points of 48 frames is
@@ -429,6 +429,17 @@ def qualified(arms: Sequence[QualityArm]) -> List[QualityArm]:
     return [arm for arm in arms if arm.measured and arm.background.passed]
 
 
+def qualified_on(arms: Sequence[QualityArm], route: str) -> List[QualityArm]:
+    """The arms of one route anything may be concluded from, in rung order."""
+    return on_route(qualified(arms), route)
+
+
+def control_arm(arms: Sequence[QualityArm]) -> Optional[QualityArm]:
+    """The one-step arm a route is judged against - what one step bought is the
+    yardstick for what a second, fourth and eighth one bought after it."""
+    return next((arm for arm in arms if arm.steps == 1), None)
+
+
 # --- the cached-engine swap (the Gate's second item) -------------------------
 
 
@@ -517,8 +528,8 @@ class StepGain:
 
 def step_gain(arms: Sequence[QualityArm], route: str) -> Optional[StepGain]:
     """What the deepest-scoring rung on `route` bought over that route's one step."""
-    on = [arm for arm in qualified(arms) if arm.route == route]
-    control = next((arm for arm in on if arm.steps == 1), None)
+    on = qualified_on(arms, route)
+    control = control_arm(on)
     deeper = [arm for arm in on if arm.steps > 1]
     if control is None or not deeper:
         return None
@@ -603,8 +614,8 @@ def _deepest_affordable(arms: Sequence[QualityArm],
     this the comparison would reward a route for reaching a depth nobody would set
     it to.
     """
-    on = [arm for arm in qualified(arms) if arm.route == route]
-    control = next((arm for arm in on if arm.steps == 1), None)
+    on = qualified_on(arms, route)
+    control = control_arm(on)
     floor = 0.0 if control is None else control.adherence
     affordable = [arm for arm in on
                   if arm.fits_budget and arm.adherence >= floor]

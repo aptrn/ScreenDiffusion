@@ -40,17 +40,18 @@ from bench.clocks import clock_normalization, regime_summary
 from bench.cooldown import DEFAULT_CAP_S, DEFAULT_POLL_INTERVAL_S, DEFAULT_THRESHOLD_C
 from bench.fingerprint import capture_fingerprint, utc_now
 from bench.flicker import flicker_score, response_score
-# One frame of the shipped path, and letting an arm's model go before the next is
-# built. Both are exactly what issue #45's sweep needs and neither is about
-# guidance, so they are borrowed rather than copied - a second spelling of "render
-# one frame through the compositor" is how two sweeps start measuring two things.
-from bench.guidance_runner import free, render_frame
+# One frame of the shipped path, letting an arm's model go before the next is
+# built, and the identity probe that scores what came out. All three are exactly
+# what this sweep needs and none is about guidance, so they are borrowed rather
+# than copied - a second spelling of "render one frame through the compositor" is
+# how two sweeps start measuring two things, and a second spelling of the probe is
+# how spec 8.11 and 8.12 stop sharing one baseline.
+from bench.guidance_runner import adherence_probe, free, render_frame
 from bench.paths import QUALITY_RESULTS_DIR, resolve_engines_dir, resolve_models_dir
 from bench.primitive_results import ClipRecord
 from bench.primitives import clip_path, load_track
 from bench.primitive_runner import (
     COMPARISON_PANEL_WIDTH,
-    labels_in,
     load_identity_detector,
     mean_abs_diff,
     read_clip,
@@ -62,7 +63,6 @@ from bench.primitive_runner import (
     write_still,
 )
 from bench.quality import (
-    ADHERENCE_CONF,
     QUALITY_README_NAME,
     QualityArm,
     QualityCase,
@@ -100,25 +100,6 @@ def arm_scenario(case: QualityCase, spec: StepSpec, ladder: Sequence[int]):
     return scenario.replace(name=f"{scenario.name}-{arm_name(spec)}",
                             prompt=case.prompt, t_index_list=list(ladder),
                             use_denoising_batch=spec.use_denoising_batch)
-
-
-def adherence_probe(detector, case: QualityCase, frames: Sequence
-                    ) -> Tuple[int, int, float]:
-    """How many rendered frames read back as the prompt's concept, and how strongly.
-
-    `bench.guidance_runner`'s probe, on the same clip at the same confidence: two
-    numbers rather than one, because a fraction over 48 frames saturates and the
-    detector's own confidence separates two arms that both land it every time.
-    """
-    from PIL import Image
-
-    hits, retained, confidences = 0, 0, []
-    for frame in frames:
-        labels = labels_in(detector, Image.fromarray(frame), conf=ADHERENCE_CONF)
-        hits += int(case.reads_back_as in labels)
-        retained += int(case.concept in labels)
-        confidences.append(labels.get(case.reads_back_as, 0.0))
-    return hits, retained, round(statistics.fmean(confidences or [0.0]), 4)
 
 
 def build_arm(scenario, engines_root: Path) -> Tuple[object, float]:

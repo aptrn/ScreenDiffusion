@@ -2214,7 +2214,6 @@ Three things this run does not settle.
   so it is a cheap one to ask.
 
 
-
 ## 9. Risks
 
 | Risk                                              | Impact                  | Mitigation                                             |

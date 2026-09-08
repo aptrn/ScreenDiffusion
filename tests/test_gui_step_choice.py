@@ -13,6 +13,7 @@ in this tier.
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 import pytest
@@ -47,11 +48,9 @@ def choices(root: Path, acceleration: str = "tensorrt"):
         frame_buffer_size=1, engines_root=root)
 
 
-
-def assignment_line(method, name: str) -> int:
-    """The line a method calls `self.<name>()` on - the two whose order matters."""
-    import ast
-
+def call_line(method, name: str) -> int:
+    """The line a method first calls `self.<name>()` on - two of them have to be
+    in the right order, and this is how that order is read."""
     lines = [node.lineno for node in ast.walk(method)
              if isinstance(node, ast.Call)
              and getattr(node.func, "attr", None) == name]
@@ -188,7 +187,7 @@ def test_the_resting_label_is_drawn_after_the_widget_exists():
     cannot be, the widget is not built yet - so the window has to redraw the ladder
     once it is, or it opens saying `builds an engine` about an engine it has."""
     init = gui_method("__init__")
-    build = assignment_line(init, "_build_ui")
-    refresh = assignment_line(init, "_refresh_engine_state")
+    build = call_line(init, "_build_ui")
+    refresh = call_line(init, "_refresh_engine_state")
     assert build < refresh, \
         "the ladder is drawn before the picker exists, so its labels never land"

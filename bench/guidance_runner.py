@@ -105,13 +105,17 @@ def arm_scenario(case: GuidanceCase, spec: ArmSpec):
                             guidance_scale=spec.guidance_scale, delta=spec.delta)
 
 
-def adherence_probe(detector, case: GuidanceCase, frames: Sequence
-                    ) -> Tuple[int, int, float]:
+def adherence_probe(detector, case, frames: Sequence) -> Tuple[int, int, float]:
     """How many rendered frames read back as the prompt's concept, and how strongly.
 
     Two numbers rather than one because a fraction over 48 frames saturates: an arm
     that lands the prompt on every frame and one that barely lands it on every frame
     both score 100%, and the detector's own confidence separates them.
+
+    `case` is any case carrying `concept` and `reads_back_as` - `GuidanceCase` here
+    and `QualityCase` in `bench.quality_runner`, which borrows this rather than
+    spelling it a second time, because spec 8.11 and 8.12 share one baseline and a
+    probe measured two ways is two baselines.
     """
     from PIL import Image
 

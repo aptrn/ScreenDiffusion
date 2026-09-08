@@ -266,15 +266,15 @@ confounded and the block says which half is which.
 All twelve case-table blocks (`--detector-report`, `--primitive-report`,
 `--capture-report`, `--selective-report`, `--cadence-report`, `--swap-report`,
 `--stability-report`, `--steps-report`, `--model-report`, `--style-report`,
-`--guidance-report`, `--quality-report`) keep the newest run **per (thing measured, GPU)**, not per
-name. A 4090 run therefore adds a row beside the 3080's instead of erasing it,
-which is what keeps spec 7.4's portability table checkable. When rows span GPUs
-the table grows a `GPU` column, the preamble names every machine, and the
-per-machine verdicts — the recommendation, the primitive decision, the selective
-Gate lines, the two acceptance-criterion verdicts — are stated once per machine;
-with one machine the block renders byte-identically to before, so the byte-match
-tests do not churn. `gpu_of` in `bench/results.py` is the one reading of which
-machine a record came from.
+`--guidance-report`, `--quality-report`) keep the newest run **per (thing
+measured, GPU)**, not per name. A 4090 run therefore adds a row beside the 3080's
+instead of erasing it, which is what keeps spec 7.4's portability table checkable.
+When rows span GPUs the table grows a `GPU` column, the preamble names every
+machine, and the per-machine verdicts — the recommendation, the primitive
+decision, the selective Gate lines, the two acceptance-criterion verdicts — are
+stated once per machine; with one machine the block renders byte-identically to
+before, so the byte-match tests do not churn. `gpu_of` in `bench/results.py` is
+the one reading of which machine a record came from.
 
 `--portability-report` is the second question asked of those same records — not
 "does the path work" but "which of its numbers survived the move to the hardware

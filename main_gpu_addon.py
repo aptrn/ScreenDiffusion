@@ -1807,15 +1807,15 @@ def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Qu
                     # compositor's - so neither can cost a TensorRT rebuild.
                     noise.follow(frame_plan.plan)
                     compositor.set_output_ema(frame_plan.plan.settings.output_ema)
-                    # The plan's denoise, as a value on the live schedule. Only the
-                    # values move, never the step *count*, so this is a runtime
+                    # The plan's denoise, as values on the live schedule. Only
+                    # the values move, never the step *count*, so this is a runtime
                     # update and not an engine rebuild. A plan with no target
                     # carries the schema's default rather than a strength anyone
                     # typed, so it leaves the t_index slider where the user put it.
-                    # The count is kept and only the values move, at any rung of
-                    # issue #46's ladder: `t_index_ladder` opens where the plan's
-                    # denoise says and spends the rest of the steps after it, which
-                    # is the same schedule the window builds for that strength.
+                    # It holds at any rung of issue #46's ladder: `t_index_ladder`
+                    # opens where the plan's denoise says and spends the count
+                    # already set after it, which is the schedule the window builds
+                    # for that strength.
                     honoured = frame_plan.plan.honoured_target
                     if honoured is not None:
                         wanted = t_index_ladder(
