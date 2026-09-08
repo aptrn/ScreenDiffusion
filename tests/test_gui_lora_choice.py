@@ -19,8 +19,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from guinamespace import helpers
 from guisource import calls_named, gui_method, mentions
-from sourceloader import load_symbols
 
 import engine_cache
 
@@ -30,22 +30,6 @@ LORAS = ("local_lora_paths", "lora_label", "LORAS_SUBDIR", "LORA_SUFFIXES",
 ENGINE = ("engine_configuration", "EngineConfiguration", "_engine_state_line",
           "_engine_missing_warning", "engine_rebuild_needed", "TENSORRT",
           "model_label", "_steps_phrase", "_lora_phrase", "lora_label")
-
-
-def helpers(*names, **extra):
-    namespace = dict(
-        Path=Path, Optional=object, List=list, Tuple=tuple, Union=object,
-        Dict=dict, Mapping=object,
-        NamedTuple=__import__("typing").NamedTuple,
-        DIFFUSION_CANVAS=512,
-        engine_cache=engine_cache,
-        resolve_models_dir=lambda **kwargs: Path("."),
-        resolve_engines_dir=lambda: Path("."),
-        ENGINE_BUILD_SIZE=engine_cache.ENGINE_BUILD_SIZE,
-        ENGINE_BUILD_TIME=engine_cache.ENGINE_BUILD_TIME,
-    )
-    namespace.update(extra)
-    return load_symbols("main_gpu_addon.py", names, namespace)
 
 
 def a_loras_dir(root: Path, *names: str) -> Path:

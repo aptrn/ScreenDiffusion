@@ -756,7 +756,7 @@ class EngineConfiguration(NamedTuple):
     # The fused set, already in words - `_lora_phrase` of the `lora_dict` this
     # configuration was named from, so every sentence about the engine names the
     # LoRA *and* the scale that keyed it rather than re-deriving them (issue #44).
-    loras: str = ""
+    lora_phrase: str = ""
 
 
 def engine_configuration(model_path: str, acceleration: str, use_lcm_lora: bool,
@@ -782,7 +782,7 @@ def engine_configuration(model_path: str, acceleration: str, use_lcm_lora: bool,
         cached=cached, builds=engine_rebuild_needed(acceleration) and not cached,
         steps=int(steps), free_bytes=free,
         enough_disk=free >= engine_cache.MIN_FREE_BYTES_FOR_ENGINE_BUILD,
-        loras=_lora_phrase(lora_dict))
+        lora_phrase=_lora_phrase(lora_dict))
 
 
 def _steps_phrase(steps: int, noun: str = "step") -> str:
@@ -791,13 +791,17 @@ def _steps_phrase(steps: int, noun: str = "step") -> str:
 
 
 def _engine_state_line(configuration: EngineConfiguration) -> str:
-    """The standing sentence under the model: which engine this needs, and if it
-    exists. One builder, so the LoRA set cannot be named in one of the two."""
+    """The standing sentence under the model: which engine this needs, and if it exists.
+
+    One builder, so the standing line and the Start warning cannot end up naming
+    the fused LoRA set in only one of the two.
+    """
     model = model_label(configuration.model_path)
     steps = _steps_phrase(configuration.steps)
+    fused = configuration.lora_phrase
     if configuration.cached:
-        return f"Engine: cached for {model} at {steps}{configuration.loras}."
-    return (f"⚠  No engine yet for {model} at {steps}{configuration.loras} - "
+        return f"Engine: cached for {model} at {steps}{fused}."
+    return (f"⚠  No engine yet for {model} at {steps}{fused} - "
             f"Start will build one ({ENGINE_BUILD_TIME}, {ENGINE_BUILD_SIZE}).")
 
 
@@ -807,8 +811,7 @@ def _engine_missing_warning(configuration: EngineConfiguration) -> str:
         f"There is no compiled TensorRT engine for this configuration yet:\n\n"
         f"    {model_label(configuration.model_path) or configuration.model_path}, "
         f"{_steps_phrase(configuration.steps, 'denoising step')}, "
-        f"{DIFFUSION_CANVAS}x{DIFFUSION_CANVAS}"
-        f"{configuration.loras}\n"
+        f"{DIFFUSION_CANVAS}x{DIFFUSION_CANVAS}{configuration.lora_phrase}\n"
         f"    {configuration.engine_dir}\n\n"
         f"Starting will build one first: about {ENGINE_BUILD_TIME}, and "
         f"{ENGINE_BUILD_SIZE} under {configuration.engines_root}. The window will "
@@ -2816,14 +2819,20 @@ class StreamGUI(ctk.CTk):
 
     # ---------------- LoRA management ----------------
 
-    def _lora_choices(self) -> List[str]:
+    def _lora_choices(self, paths: Optional[List[str]] = None) -> List[str]:
         """What the picker offers: every style LoRA staged under the models root.
 
         Three files in one known directory, which is what issue #44 replaced a file
         browser with. Browse is still beside it, for a LoRA that lives elsewhere.
+        Entry 0 is the resting value either way, which is what `_on_lora_chosen`
+        snaps back to - so `paths` is taken from a caller that has already listed
+        the directory rather than listed again.
         """
-        labels = [lora_label(path) for path in local_lora_paths()]
-        return [ADD_LORA_PROMPT] + labels if labels else [NO_LOCAL_LORAS]
+        if paths is None:
+            paths = local_lora_paths()
+        if not paths:
+            return [NO_LOCAL_LORAS]
+        return [ADD_LORA_PROMPT] + [lora_label(path) for path in paths]
 
     def _on_lora_chosen(self, label: str):
         """A LoRA picked from the list of what is on disk (issue #44, step 3).
@@ -2832,8 +2841,9 @@ class StreamGUI(ctk.CTk):
         menu left showing a filename would claim to be the fused set - which it is
         not, since more than one LoRA can be listed.
         """
-        self.lora_choice_var.set(self._lora_choices()[0])
-        for path in local_lora_paths():
+        paths = local_lora_paths()
+        self.lora_choice_var.set(self._lora_choices(paths)[0])
+        for path in paths:
             if lora_label(path) == label:
                 self._add_lora_path(path)
                 return

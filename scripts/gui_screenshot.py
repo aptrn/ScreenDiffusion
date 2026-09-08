@@ -87,20 +87,36 @@ def capture(out_path: Path, expand_advanced: bool = False,
     return out_path
 
 
-def _valued(argv: list, flag: str) -> str:
-    """`--model sd-v1-5-fp16` -> `sd-v1-5-fp16`, or "" when the flag is absent."""
-    return argv[argv.index(flag) + 1] if flag in argv[:-1] else ""
+SWITCHES = ("--advanced", "--selective")
+# `--model NAME` / `--lora NAME`: a flag that eats the word after it.
+VALUED = ("--model", "--lora")
+
+
+def _parse(argv: list) -> tuple:
+    """`(positional args, switches seen, {valued flag: its word})`.
+
+    Consumed by position rather than by value, so a positional output path that
+    happens to read like a flag's word is still the output path.
+    """
+    positional, seen, values = [], set(), {flag: "" for flag in VALUED}
+    remaining = list(argv)
+    while remaining:
+        item = remaining.pop(0)
+        if item in VALUED:
+            values[item] = remaining.pop(0) if remaining else ""
+        elif item in SWITCHES:
+            seen.add(item)
+        else:
+            positional.append(item)
+    return positional, seen, values
 
 
 def main(argv: list) -> int:
-    flags = {"--advanced", "--selective"}
-    valued = {"--model": _valued(argv, "--model"), "--lora": _valued(argv, "--lora")}
-    consumed = flags | set(valued) | {value for value in valued.values() if value}
-    args = [a for a in argv if a not in consumed]
-    out = Path(args[0]) if args else ROOT / "docs" / "gui" / "app.png"
-    saved = capture(out, expand_advanced="--advanced" in argv,
-                    selective="--selective" in argv,
-                    model=valued["--model"], lora=valued["--lora"])
+    positional, seen, values = _parse(argv)
+    out = Path(positional[0]) if positional else ROOT / "docs" / "gui" / "app.png"
+    saved = capture(out, expand_advanced="--advanced" in seen,
+                    selective="--selective" in seen,
+                    model=values["--model"], lora=values["--lora"])
     print(f"saved {saved}")
     return 0
 
