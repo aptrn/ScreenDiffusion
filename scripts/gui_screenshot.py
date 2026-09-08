@@ -8,6 +8,7 @@ so what lands in `docs/gui/` is the window and not whatever else is on the deskt
     uv run python scripts/gui_screenshot.py docs/gui/after.png
     uv run python scripts/gui_screenshot.py docs/gui/after-advanced.png --advanced
     uv run python scripts/gui_screenshot.py docs/gui/after-selective.png --selective
+    uv run python scripts/gui_screenshot.py docs/gui/after-cfg.png --advanced --cfg=full
 
 `--selective` fills the two fields and hands the window a **stand-in** fps payload -
 the shape `detection.fps_payload` puts on the queue - so the detection readout can
@@ -39,13 +40,18 @@ SAMPLE_PAYLOAD = {"fps": 30, "detections": 3, "detector_ms": 21.4,
 
 
 def capture(out_path: Path, expand_advanced: bool = False,
-            selective: bool = False) -> Path:
+            selective: bool = False, cfg_type: str = "") -> Path:
     from PIL import ImageGrab
 
     import main_gpu_addon
 
     app = main_gpu_addon.StreamGUI()
     app.geometry("+0+0")
+    if cfg_type:
+        # Through the window's own handler, so what is photographed is the state a
+        # user reaches by picking the type - the scale its companion brings with
+        # it, and the line under the row (issue #45).
+        app._apply_cfg_type(cfg_type)
     if selective:
         app.target_var.set("person")
         app.style_var.set("wet denim, studio light")
@@ -77,10 +83,11 @@ def capture(out_path: Path, expand_advanced: bool = False,
 
 def main(argv: list) -> int:
     flags = {"--advanced", "--selective"}
-    args = [a for a in argv if a not in flags]
+    cfg_type = next((a.split("=", 1)[1] for a in argv if a.startswith("--cfg=")), "")
+    args = [a for a in argv if a not in flags and not a.startswith("--cfg=")]
     out = Path(args[0]) if args else ROOT / "docs" / "gui" / "app.png"
     saved = capture(out, expand_advanced="--advanced" in argv,
-                    selective="--selective" in argv)
+                    selective="--selective" in argv, cfg_type=cfg_type)
     print(f"saved {saved}")
     return 0
 

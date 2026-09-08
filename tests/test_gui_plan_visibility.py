@@ -254,6 +254,11 @@ ADVANCED_WIDGETS = {
     "use_lcm_lora": "_w_lcm_switch",
     "use_denoising_batch": "_w_denoise_switch",
     "step_count": "_w_step_add",
+    # The three guidance controls (issue #45): engine settings like the rest, and
+    # two of the four cfg types compile their own UNet batch.
+    "cfg_type": "_w_cfg_combo",
+    "guidance_scale": "_w_guidance_entry",
+    "delta": "_w_delta_entry",
 }
 
 

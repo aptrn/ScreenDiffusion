@@ -15,6 +15,11 @@ import dataclasses
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
+# Two shipped stdlib rules, imported for the reason the CLI imports them: the
+# vocabulary of cfg types and the batch each of them keys are the app's own, and a
+# second spelling here would let a scenario name an engine the build never writes.
+from engine_cache import CFG_NONE, unet_batch_size
+
 DEFAULT_MODEL = "sd-turbo-fp16"
 # The second base model this repo measures (issue #38). SD-Turbo is SD 2.1-based
 # and can load no SD 1.5 LoRA, which is the whole reason to price 1.5: the style
@@ -61,7 +66,15 @@ class ScenarioConfig:
     use_tiny_vae: bool = True
     use_lcm_lora: bool = False
     use_denoising_batch: bool = True
-    cfg_type: str = "none"
+    # Classifier-free guidance (issue #45). The registry ships with it off, which
+    # is what the app does and what every committed figure in this repo was
+    # measured at; `bench.guidance` is the sweep that asks whether it should be.
+    # `guidance_scale` at or below 1.0 disables the mechanism outright - the
+    # pipeline's own `if self.guidance_scale > 1.0` - so 1.0 is "off" rather than
+    # "weak", and it is passed explicitly because the wrapper's own default is 1.2.
+    cfg_type: str = CFG_NONE
+    guidance_scale: float = 1.0
+    delta: float = 1.0
     do_add_noise: bool = True
     reps: int = 30
     warmup_reps: int = 5
@@ -80,8 +93,14 @@ class ScenarioConfig:
 
     @property
     def unet_batch_size(self) -> int:
-        """The batch a TensorRT UNet engine is built for, which is what keys it."""
-        return self.batch_size * self.steps if self.use_denoising_batch else self.batch_size
+        """The batch a TensorRT UNet engine is built for, which is what keys it.
+
+        `engine_cache`'s rule rather than a copy of it, because the cfg type is
+        part of it: `initialize` runs one extra unconditional latent through the
+        UNet and `full` runs a second copy of every one (issue #45).
+        """
+        return unet_batch_size(self.batch_size, self.steps,
+                               self.use_denoising_batch, self.cfg_type)
 
 
 def scenario_name(acceleration: str, width: int, height: int, batch_size: int) -> str:

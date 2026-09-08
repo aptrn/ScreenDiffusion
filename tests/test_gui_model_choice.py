@@ -40,6 +40,9 @@ def helpers(*names, **extra):
         resolve_engines_dir=lambda: Path("."),
         ENGINE_BUILD_SIZE=engine_cache.ENGINE_BUILD_SIZE,
         ENGINE_BUILD_TIME=engine_cache.ENGINE_BUILD_TIME,
+        # `engine_configuration` takes the cfg type since issue #45 - two of the
+        # four compile a larger UNet batch - and its default is the shipped one.
+        DEFAULT_CFG_TYPE=engine_cache.CFG_NONE,
     )
     namespace.update(extra)
     return load_symbols("main_gpu_addon.py", names, namespace)

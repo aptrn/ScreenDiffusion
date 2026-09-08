@@ -38,6 +38,10 @@ from render_plan import (
 # (issue #38). Stdlib, and shared with `bench.cli`'s build guard rather than
 # mirrored here: a build the window allows and the harness refuses is two rules.
 import engine_cache
+# The classifier-free-guidance vocabulary lives there for the same reason it lives
+# there for the harness: two of the four cfg types change the UNet batch, so a cfg
+# type is a *build* as much as a step count is (issue #45).
+from engine_cache import CFG_FULL, CFG_INITIALIZE, CFG_NONE, CFG_SELF, CFG_TYPES
 
 # The tracker and the worker's detector (issue #7, spec 5.1 C3/C4). Neither imports
 # torch or ultralytics at module scope - the weights are loaded on the detector's
@@ -616,6 +620,94 @@ def model_companions(path: _PathArg) -> ModelCompanions:
         t_index_list=t_index_ladder(opening, MODEL_STEPS_SD15))
 
 
+# --- classifier-free guidance (issue #45, spec 8.11) -------------------------
+#
+# The app has always run with CFG off, and §8.11 measured what turning it on buys:
+# on the shipped model the prompt reads back on 52% of frames against 35%, and the
+# cfg types that do it run extra latents through the UNet - so each is a ~5 GB
+# build and about a third more frame path. The default therefore does not move.
+# The control ships anyway, because a lever that demonstrably works and is priced
+# is a product decision, not a benchmark verdict, and one nobody can reach is one
+# nobody can decide about.
+
+DEFAULT_CFG_TYPE = CFG_NONE
+# The pipeline disables guidance outright at or below 1.0 (`if self.guidance_scale
+# > 1.0`), and `prepare` forces it to exactly 1.0 under `none`. So 1.0 is "off"
+# rather than "weak", and the window's old 0.0 was a third spelling of the same
+# thing that read like a real setting.
+GUIDANCE_OFF = 1.0
+# What the scale becomes when a cfg type is chosen: the rung §8.11's ladder
+# measured best on the shipped model, and a rung the sweep actually visited. The
+# useful range there is roughly 1.05-1.4 and everything above it destroys the
+# frame, which is why this is not the 7.5 a diffusers user would reach for.
+GUIDANCE_WHEN_ON = 1.4
+# StreamDiffusion's own default, and the value every measured arm but two ran at.
+DEFAULT_DELTA = 1.0
+
+
+class CfgCompanions(NamedTuple):
+    """The settings a cfg type cannot do anything without, and cannot choose itself."""
+
+    guidance_scale: float
+    delta: float
+
+
+def cfg_companions(cfg_type: str) -> CfgCompanions:
+    """The guidance scale and delta this cfg type needs to do anything at all.
+
+    The same shape `model_companions` has, for the same reason: picking `self` and
+    leaving the scale at 1.0 is picking nothing, and nothing in the window would
+    have said so. §8.11's fourth trap in the window rather than in the harness.
+    """
+    if cfg_type == CFG_NONE:
+        return CfgCompanions(guidance_scale=GUIDANCE_OFF, delta=DEFAULT_DELTA)
+    return CfgCompanions(guidance_scale=GUIDANCE_WHEN_ON, delta=DEFAULT_DELTA)
+
+
+def _as_scale(value) -> float:
+    """A guidance or delta box as a number. Half-typed text reads as off.
+
+    The boxes are `StringVar`s and the note redraws on every keystroke, so this
+    sees `"1."` and `""` in the ordinary course of someone typing 1.4.
+    """
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return GUIDANCE_OFF
+
+
+def guidance_is_off(cfg_type: str, guidance_scale) -> bool:
+    """Is this pair of settings guidance, or is it the shipped configuration?
+
+    Two ways to be off and the window has to recognise both: `cfg_type: none`,
+    where `prepare` overwrites the scale with 1.0 whatever was typed, and a scale
+    at or below 1.0, where `unet_step` never reaches the guidance branch.
+    """
+    return cfg_type == CFG_NONE or _as_scale(guidance_scale) <= GUIDANCE_OFF
+
+
+def cfg_uses_delta(cfg_type: str) -> bool:
+    """Does this cfg type read `delta`? `bench.guidance.uses_delta`'s own rule.
+
+    `noise_pred_uncond = self.stock_noise * self.delta` runs under `self` and
+    `initialize`; under `full` the unconditional prediction comes out of the
+    doubled batch and `delta` is stored and never read.
+    """
+    return cfg_type in (CFG_SELF, CFG_INITIALIZE)
+
+
+def cfg_keys_new_engine(cfg_type: str, steps: int, frame_buffer_size: int) -> bool:
+    """Would this cfg type need an engine the shipped configuration does not?
+
+    Derived from `engine_cache` rather than listed, because the answer moves with
+    the step count: at one step `initialize` and `full` are both batch 2 against
+    the shipped 1, and at four they are 5 and 8 against 4.
+    """
+    shipped = engine_cache.unet_batch_size(frame_buffer_size, steps)
+    return engine_cache.unet_batch_size(
+        frame_buffer_size, steps, cfg_type=cfg_type) != shipped
+
+
 # StreamDiffusion's three acceleration paths. `tensorrt` is the default because it
 # is the only one this repo has ever measured: every figure in spec 7, every
 # committed benchmark and the ~5 GB engine cache under `engines/` belong to that
@@ -650,6 +742,10 @@ ENGINE_KEYED_SETTINGS = {
     "batch size": "The frame buffer size is compiled in.",
     "LoRA set": "TensorRT fuses LoRA weights into the UNet before it compiles it, "
                 "so each combination of LoRAs and scales needs its own engine.",
+    "CFG type": "`initialize` runs one extra unconditional latent through the UNet "
+                "and `full` runs a second copy of every one, so both compile a "
+                "larger batch than the shipped `none` and `self` do. Guidance "
+                "*scale* and delta are runtime settings and cost nothing.",
 }
 
 # The standing version of the same fact, shown in the advanced section whether or
@@ -683,23 +779,40 @@ class EngineConfiguration(NamedTuple):
     steps: int
     free_bytes: int
     enough_disk: bool
+    # The cfg type this engine is keyed for (issue #45). Carried so the two
+    # messages can *name* it: `full` at one step needs a batch-2 engine, and a
+    # warning that said only "sd-turbo-fp16 at 1 step" would be describing a
+    # configuration that is already built.
+    cfg_type: str = DEFAULT_CFG_TYPE
+
+    @property
+    def cfg_phrase(self) -> str:
+        """`, CFG full` - or nothing at all on the shipped setting."""
+        return "" if self.cfg_type == DEFAULT_CFG_TYPE else f", CFG {self.cfg_type}"
 
 
 def engine_configuration(model_path: str, acceleration: str, use_lcm_lora: bool,
                          steps: int, frame_buffer_size: int,
                          lora_dict: Optional[Dict[str, float]] = None,
                          engines_root: _PathArg = None,
-                         use_tiny_vae: bool = True) -> EngineConfiguration:
+                         use_tiny_vae: bool = True,
+                         cfg_type: str = DEFAULT_CFG_TYPE) -> EngineConfiguration:
     """What `wrapper.py` would look for, and what it would do if it were not there.
 
     Answered through `engine_cache`, which is a mirror of `create_prefix` held to
     it by a test - so a "no engine yet" here is the same directory the worker will
     miss a moment later, and not an approximation of it.
+
+    `cfg_type` is in the key because `StreamDiffusion.__init__` derives
+    `trt_unet_batch_size` from it (issue #45): `initialize` and `full` compile a
+    larger batch than `none` and `self`, and a lookup that ignored that would tell
+    a user "cached" about a directory the build never writes.
     """
     root = resolve_engines_dir() if engines_root is None else Path(engines_root)
     directory = engine_cache.engine_dir_name(
         model_path, use_lcm_lora=use_lcm_lora, use_tiny_vae=use_tiny_vae,
-        unet_batch=engine_cache.unet_batch_size(frame_buffer_size, steps),
+        unet_batch=engine_cache.unet_batch_size(frame_buffer_size, steps,
+                                                cfg_type=cfg_type),
         width=DIFFUSION_CANVAS, height=DIFFUSION_CANVAS, lora_dict=lora_dict)
     cached = engine_cache.engine_is_cached(root, directory)
     free = engine_cache.free_bytes(root)
@@ -707,7 +820,8 @@ def engine_configuration(model_path: str, acceleration: str, use_lcm_lora: bool,
         model_path=str(model_path), engine_dir=directory, engines_root=str(root),
         cached=cached, builds=engine_rebuild_needed(acceleration) and not cached,
         steps=int(steps), free_bytes=free,
-        enough_disk=free >= engine_cache.MIN_FREE_BYTES_FOR_ENGINE_BUILD)
+        enough_disk=free >= engine_cache.MIN_FREE_BYTES_FOR_ENGINE_BUILD,
+        cfg_type=cfg_type)
 
 
 def _steps_phrase(steps: int, noun: str = "step") -> str:
@@ -720,7 +834,8 @@ def _engine_missing_warning(configuration: EngineConfiguration) -> str:
     return (
         f"There is no compiled TensorRT engine for this configuration yet:\n\n"
         f"    {model_label(configuration.model_path) or configuration.model_path}, "
-        f"{_steps_phrase(configuration.steps, 'denoising step')}, "
+        f"{_steps_phrase(configuration.steps, 'denoising step')}"
+        f"{configuration.cfg_phrase}, "
         f"{DIFFUSION_CANVAS}x{DIFFUSION_CANVAS}\n"
         f"    {configuration.engine_dir}\n\n"
         f"Starting will build one first: about {ENGINE_BUILD_TIME}, and "
@@ -1039,22 +1154,59 @@ def _plan_note(update: PlanUpdate) -> Tuple[str, str]:
         return "Adjusted: " + "; ".join(update.notes), PLAN_NOTE_COLOR
     return "", PLAN_NOTE_COLOR
 
+# The line the three guidance controls draw under themselves. Down here rather
+# than with the rest of issue #45 because it needs the window colours.
+def cfg_note(cfg_type: str, guidance_scale, delta,
+             steps: int = 1, frame_buffer_size: int = DEFAULT_FRAME_BUFFER_SIZE
+             ) -> Tuple[str, str]:
+    """The line under the guidance controls, and the colour to draw it in.
+
+    Three things it can say, in the order they would bite. A cfg type with the
+    scale left down does nothing at all and looks as though it obeyed. A `delta`
+    typed under `full` is read by nothing. And a cfg type that keys an engine is
+    minutes and gigabytes, which is the standing fact §8.11 ends on.
+    """
+    scale = _as_scale(guidance_scale)
+    if cfg_type == CFG_NONE:
+        return "", PLAN_NOTE_COLOR
+    if guidance_is_off(cfg_type, scale):
+        return (f"⚠  Guidance is {scale:g}, so `{cfg_type}` does nothing: the "
+                f"pipeline ignores anything at or below {GUIDANCE_OFF:.1f}. "
+                f"Try {GUIDANCE_WHEN_ON:g}.",
+                CUSTOM_COLORS["error"])
+    parts = [f"Guidance {scale:g} on `{cfg_type}`."]
+    if not cfg_uses_delta(cfg_type):
+        parts.append(f"Delta is ignored under `{cfg_type}` - it is read only by "
+                     f"`{CFG_SELF}` and `{CFG_INITIALIZE}`.")
+    if cfg_keys_new_engine(cfg_type, steps, frame_buffer_size):
+        parts.append(f"This cfg type runs extra latents through the UNet, so it "
+                     f"needs its own TensorRT engine "
+                     f"({ENGINE_BUILD_TIME}, {ENGINE_BUILD_SIZE}).")
+    return " ".join(parts), PLAN_NOTE_COLOR
+
+
 SHOW = {
     "model_path": True, "prompt": True, "negative_prompt": True, "seed": True,
     "frame_buffer_size": True, "acceleration": True, "use_denoising_batch": False,
-    "cfg_type": False, "guidance_scale": False, "delta": False, "similar_image_filter": False,
+    # The three guidance controls (issue #45). On, because §8.11 measured that CFG
+    # is the lever behind the weak prompt adherence, that it works, and that it is
+    # priced - and a priced lever nobody can reach is how a finding becomes
+    # unusable. The default does not move; what ships is the choice.
+    "cfg_type": True, "guidance_scale": True, "delta": True,
+    "similar_image_filter": False,
     "offline": False, "lora": True, "use_lcm_lora": True, "step_count": False,
 }
 
 # The engine knobs (issue #40, step 2). Each is a property of how the app runs
-# rather than of what it makes, and three of them key a distinct TensorRT engine.
+# rather than of what it makes, and four of them key a distinct TensorRT engine.
 # They are built inside the collapsed "Advanced" section instead of beside the two
 # fields that *are* the product's interface. `SHOW` still decides whether one
 # exists at all, which is why `step_count` is False: changing the number of
 # denoising steps rebuilds the engine, while the sliders that set their values -
 # the live strength control - stay in the primary panel.
 ADVANCED = ("seed", "frame_buffer_size", "acceleration", "use_lcm_lora",
-            "use_denoising_batch", "step_count")
+            "use_denoising_batch", "step_count",
+            "cfg_type", "guidance_scale", "delta")
 
 ADVANCED_CLOSED = "▸  Advanced  —  engine settings"
 ADVANCED_OPEN = "▾  Advanced  —  engine settings"
@@ -1806,9 +1958,18 @@ class StreamGUI(ctk.CTk):
         # latent-consistency/lcm-lora-sdv1-5, which needs ~4 steps.
         self.use_lcm_lora_var = ctk.BooleanVar(value=False)
         self.denoise_batch_var = ctk.BooleanVar(value=True)
-        self.cfg_type_var = ctk.StringVar(value="none")
-        self.guidance_var = ctk.StringVar(value="0.0")
-        self.delta_var = ctk.StringVar(value="0.0")
+        # Guidance off, which is what every committed figure in this repo was
+        # measured at and what spec 8.11 recommends staying at. The scale is 1.0
+        # rather than the 0.0 it used to be: the pipeline's own "off" is 1.0, and
+        # a third spelling of off that looked like a real number is what made
+        # `cfg_type` a control nobody could tell was doing nothing (issue #45).
+        self.cfg_type_var = ctk.StringVar(value=DEFAULT_CFG_TYPE)
+        self.guidance_var = ctk.StringVar(value=str(GUIDANCE_OFF))
+        self.delta_var = ctk.StringVar(value=str(DEFAULT_DELTA))
+        self.cfg_note_var = ctk.StringVar(value="")
+        # What `_on_cfg_type` puts back when a build is refused: the combo's own
+        # value is already the new one by the time the callback runs.
+        self._applied_cfg_type = DEFAULT_CFG_TYPE
         self.sim_filter_var = ctk.BooleanVar(value=False)
         self.sim_thresh_var = ctk.StringVar(value="0.99")
         self.sim_maxskip_var = ctk.StringVar(value="10.0")
@@ -2327,12 +2488,16 @@ class StreamGUI(ctk.CTk):
             self._w_step_remove = ctk.CTkButton(steps_row, text="- Remove", width=60, command=self._remove_step)
             self._w_step_remove.pack(side="right")
             self._register_lockables(self._w_step_add, self._w_step_remove)
-        g3 = ctk.CTkFrame(adv_body); g3.grid(row=3, column=0, sticky="ew", pady=(0,6)); g3.grid_remove()
+        g3 = ctk.CTkFrame(adv_body); g3.grid(row=3, column=0, sticky="ew", pady=(0,6))
         for i in range(6): g3.grid_columnconfigure(i, weight=1)
         col = 0
         if SHOW.get("cfg_type", False):
             ctk.CTkLabel(g3, text="CFG type").grid(row=0, column=col, sticky="w")
-            self._w_cfg_combo = ctk.CTkComboBox(g3, values=["none","full","self","initialize"], variable=self.cfg_type_var, width=120)
+            # `engine_cache.CFG_TYPES`, not a literal list: the wrapper refuses
+            # anything else, and two lists of the same four names drift.
+            self._w_cfg_combo = ctk.CTkComboBox(g3, values=list(CFG_TYPES),
+                                                variable=self.cfg_type_var, width=120,
+                                                command=self._on_cfg_type)
             self._w_cfg_combo.grid(row=1, column=col, sticky="ew"); col += 1
             self._register_lockables(self._w_cfg_combo)
         if SHOW.get("guidance_scale", False):
@@ -2345,6 +2510,20 @@ class StreamGUI(ctk.CTk):
             self._w_delta_entry = ctk.CTkEntry(g3, textvariable=self.delta_var, width=70)
             self._w_delta_entry.grid(row=1, column=col, sticky="ew"); col += 1
             self._register_lockables(self._w_delta_entry)
+        if SHOW.get("cfg_type", False):
+            # Under the three, and drawn where they were typed: a guidance scale
+            # the pipeline ignores is the failure mode issue #45 is about, and the
+            # status bar is shared with the worker's own messages.
+            self._w_cfg_note = ctk.CTkLabel(g3, textvariable=self.cfg_note_var,
+                                            text_color=PLAN_NOTE_COLOR,
+                                            anchor="w", justify="left",
+                                            wraplength=420)
+            self._w_cfg_note.grid(row=2, column=0, columnspan=6, sticky="ew",
+                                  pady=(4, 0))
+            self._w_cfg_note.grid_remove()
+            for variable in (self.guidance_var, self.delta_var):
+                variable.trace_add("write", lambda *_: self._refresh_cfg_note())
+            self._refresh_cfg_note()
         if SHOW.get("offline", False):
             self._w_offline_switch = ctk.CTkSwitch(g3, text="Offline", variable=self.offline_var)
             self._w_offline_switch.grid(row=1, column=col, sticky="w"); col += 1
@@ -2828,6 +3007,62 @@ class StreamGUI(ctk.CTk):
             self._build_steps_ui()
         self._refresh_engine_state()
 
+    def _on_cfg_type(self, cfg_type: str):
+        """A cfg type picked from the combo (issue #45).
+
+        Asked about first, because two of the four compile a larger UNet batch and
+        so key an engine that does not exist yet - the same warning a step count
+        or a batch size gets, through the same helper. A refusal puts the combo
+        back rather than leaving it showing a setting that was not adopted.
+        """
+        previous = self._applied_cfg_type
+        if cfg_type == previous:
+            return
+        buffer_size = self._frame_buffer_size()
+        if (cfg_keys_new_engine(cfg_type, len(self.t_index_list), buffer_size)
+                and not self._confirm_engine_rebuild("CFG type")):
+            self.cfg_type_var.set(previous)
+            return
+        self._apply_cfg_type(cfg_type)
+
+    def _apply_cfg_type(self, cfg_type: str):
+        """Set the cfg type, and with it the scale it cannot do anything without.
+
+        `model_companions`' shape, for `model_companions`' reason: the pipeline
+        ignores guidance at or below 1.0, so picking `self` and leaving the scale
+        where `none` left it is picking nothing, and until issue #45 nothing in
+        the window said so.
+        """
+        self.cfg_type_var.set(cfg_type)
+        self._applied_cfg_type = cfg_type
+        companions = cfg_companions(cfg_type)
+        self.guidance_var.set(f"{companions.guidance_scale:g}")
+        self.delta_var.set(f"{companions.delta:g}")
+        self._refresh_cfg_note()
+        self._refresh_engine_state()
+
+    def _frame_buffer_size(self) -> int:
+        """The buffer box as a number, or the default while it is being typed in."""
+        try:
+            return int(self.buffer_var.get())
+        except (TypeError, ValueError):
+            return DEFAULT_FRAME_BUFFER_SIZE
+
+    def _refresh_cfg_note(self):
+        """Redraw the line under the guidance controls, or take the row away."""
+        note = getattr(self, "_w_cfg_note", None)
+        if note is None:
+            return
+        text, colour = cfg_note(self.cfg_type_var.get(), self.guidance_var.get(),
+                                self.delta_var.get(), len(self.t_index_list),
+                                self._frame_buffer_size())
+        self.cfg_note_var.set(text)
+        note.configure(text_color=colour)
+        if text:
+            note.grid()
+        else:
+            note.grid_remove()
+
     def _refresh_engine_state(self):
         """The standing line under the model: which engine this needs, and if it exists."""
         configuration = self._engine_configuration()
@@ -2835,12 +3070,17 @@ class StreamGUI(ctk.CTk):
             self.engine_state_var.set("")
             return
         model = model_label(configuration.model_path)
-        steps = _steps_phrase(configuration.steps)
+        # The cfg type is in the phrase only when it is not the shipped one, for
+        # the reason it is in the warning: `full` at one step needs a batch-2
+        # engine, and a line reading "no engine for sd-turbo-fp16 at 1 step" would
+        # be denying the existence of one that is built (issue #45).
+        what = f"{model} at {_steps_phrase(configuration.steps)}" \
+               f"{configuration.cfg_phrase}"
         if configuration.cached:
-            self.engine_state_var.set(f"Engine: cached for {model} at {steps}.")
+            self.engine_state_var.set(f"Engine: cached for {what}.")
         else:
             self.engine_state_var.set(
-                f"⚠  No engine yet for {model} at {steps} - Start will build one "
+                f"⚠  No engine yet for {what} - Start will build one "
                 f"({ENGINE_BUILD_TIME}, {ENGINE_BUILD_SIZE}).")
 
     def _engine_configuration(self) -> Optional[EngineConfiguration]:
@@ -2856,7 +3096,8 @@ class StreamGUI(ctk.CTk):
             model_path=self.model_var.get(), acceleration=self.accel_var.get(),
             use_lcm_lora=bool(self.use_lcm_lora_var.get()),
             steps=len(self.t_index_list), frame_buffer_size=buffer_size,
-            lora_dict=self._lora_dict() or None)
+            lora_dict=self._lora_dict() or None,
+            cfg_type=self.cfg_type_var.get())
 
     def _confirm_engine_available(self) -> bool:
         """Say what Start is about to spend, and refuse a volume that cannot hold it.

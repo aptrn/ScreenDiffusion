@@ -21,6 +21,7 @@ from bench.cli import (  # noqa: E402
     report_cadence,
     report_capture,
     report_detectors,
+    report_guidance,
     report_marginal,
     report_models,
     report_portability,
@@ -35,6 +36,7 @@ from bench.paths import (  # noqa: E402
     CADENCE_RESULTS_DIR,
     CAPTURE_RESULTS_DIR,
     DETECTOR_RESULTS_DIR,
+    GUIDANCE_RESULTS_DIR,
     MODEL_RESULTS_DIR,
     PRIMITIVE_RESULTS_DIR,
     RESULTS_DIR,
@@ -64,6 +66,7 @@ BLOCKS = {
     "STEP COUNT": (report_steps, STEPS_RESULTS_DIR),
     "BASE MODEL": (report_models, MODEL_RESULTS_DIR),
     "STYLE LORAS": (report_styles, STYLE_RESULTS_DIR),
+    "GUIDANCE": (report_guidance, GUIDANCE_RESULTS_DIR),
 }
 
 

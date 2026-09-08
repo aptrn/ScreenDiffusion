@@ -211,10 +211,31 @@ its own engine** - `create_prefix` puts a sha1 of the `lora_dict` in the cache k
 release-time set rather than something a user types. The non-TensorRT path swaps a
 style for a model reload and no compile, at 52.02 ms/call against 33.57.
 
-All ten case-table blocks (`--detector-report`, `--primitive-report`,
+The same slot also takes a **classifier-free-guidance sweep** (`cfg-dog`,
+`cfg-dog-sd15`) - issue #45, `bench/results/guidance/`, `--guidance-report`, spec
+8.11. The app ships with CFG *off* and every figure in this repo was measured
+there, so "the prompt is followed only weakly" had never been shown to be the
+checkpoint rather than a switch. One run sweeps `cfg_type` x `guidance_scale`
+(x `delta`, only where the pipeline reads it) at one fixed denoise -
+`render_plan.DEFAULT_DENOISE`, because CFG interacts with denoise and above ~0.56
+every arm saturates the metric. Adherence is §8.2's identity probe: the fraction
+of rendered frames the detector reads back as what the prompt asked for, with its
+mean confidence beside it, and the region's drift from the capture beside that,
+because a stronger pull buys one with the other. Measured on a 4090: **the lever
+works and the default does not move.** `self` costs nothing and makes adherence
+*worse* on both models - at guidance 2 the region is a black rectangle;
+`initialize`/`full` reach 52% against a control's 35% on SD-Turbo and 58% against
+19% on SD 1.5, and both **key a larger UNet engine** (batch 2 at one step, 5 and
+8 at four) and cost a third to three quarters more frame path. Three executable
+doors decide it: bit-identity, a 1.40x cost ceiling from §8.8's headroom, and a
+10-point gain bar that becomes 25 when adopting the arm means compiling ~5 GB.
+The controls ship in `Advanced` anyway. At one step `initialize` and `full`
+compute the *same thing* at delta 1.0 and the block says so from the numbers.
+
+All eleven case-table blocks (`--detector-report`, `--primitive-report`,
 `--capture-report`, `--selective-report`, `--cadence-report`, `--swap-report`,
-`--stability-report`, `--steps-report`, `--model-report`, `--style-report`)
-keep the newest run **per (thing measured, GPU)**, not per name. A 4090 run
+`--stability-report`, `--steps-report`, `--model-report`, `--style-report`,
+`--guidance-report`) keep the newest run **per (thing measured, GPU)**, not per name. A 4090 run
 therefore adds a row beside the 3080's instead of erasing it, which is what keeps
 spec 7.4's portability table checkable. When rows span GPUs the table grows a
 `GPU` column, the preamble names every machine, and the per-machine verdicts —
@@ -227,13 +248,13 @@ from.
 `--portability-report` is the second question asked of those same records — not
 "does the path work" but "which of its numbers survived the move to the hardware
 this ships on" — and regenerates the block in spec 7.4, byte-matched by a test
-like the other nine. It refuses to draw a table at all when the two runs rendered
+like the other ten. It refuses to draw a table at all when the two runs rendered
 different regions/frame, because region count drives cost and a table across two
 of them is the wrong answer in a quotable shape. The 30 FPS verdict it prints is
 judged on `ms/frame with detection`, carries the region count and the clock
 regime, and says whether every committed run on the card landed on the same side
 of the target — a verdict inside the run-to-run spread is labelled one.
-`scripts/regen_spec_blocks.py` pastes all twelve generated blocks back into the
+`scripts/regen_spec_blocks.py` pastes all thirteen generated blocks back into the
 spec, so a regeneration is never a hand-copy that drops a digit.
 
 The clips in `bench/clips/` are committed and so are their box tracks
@@ -616,6 +637,23 @@ ever, so an empty field cannot overwrite it.
   the GPU now, and `tests/test_gpu_device_compositor.py` holds it to the numpy one
   byte for byte, which is the only reason the criterion can still be checked in a
   tier with no CUDA.
+- **A cfg type is an engine, and `guidance_scale <= 1.0` is guidance off.** The
+  pipeline derives `trt_unet_batch_size` from `cfg_type` - `initialize` is
+  `(steps+1) * fbs` and `full` is `2 * steps * fbs` - so those two key a build the
+  app has never made; `none` and `self` share the engine it has.
+  `engine_cache.unet_batch_size` takes the cfg type and both the window and
+  `bench.cli`'s guard pass it, or they answer "cached" about a directory the build
+  never writes. And guidance below the `if self.guidance_scale > 1.0` gate does
+  *nothing*, silently: picking a cfg type without moving the scale is the failure
+  issue #45 was opened about, which is why `cfg_companions` moves them together and
+  `cfg_note` says so under the row. `delta` is read only by `self` and
+  `initialize`; a delta typed under `full` is read by nothing.
+- **`self` guidance is not the cheap win it looks like.** It costs no engine and
+  barely any milliseconds, and it makes adherence *worse* on both base models
+  (spec 8.11): 35% -> 33% -> 25% -> 2% as the scale climbs on SD-Turbo, and by
+  guidance 2 the rendered region is a solid black rectangle. The useful range on a
+  one-step schedule is roughly 1.05-1.4 and there is a cliff just past it. Do not
+  read "CFG improves prompt adherence" as "raise the guidance".
 
 ## Working agreement
 

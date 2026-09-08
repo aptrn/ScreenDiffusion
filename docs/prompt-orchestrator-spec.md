@@ -1848,6 +1848,161 @@ path clears the frame budget on the diffusion call alone at four steps, so shipp
 a style on SD 1.5 is shipping §7.5's 24.4 FPS with it.
 
 
+### 8.11 Is the weak prompt adherence the model, or a switch that is off? — **measured**
+
+Issue #45. Live testing on 2026-09-08 found the same thing on SD 1.5 that had been
+found on SD-Turbo the day before: the input image changes, but not enough, and the
+prompt is followed only weakly. The app runs with **classifier-free guidance
+switched off** — `cfg_type: none`, `guidance_scale: 0.0`, `delta: 0.0`, all three
+hidden — and CFG is the mechanism by which a prompt pulls the output towards
+itself. Every benchmark in this repo was measured there, so this was an untested
+axis rather than a tuned one, and the cheapest thing to try before concluding the
+checkpoint is at fault.
+
+**What is scored.** §8.2's identity probe, reused whole: the open-vocabulary
+detector is asked whether the rendered region reads back as the concept the prompt
+asked for, frame by frame, with the detector's own mean confidence beside the
+fraction because a fraction over 48 frames saturates. Beside it, the other half of
+the trade — how far the region drifted from the captured frame — because the same
+axis that lands the prompt is the one that walks the output away from the capture,
+and one of those numbers alone is half an answer.
+
+**The denoise is `render_plan.DEFAULT_DENOISE` (0.45) and does not move across the
+sweep.** CFG interacts with denoise, so an arm that moved both would be measuring
+two changes at once. 0.45 is also the only strength at which the sweep can say
+anything: on this clip the control arm reads back as a cat on 0/12 frames at 0.32
+and 11/12 at 0.72, so above about 0.56 every arm scores 100% and the axis is
+invisible. It is the strength the app ships at, and therefore the strength the
+complaint was made at.
+
+**The arms run on the `none` accelerator.** Two of the four cfg types change
+`trt_unet_batch_size` and would each be a ~5 GB build; spending four of those to
+find out whether the axis does anything would be the wrong order. What the record
+carries instead is `engine_keying`, which names the engine each arm *would* need on
+the accelerated path, computed from `engine_cache` — the same rule the window and
+the build guard read.
+
+`uv run python -m bench cfg-dog` / `cfg-dog-sd15`; regenerate with
+`uv run python -m bench --guidance-report`.
+
+<!-- BEGIN GUIDANCE -->
+20 guidance arms and one control on each of `sd-turbo` at 1 step, `sd15` at 4 steps, over 48 frames of `dog.mp4` at 512x512, on NVIDIA GeForce RTX 4090. Every arm renders the same frames of the same committed box track at the same denoise (0.45) under the same prompt ("a cat, feline face, whiskers, pointed ears, photograph"); only `cfg_type`, `guidance_scale` and `delta` move, because CFG interacts with denoise and an arm that moved both would be measuring two changes at once. `adherence` is the fraction of rendered frames the open-vocabulary detector reads back as `cat` at confidence 0.25, `retained` is how many still read as `dog`, and `net drift` is how far the region moved from the capture net of its own round trip. `delta` is `n/a` where the pipeline never reads it.
+
+| arm | base model | cfg | guidance | delta | ms/frame | adherence | conf | retained | net drift | flicker | UNet batch | background |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `none` | `sd-turbo` @ 1 step | none | 1 | n/a | 22.74 | 35% | 0.29 | 39/48 | 15.04 | 5.35 | 1 | identical |
+| `self-g10-d10` | `sd-turbo` @ 1 step | self | 1.05 | 1 | 24.19 | 35% | 0.29 | 39/48 | 15.97 | 5.60 | 1 | identical |
+| `self-g11-d10` | `sd-turbo` @ 1 step | self | 1.1 | 1 | 24.91 | 33% | 0.27 | 39/48 | 17.08 | 5.95 | 1 | identical |
+| `self-g12-d10` | `sd-turbo` @ 1 step | self | 1.2 | 1 | 25.12 | 25% | 0.21 | 41/48 | 20.21 | 7.09 | 1 | identical |
+| `self-g14-d10` | `sd-turbo` @ 1 step | self | 1.4 | 1 | 25.10 | 2% | 0.02 | 9/48 | 34.42 | 12.76 | 1 | identical |
+| `self-g20-d10` | `sd-turbo` @ 1 step | self | 2 | 1 | 23.00 | 0% | 0.00 | 0/48 | 90.37 | 10.76 | 1 | identical |
+| `self-g30-d10` | `sd-turbo` @ 1 step | self | 3 | 1 | 24.88 | 0% | 0.00 | 0/48 | 108.29 | 10.67 | 1 | identical |
+| `self-g14-d05` | `sd-turbo` @ 1 step | self | 1.4 | 0.5 | 24.99 | 33% | 0.28 | 39/48 | 20.24 | 6.90 | 1 | identical |
+| `initialize-g10-d10` | `sd-turbo` @ 1 step | initialize | 1.05 | 1 | 28.95 | 35% | 0.29 | 38/48 | 15.11 | 5.41 | 2 | identical |
+| `initialize-g11-d10` | `sd-turbo` @ 1 step | initialize | 1.1 | 1 | 30.83 | 40% | 0.32 | 38/48 | 15.18 | 5.48 | 2 | identical |
+| `initialize-g12-d10` | `sd-turbo` @ 1 step | initialize | 1.2 | 1 | 30.71 | 44% | 0.34 | 38/48 | 15.34 | 5.63 | 2 | identical |
+| `initialize-g14-d10` | `sd-turbo` @ 1 step | initialize | 1.4 | 1 | 29.61 | 44% | 0.35 | 38/48 | 15.72 | 5.96 | 2 | identical |
+| `initialize-g20-d10` | `sd-turbo` @ 1 step | initialize | 2 | 1 | 30.50 | 40% | 0.31 | 43/48 | 17.25 | 7.23 | 2 | identical |
+| `initialize-g30-d10` | `sd-turbo` @ 1 step | initialize | 3 | 1 | 30.76 | 10% | 0.08 | 45/48 | 20.93 | 9.92 | 2 | identical |
+| `initialize-g14-d05` | `sd-turbo` @ 1 step | initialize | 1.4 | 0.5 | 31.25 | 52% | 0.43 | 33/48 | 16.06 | 5.75 | 2 | identical |
+| `full-g10` | `sd-turbo` @ 1 step | full | 1.05 | n/a | 30.45 | 35% | 0.29 | 38/48 | 15.11 | 5.41 | 2 | identical |
+| `full-g11` | `sd-turbo` @ 1 step | full | 1.1 | n/a | 29.72 | 40% | 0.32 | 38/48 | 15.18 | 5.48 | 2 | identical |
+| `full-g12` | `sd-turbo` @ 1 step | full | 1.2 | n/a | 30.71 | 44% | 0.34 | 38/48 | 15.34 | 5.63 | 2 | identical |
+| `full-g14` | `sd-turbo` @ 1 step | full | 1.4 | n/a | 30.30 | 44% | 0.35 | 38/48 | 15.72 | 5.96 | 2 | identical |
+| `full-g20` | `sd-turbo` @ 1 step | full | 2 | n/a | 30.06 | 40% | 0.31 | 43/48 | 17.25 | 7.23 | 2 | identical |
+| `full-g30` | `sd-turbo` @ 1 step | full | 3 | n/a | 29.63 | 10% | 0.08 | 45/48 | 20.93 | 9.92 | 2 | identical |
+| `none` | `sd15` @ 4 steps | none | 1 | n/a | 47.56 | 19% | 0.16 | 42/48 | 25.86 | 9.99 | 4 | identical |
+| `self-g10-d10` | `sd15` @ 4 steps | self | 1.05 | 1 | 48.16 | 21% | 0.17 | 42/48 | 27.65 | 11.25 | 4 | identical |
+| `self-g11-d10` | `sd15` @ 4 steps | self | 1.1 | 1 | 48.30 | 19% | 0.16 | 44/48 | 30.29 | 13.10 | 4 | identical |
+| `self-g12-d10` | `sd15` @ 4 steps | self | 1.2 | 1 | 48.06 | 10% | 0.08 | 40/48 | 38.84 | 18.73 | 4 | identical |
+| `self-g14-d10` | `sd15` @ 4 steps | self | 1.4 | 1 | 48.23 | 0% | 0.00 | 2/48 | 62.21 | 29.39 | 4 | identical |
+| `self-g20-d10` | `sd15` @ 4 steps | self | 2 | 1 | 47.71 | 0% | 0.00 | 0/48 | 87.03 | 28.60 | 4 | identical |
+| `self-g30-d10` | `sd15` @ 4 steps | self | 3 | 1 | 47.64 | 0% | 0.00 | 0/48 | 93.09 | 23.02 | 4 | identical |
+| `self-g14-d05` | `sd15` @ 4 steps | self | 1.4 | 0.5 | 48.19 | 12% | 0.11 | 42/48 | 35.52 | 16.79 | 4 | identical |
+| `initialize-g10-d10` | `sd15` @ 4 steps | initialize | 1.05 | 1 | 58.19 | 23% | 0.18 | 43/48 | 26.59 | 10.61 | 5 | identical |
+| `initialize-g11-d10` | `sd15` @ 4 steps | initialize | 1.1 | 1 | 58.39 | 25% | 0.19 | 43/48 | 27.57 | 11.48 | 5 | identical |
+| `initialize-g12-d10` | `sd15` @ 4 steps | initialize | 1.2 | 1 | 57.77 | 15% | 0.12 | 43/48 | 30.69 | 14.20 | 5 | identical |
+| `initialize-g14-d10` | `sd15` @ 4 steps | initialize | 1.4 | 1 | 57.83 | 4% | 0.03 | 37/48 | 42.27 | 22.67 | 5 | identical |
+| `initialize-g20-d10` | `sd15` @ 4 steps | initialize | 2 | 1 | 57.67 | 0% | 0.00 | 0/48 | 74.56 | 38.39 | 5 | identical |
+| `initialize-g30-d10` | `sd15` @ 4 steps | initialize | 3 | 1 | 57.98 | 0% | 0.00 | 0/48 | 90.64 | 32.92 | 5 | identical |
+| `initialize-g14-d05` | `sd15` @ 4 steps | initialize | 1.4 | 0.5 | 57.64 | 35% | 0.27 | 41/48 | 29.05 | 12.75 | 5 | identical |
+| `full-g10` | `sd15` @ 4 steps | full | 1.05 | n/a | 84.05 | 23% | 0.19 | 42/48 | 25.87 | 10.02 | 8 | identical |
+| `full-g11` | `sd15` @ 4 steps | full | 1.1 | n/a | 84.12 | 23% | 0.19 | 42/48 | 25.89 | 10.05 | 8 | identical |
+| `full-g12` | `sd15` @ 4 steps | full | 1.2 | n/a | 83.40 | 31% | 0.25 | 42/48 | 25.94 | 10.13 | 8 | identical |
+| `full-g14` | `sd15` @ 4 steps | full | 1.4 | n/a | 83.56 | 40% | 0.31 | 38/48 | 26.04 | 10.25 | 8 | identical |
+| `full-g20` | `sd15` @ 4 steps | full | 2 | n/a | 83.68 | 52% | 0.42 | 34/48 | 26.40 | 10.82 | 8 | identical |
+| `full-g30` | `sd15` @ 4 steps | full | 3 | n/a | 83.67 | 58% | 0.47 | 28/48 | 27.30 | 12.00 | 8 | identical |
+
+`sd-turbo`: **Recommended: `cfg_type: none` - the shipped setting.** The best any guidance arm read back was `initialize-g14-d05` at 52% against the control's 35%, and it keys a **different TensorRT engine** at UNet batch 2 and costs 31.25 ms/frame against the control's 22.74 - under the 25% gain this rule asks of an arm that costs what that one costs. The lever is real and it is priced; what it is not is a new default.
+
+**Which arms key a new engine: 13 of 21.** `initialize-g10-d10`, `initialize-g11-d10`, `initialize-g12-d10`, `initialize-g14-d10`, `initialize-g20-d10`, `initialize-g30-d10`, `initialize-g14-d05`, `full-g10`, `full-g11`, `full-g12`, `full-g14`, `full-g20`, `full-g30` at UNet batch 2 (`sd-turbo-fp16--lcm_lora-False--tiny_vae-True--max_batch-2--min_batch-2--res-512x512--lora-none--mode-img2img`). `initialize` runs one extra unconditional latent through the UNet and `full` runs a second copy of every one, so on the TensorRT path each of those batches is its own build - ~5 GB and 5-25 minutes, depending on the GPU. `self` and `none` share the batch the app already has compiled.
+
+Every arm above left the background bit-identical to the capture: 1008/1008 frames across 21 arms, 48/48 on each.
+
+`full` and `initialize` produced identical numbers on 6 of the ladder's rungs (1.05, 1.1, 1.2, 1.4, 2, 3) - adherence, drift and flicker all to four figures. That is not a coincidence and it is not asserted from the algebra: at one denoising step and one frame per call, `initialize` splices the unconditional prediction into `stock_noise` and multiplies it by `delta`, and at delta 1.0 that is the tensor `full` chunks out of its doubled batch. So `full` buys nothing `initialize` does not at this shape, and both cost the same larger UNet batch.
+
+The artefact a human judges this by, source | control | one panel per arm: `cfg-dog-20260908-121916Z-arms.jpg`, `cfg-dog-20260908-121916Z-arms.mp4`.
+
+`sd15`: **Recommended: `cfg_type: none` - the shipped setting.** The best any guidance arm read back was `initialize-g14-d05` at 35% against the control's 19%, and it keys a **different TensorRT engine** at UNet batch 5 and costs 57.64 ms/frame against the control's 47.56 - under the 25% gain this rule asks of an arm that costs what that one costs. The lever is real and it is priced; what it is not is a new default. The best-reading arm of the whole sweep was `full-g30` at 58%, and it is out on cost rather than on quality: 83.67 ms/frame against the control's 47.56, 1.76x, against the 1.40x the frame budget has in hand.
+
+**Which arms key a new engine: 13 of 21.** `initialize-g10-d10`, `initialize-g11-d10`, `initialize-g12-d10`, `initialize-g14-d10`, `initialize-g20-d10`, `initialize-g30-d10`, `initialize-g14-d05` at UNet batch 5 (`sd-v1-5-fp16--lcm_lora-True--tiny_vae-True--max_batch-5--min_batch-5--res-512x512--lora-none--mode-img2img`); `full-g10`, `full-g11`, `full-g12`, `full-g14`, `full-g20`, `full-g30` at UNet batch 8 (`sd-v1-5-fp16--lcm_lora-True--tiny_vae-True--max_batch-8--min_batch-8--res-512x512--lora-none--mode-img2img`). `initialize` runs one extra unconditional latent through the UNet and `full` runs a second copy of every one, so on the TensorRT path each of those batches is its own build - ~5 GB and 5-25 minutes, depending on the GPU. `self` and `none` share the batch the app already has compiled.
+
+Every arm above left the background bit-identical to the capture: 1008/1008 frames across 21 arms, 48/48 on each.
+
+The artefact a human judges this by, source | control | one panel per arm: `cfg-dog-sd15-20260908-122205Z-arms.jpg`, `cfg-dog-sd15-20260908-122205Z-arms.mp4`.
+<!-- END GUIDANCE -->
+
+**The verdict, in one sentence: the complaint is real, the lever is real, and the
+lever is not free.** Guidance does make the prompt land — and the cheap cfg type is
+not the one that does it. `self` costs no engine and barely any milliseconds and it
+makes adherence *worse* on both models: it degrades from the control at every rung,
+and by guidance 2.0 the rendered region is a solid black rectangle — the fourth
+panel of the committed still is what that looks like. `initialize` and `full` do
+work, and both key a larger UNet batch, so on the TensorRT path each is a build the
+user watches the window go quiet for and on the frame path each costs a third more
+(SD-Turbo) or 1.2–1.8× (SD 1.5).
+
+So the **default does not move**, and the rule that decided it is executable rather
+than argued. Three doors, in `bench.guidance`: an arm that painted a pixel outside
+the rendered region is disqualified whatever it read back; an arm dearer than 1.40×
+the control cannot be a default, because §8.8's frame budget has about that much of
+itself in hand and the default has to run; and what is left has to beat the control
+by 10 points of adherence on the shipped UNet batch, or 25 if adopting it means
+compiling ~5 GB. The best SD-Turbo arm clears the first bar and not the second at
+52% against 35%; the best SD 1.5 arm, `full` at guidance 3.0, reads back on 58% of
+frames and is out on **cost**, at 1.76× the control.
+
+**The answer does differ between the two base models, and step 5 was worth
+asking.** On SD-Turbo at one step `initialize` and `full` produce *identical*
+numbers — the block says so and says why, and it is read off the run rather than
+argued — and both peak around guidance 1.2–1.4 and collapse above 2. On SD 1.5 at
+four steps they separate (batch 5 against batch 8) and `full` climbs monotonically
+to the top of the ladder instead of collapsing: 23% → 58% from guidance 1.05 to
+3.0, at a drift that barely moves (25.9 → 27.3/255). Guidance behaves like guidance
+on a four-step schedule and like a cliff on a one-step one. #43's 3% agreement on
+speed carried nothing here, exactly as the issue predicted.
+
+**The control ships anyway**, in `Advanced`: the three fields, the vocabulary read
+from `engine_cache.CFG_TYPES`, the engine warning `_confirm_engine_rebuild` already
+gives for anything that keys a build, and a line under them that says when the
+settings do nothing — because a cfg type with the scale left at 1.0 is ignored by
+the pipeline and the window used to open on 0.0, which is the same nothing wearing
+a number. That is the shape §7.5 takes with SD 1.5: a measured trade with two real
+sides is a product decision, not a benchmark verdict, and a lever that
+demonstrably works but should not be a default is exactly the kind that has to be
+reachable or the finding is unusable.
+
+Three things the block does not settle. The sweep is one clip, one prompt and one
+identity change — adherence on a *restyle* (§8.2's priority case) has no detector
+to read it back and is not scored here, so "does the style land better" is still
+an eyeball question. The arms were measured on the `none` accelerator, so the
+millisecond ratios are torch-path ratios and no TensorRT `initialize` or `full`
+engine has ever been built or timed. And guidance on a short LCM schedule is not
+guidance on a 50-step one: the useful range measured here is roughly 1.05–1.4 on
+SD-Turbo and everything above it destroys the frame, which is narrow enough that a
+slider over it would want bounds rather than the 0–20 a diffusers user expects.
+
+
 ## 9. Risks
 
 | Risk                                              | Impact                  | Mitigation                                             |

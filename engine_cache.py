@@ -87,16 +87,43 @@ def lora_fingerprint(lora_dict: Optional[Mapping[str, float]]) -> str:
         repr(sorted(lora_dict.items())).encode("utf-8")).hexdigest()[:8]
 
 
+# The classifier-free-guidance vocabulary, spelt the way `StreamDiffusion` and
+# `wrapper.py` spell it. It belongs here because it *keys an engine*: two of the
+# four run extra latents through the UNet, so a cfg type is a build as much as a
+# step count is (issue #45).
+CFG_NONE = "none"
+CFG_SELF = "self"
+CFG_INITIALIZE = "initialize"
+CFG_FULL = "full"
+CFG_TYPES = (CFG_NONE, CFG_SELF, CFG_INITIALIZE, CFG_FULL)
+
+
 def unet_batch_size(frame_buffer_size: int, steps: int,
-                    use_denoising_batch: bool = True) -> int:
+                    use_denoising_batch: bool = True,
+                    cfg_type: str = CFG_NONE) -> int:
     """The batch the UNet engine is compiled for - `stream.trt_unet_batch_size`.
 
     With `use_denoising_batch`, the denoising steps go through the UNet as a batch,
     so the step *count* is part of the engine key: four steps is a batch-4 engine
     and a different build from a one-step one.
+
+    So is the **cfg type**, and that is the part issue #45 found missing. The
+    pipeline's own `__init__` runs one extra unconditional latent under
+    `initialize` and a second copy of every latent under `full`, so those two key
+    engines the app has never built; `self` and `none` key the one it has. Getting
+    this wrong is not a cosmetic error - it is the guard and the window answering
+    "cached" about a directory the build never writes.
     """
-    return int(frame_buffer_size) * int(steps) if use_denoising_batch else int(
-        frame_buffer_size)
+    frames, count = int(frame_buffer_size), int(steps)
+    if cfg_type not in CFG_TYPES:
+        raise ValueError(f"{cfg_type!r} is not one of the cfg vocabulary {CFG_TYPES}")
+    if not use_denoising_batch:
+        return frames
+    if cfg_type == CFG_INITIALIZE:
+        return (count + 1) * frames
+    if cfg_type == CFG_FULL:
+        return 2 * count * frames
+    return frames * count
 
 
 def engine_dir_name(model_id_or_path: _PathLike, use_lcm_lora: bool,

@@ -81,6 +81,12 @@ MODEL_RESULTS_DIR = RESULTS_DIR / MODEL_RESULTS_SUBDIR
 STYLE_RESULTS_SUBDIR = "styles"
 STYLE_RESULTS_DIR = RESULTS_DIR / STYLE_RESULTS_SUBDIR
 
+# The classifier-free-guidance sweep (issue #45) is a record shape of its own -
+# one row per (cfg_type, guidance, delta), with an adherence score and the UNet
+# batch each arm keys - so it gets its own directory like every other shape does.
+GUIDANCE_RESULTS_SUBDIR = "guidance"
+GUIDANCE_RESULTS_DIR = RESULTS_DIR / GUIDANCE_RESULTS_SUBDIR
+
 SD_MODELS_DIR_ENV = "SD_MODELS_DIR"
 SD_ENGINES_DIR_ENV = "SD_ENGINES_DIR"
 
