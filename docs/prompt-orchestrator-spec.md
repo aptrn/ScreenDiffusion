@@ -1492,6 +1492,39 @@ the row not there at all when there is nothing to read. The status bar still get
 both, but it is shared with the worker's own messages and the next one replaces
 whatever was there - which is the failure mode #22's own notes named.
 
+**The other failure is the one with no error at all** (issue #47). Live testing on
+2026-09-08 found a run with a target set and `1 obj` on the FPS line whose output
+still looked entirely diffused, with nothing in the window saying otherwise - and
+**half of that impression was correct behaviour**. Under `masked` the whole frame
+*is* diffused and the mask decides what is composited back, so at `region:
+full_box` and `box_scale: 1.15` one object filling a 512x512 capture masks nearly
+the whole frame: the selective path and the global path genuinely look the same,
+and no amount of staring at the preview resolves it. Two answers, both shipped:
+
+- **A mask overlay**, `mask_overlay.py`. The worker puts the boxes it actually
+  composited into on the fps payload it already sends - no new channel, and the
+  boxes are the *compositor's* decision, so a `crop` frame reports the one region
+  its single call went to and a `crop` plan the compositor refused reports the
+  masked set it rendered instead. The GUI outlines them on the **preview copy**,
+  after the frame has left the pipeline: an overlay drawn any earlier would reach
+  the output and break §8.8's bit-identity outright. It is off by default, because
+  the preview is the only honest picture of the output there is, and the transform
+  runs on the panel-sized canvas so it costs the same at 1920x1080 as at 512x512.
+  The *payload* carries the boxes whether the switch is on or not - the worker has
+  no reason to know, and the alternative is a control message and an overlay that
+  is a frame late every time it is turned on. What that costs the frame path is a
+  list of at most six 4-tuples onto a dict it already builds and already queues
+  once per frame: microseconds, and not the kind that add up to a millisecond.
+- **Three sentences where there was one.** "No target set", "a target and the
+  detector is holding nothing", and "a target and N regions are being restyled" are
+  three states and the last two used to differ only by a digit. The third now names
+  the regions the *scheduler* handed out - what the frame did, not what the detector
+  saw - and ends on what the mask protects, which is the sentence the docs had and
+  the window did not.
+
+`docs/gui/after-mask-off.png` and `after-mask-on.png` are the pair, and off against
+on 4,582 of the preview's 236,440 pixels differ: the outline and nothing else.
+
 ### 8.8 Does the selective path work end to end? — **yes, measured**
 
 Issue #8, the M1 finish line. The question §5's diagram poses and no component test

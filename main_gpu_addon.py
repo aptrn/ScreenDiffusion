@@ -52,6 +52,11 @@ from detector_worker import BackgroundDetector, UltralyticsDetector, frame_to_ar
 from region_scheduler import RegionScheduler
 from compositor import CROP, MASKED
 from device_compositor import DeviceCompositor, crop_to_canvas, to_canvas
+# What the frame actually restyled, and how to outline it on the preview (issue
+# #47). Stdlib, and the two halves run in the two processes: the worker fills
+# `overlay_status` onto the fps payload it already sends, and the GUI draws with
+# `draw_overlay` on the preview copy, after the frame has left the pipeline.
+from mask_overlay import OVERLAY_SWITCH_TEXT, draw_overlay, overlay_status
 # Temporal stability (issue #32, spec 8.5): the plan's `seed_policy` applied to the
 # engine's latent noise. Stdlib here too - torch lives inside the methods that write
 # a tensor, so the GUI process pays nothing for this import either.
@@ -1083,6 +1088,32 @@ def _plan_update_from_fields(target: str, style: str, prompt: str,
 # is happening", so the line says what *is* happening first.
 GLOBAL_STATE = "Plan: global — the whole frame.  Detection: off (no target)."
 
+# ...and a selective plan whose detector is holding nothing is a third state, not
+# the same one (issue #47, step 4). That frame costs no diffusion call at all - the
+# compositor passes the capture straight through - so "0 objects" is not a detail
+# of an otherwise-working run, it is the entire output. Saying only the count left
+# it reading like "no target set", which is the one thing it is not.
+NOTHING_FOUND = "  Nothing to restyle: the preview is the capture, untouched."
+
+
+def _restyling_phrase(regions: int) -> str:
+    """What a selective frame that *is* restyling something is doing, in words.
+
+    The count of regions rather than of objects held: with more objects than slots
+    the round-robin renders some of them this frame and the rest next frame, and
+    those two numbers are only the same when everything fits.
+
+    It ends on what the mask protects, because that is the half of issue #47 the
+    docs said and the window did not. Under `masked` the whole frame really is
+    diffused and the mask decides what is composited back, so a selective run and
+    a global one can look identical - and a user staring at the preview has no way
+    to resolve that from the picture alone.
+    """
+    plural = "" if regions == 1 else "s"
+    return (f"  Restyling {regions} region{plural}; "
+            f"everything outside them is the capture, untouched.")
+
+
 # A note is not an error. A refusal is drawn in `CUSTOM_COLORS["error"]`.
 PLAN_NOTE_COLOR = "gray70"
 
@@ -1099,6 +1130,12 @@ def _plan_state_line(target: str, running: bool, payload: Any = None) -> str:
     The concept named is the detector's own, not the field's: a target edit is
     debounced and then costs a vocabulary re-encode, so for a moment the two
     disagree and the one worth showing is the one actually being detected.
+
+    Issue #47 step 4 added the third state. "No target set", "a target and the
+    detector is holding nothing", and "a target and N regions are being restyled"
+    are three different things and read as three sentences; the last two are told
+    apart by the *regions* the scheduler handed out, which is what the frame did
+    rather than what the detector saw.
     """
     fields = payload if isinstance(payload, dict) else {}
     concept = target.strip()
@@ -1106,9 +1143,18 @@ def _plan_state_line(target: str, running: bool, payload: Any = None) -> str:
         detected = ", ".join(fields.get("concepts") or ()) or concept
         held = fields["detections"]
         plural = "" if held == 1 else "s"
-        return (f"Plan: selective — every {detected}."
+        line = (f"Plan: selective — every {detected}."
                 f"  Detection: on, {held} object{plural} held, "
                 f"every {fields.get('detect_every_n')} frames.")
+        regions = fields.get("regions")
+        if not held or regions == 0:
+            return line + NOTHING_FOUND
+        if regions is None:
+            # A `global` selection reports no regions at all, and the fps channel
+            # carried counts before it carried a selection. Neither is a claim
+            # that nothing is being restyled, so neither gets one made for it.
+            return line
+        return line + _restyling_phrase(int(regions))
     if not concept:
         return GLOBAL_STATE
     if not running:
@@ -1649,6 +1695,12 @@ def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Qu
                     except Exception: break
                 payload = fps_payload(int(round(fps)), tracks, detect_every_n)
                 payload.update(scheduler.status(selection))
+                # Where the mask was, for the preview overlay (issue #47). A
+                # handful of integers on a channel that already carries a dict,
+                # rather than a second queue: the boxes are tiny beside a frame,
+                # and they are the ones the compositor decided on, not the ones
+                # the plan asked for.
+                payload.update(overlay_status(selection, render, width, height))
                 fps_queue.put(payload)
             except Exception:
                 time.sleep(0.01)
@@ -1884,8 +1936,16 @@ class StreamGUI(ctk.CTk):
         self.style_var = ctk.StringVar(value="")
         self.plan_state_var = ctk.StringVar(value=GLOBAL_STATE)
         self.plan_note_var = ctk.StringVar(value="")
-        # The newest fps payload, which is where detection's own state comes from.
+        # The newest fps payload, which is where detection's own state comes from -
+        # and, since issue #47, where the mask overlay's boxes come from too.
         self._fps_payload: Any = None
+        # The mask overlay (issue #47). Off by default: the preview is a view of
+        # what leaves the pipeline, and a decoration drawn on it by default makes
+        # the one honest picture of the output into one to be discounted. The last
+        # frame is kept so the switch redraws what is already on screen instead of
+        # waiting for the next one, which on a stopped run never comes.
+        self.overlay_var = ctk.BooleanVar(value=False)
+        self._last_preview: Optional[Image.Image] = None
         # Where the frame's one diffusion call is spent (issue #39).
         self.detail_var = ctk.StringVar(value=DETAIL_ALL_OBJECTS)
         self.seed_var = ctk.StringVar(value="1")
@@ -2463,7 +2523,17 @@ class StreamGUI(ctk.CTk):
         right = ctk.CTkFrame(self, corner_radius=12)
         right.grid(row=1, column=1, sticky="nsew", padx=(6, 12), pady=(6, 6))
         right.grid_rowconfigure(0, weight=0); right.grid_rowconfigure(1, weight=1); right.grid_rowconfigure(2, weight=0); right.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(right, text="Preview").grid(row=0, column=0, sticky="w", padx=12, pady=(12, 0))
+        preview_header = ctk.CTkFrame(right, fg_color="transparent")
+        preview_header.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 0))
+        ctk.CTkLabel(preview_header, text="Preview").pack(side="left")
+        # Issue #47: outline what is actually being restyled. Not a lockable - a
+        # live run is exactly when a user needs to judge whether the mask is where
+        # they think it is - and drawn on the preview copy in this process, never
+        # on the frame the worker composited.
+        self._w_overlay_switch = ctk.CTkSwitch(
+            preview_header, text=OVERLAY_SWITCH_TEXT, variable=self.overlay_var,
+            command=self._on_overlay_toggled)
+        self._w_overlay_switch.pack(side="right")
         self.preview_container = ctk.CTkFrame(right, corner_radius=8, width=self.preview_dim, height=self.preview_dim)
         self.preview_container.grid(row=1, column=0, sticky="n", padx=12, pady=(8, 12))
         self.preview_container.grid_propagate(False)
@@ -3108,17 +3178,21 @@ class StreamGUI(ctk.CTk):
         if self.running: self._send_region_update()
 
     def _poll_queues(self):
-        if self.out_q is not None:
-            try:
-                while True:
-                    pil = self.out_q.get_nowait()
-                    if isinstance(pil, Image.Image): self._update_preview(pil)
-            except Exception: pass
+        # The fps queue first, and the frames after it. The worker puts the two
+        # halves of one frame on the two queues, and since issue #47 the payload
+        # carries the boxes the preview outlines - so draining it second would
+        # outline the previous frame's regions on this frame's picture.
         if self.fps_q is not None:
             try:
                 while True:
                     self._fps_payload = self.fps_q.get_nowait()
                     self.fps_var.set(_format_fps(self._fps_payload))
+            except Exception: pass
+        if self.out_q is not None:
+            try:
+                while True:
+                    pil = self.out_q.get_nowait()
+                    if isinstance(pil, Image.Image): self._update_preview(pil)
             except Exception: pass
         self._refresh_plan_state()
         if self.status_q is not None:
@@ -3133,14 +3207,32 @@ class StreamGUI(ctk.CTk):
 
     def _update_preview(self, pil_img: Image):
         dim = self.preview_dim
+        self._last_preview = pil_img
         canvas = Image.new("RGB", (dim, dim), (30, 30, 30))
         img = pil_img.copy()
         img.thumbnail((dim, dim), PIL.Image.BICUBIC)
         x = (dim - img.width) // 2
         y = (dim - img.height) // 2
         canvas.paste(img, (x, y))
+        # The mask overlay (issue #47), on the panel-sized canvas and only when it
+        # was asked for. Off, nothing below this line runs and the preview is byte
+        # for byte what it always was. On, it is a few rectangles on a 512 px
+        # image whatever the capture size - the boxes are capture pixels, so the
+        # drawn image's own size and the letterbox offset are what maps them.
+        if self.overlay_var.get():
+            draw_overlay(canvas, self._fps_payload, img.width, img.height, (x, y))
         self._ctk_img = ctk.CTkImage(light_image=canvas, dark_image=canvas, size=(dim, dim))
         self.preview_panel.configure(image=self._ctk_img)
+
+    def _on_overlay_toggled(self):
+        """Redraw the frame already on screen under the new setting.
+
+        A stopped run holds its last frame and a running one is 33 ms away from
+        its next, so a switch that only took effect on the following frame would
+        read as broken in the one case and laggy in the other.
+        """
+        if self._last_preview is not None:
+            self._update_preview(self._last_preview)
 
     def do_quit(self):
         if not messagebox.askyesno("Quit", "Are you sure you want to quit and stop all workers?"): return
