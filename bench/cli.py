@@ -37,6 +37,12 @@ from bench.detectors import (
 )
 from bench.disk import DiskRecord, Usage, read_disk, require_free_space
 from bench.fingerprint import read_clock_lock
+from bench.guidance import (
+    CASES as GUIDANCE_CASES,
+    GuidanceCase,
+    format_guidance_report,
+    load_guidance_results,
+)
 from bench.models import (
     BASE_MODELS,
     STYLE_LORAS,
@@ -48,6 +54,7 @@ from bench.paths import (
     CADENCE_RESULTS_SUBDIR,
     CAPTURE_RESULTS_SUBDIR,
     DETECTOR_RESULTS_SUBDIR,
+    GUIDANCE_RESULTS_SUBDIR,
     MODEL_RESULTS_SUBDIR,
     PRIMITIVE_RESULTS_SUBDIR,
     RESULTS_DIR,
@@ -98,12 +105,12 @@ from render_plan import SEED_POLICIES
 
 # What the one positional slot can name: a diffusion scenario, a detector, a
 # rendering-primitive case (issue #5), an end-to-end selective render (issue #8), a
-# plan swap (issue #30), a capture-geometry comparison (issue #39) or a style-LoRA
-# comparison (issue #38). One slot for all seven - a run measures one thing, the
-# names cannot collide, and someone holding a name should not have to know which
-# flag it belongs behind.
+# plan swap (issue #30), a capture-geometry comparison (issue #39), a style-LoRA
+# comparison (issue #38) or a classifier-free-guidance sweep (issue #45). One slot
+# for all eight - a run measures one thing, the names cannot collide, and someone
+# holding a name should not have to know which flag it belongs behind.
 Target = Union[ScenarioConfig, DetectorConfig, CaseConfig, SelectiveCase, SwapCase,
-              CaptureCase, StyleCase]
+              CaptureCase, StyleCase, GuidanceCase]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -155,6 +162,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="report the base-model block spec 7.5 carries - the "
                              "shipped path on SD-Turbo against SD 1.5 + LCM-LoRA "
                              "- from the committed arms, and exit")
+    parser.add_argument("--guidance-report", action="store_true",
+                        help="report the classifier-free-guidance block spec 8.11 "
+                             "carries - whether turning CFG on makes the prompt "
+                             "land, and what it costs - and exit")
     parser.add_argument("--style-report", action="store_true",
                         help="report the style-LoRA block spec 8.10 carries - "
                              "which LoRAs load on SD 1.5, which visibly change "
@@ -316,9 +327,9 @@ def _swap_case(case: SwapCase, args: argparse.Namespace) -> SwapCase:
 def resolve_target(args: argparse.Namespace) -> Tuple[str, Target]:
     """The scenario, detector or case `args.scenario` names, with overrides applied.
 
-    One positional slot for all seven registries. A run measures one thing, the
+    One positional slot for all eight registries. A run measures one thing, the
     kinds of name cannot collide, and someone holding a name should not have to know
-    which of six flags it belongs behind.
+    which of eight flags it belongs behind.
 
     An unmodified name resolves to the registry's own object, so a caller can tell a
     plain run from an overridden one by identity.
@@ -350,6 +361,9 @@ def resolve_target(args: argparse.Namespace) -> Tuple[str, Target]:
     if args.scenario in STYLE_CASES:
         case = STYLE_CASES[args.scenario]
         return "style", (case.replace(frames=args.frames) if args.frames else case)
+    if args.scenario in GUIDANCE_CASES:
+        case = GUIDANCE_CASES[args.scenario]
+        return "guidance", (case.replace(frames=args.frames) if args.frames else case)
     raise SystemExit(
         f"bench: unknown scenario, detector or case {args.scenario!r}. "
         f"Run `python -m bench --list`."
@@ -599,6 +613,16 @@ def report_styles(results_dir: Path, out: TextIO = sys.stdout,
                                   step_records=load_records(step_dir)) + "\n")
 
 
+def report_guidance(results_dir: Path, out: TextIO = sys.stdout) -> None:
+    """The classifier-free-guidance block spec 8.11 carries (issue #45).
+
+    Whether the weak prompt adherence is the checkpoint or a setting that has
+    never been on, from the committed sweep: an adherence number per arm, the
+    drift it costs, and which arms are a ~5 GB build rather than a setting.
+    """
+    out.write(format_guidance_report(load_guidance_results(results_dir)) + "\n")
+
+
 def report_stability(results_dir: Path, out: TextIO = sys.stdout,
                      baseline_dir: Path = SELECTIVE_RESULTS_DIR) -> None:
     """The temporal-stability block spec 8.5 carries (issue #32).
@@ -642,6 +666,10 @@ def list_targets(out: TextIO = sys.stdout) -> None:
         out.write(f"{name}\tcapture case\t{case.clip}\t{geometries}"
                   f"\t{'/'.join(case.primitives)} at K={case.max_instances}"
                   f"\tcrop against masked, per stage\n")
+    for name, case in GUIDANCE_CASES.items():
+        out.write(f"{name}\tguidance case\t{case.clip}\t{case.base_scenario}"
+                  f"\t{len(case.specs())} cfg arms at {case.steps} step(s)"
+                  f"\tdoes turning CFG on make the prompt land\n")
 
 
 def run_detector_target(args: argparse.Namespace, config: DetectorConfig) -> int:
@@ -807,6 +835,29 @@ def run_style_target(args: argparse.Namespace, case: StyleCase) -> int:
     return 0
 
 
+def run_guidance_target(args: argparse.Namespace, case: GuidanceCase) -> int:
+    """Sweep classifier-free guidance over one case (issue #45). Imported late.
+
+    No engine guard: the arms run on the `none` accelerator on purpose. Two of the
+    four cfg types key a different UNet batch, so sweeping them under `tensorrt`
+    would be several ~5 GB builds spent to find out whether the axis does anything
+    at all - and what the record carries instead is `engine_keying`, which names
+    the engine each arm *would* need and whether this machine already has it.
+    """
+    from bench.guidance_runner import run_guidance
+
+    run_guidance(
+        case,
+        cooldown=args.cooldown,
+        results_dir=args.results_dir / GUIDANCE_RESULTS_SUBDIR,
+        threshold_c=args.cooldown_threshold,
+        cap_s=args.cooldown_cap,
+        poll_interval_s=args.cooldown_poll,
+        write_clips=args.write_clips,
+    )
+    return 0
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -849,6 +900,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         report_styles(args.results_dir / STYLE_RESULTS_SUBDIR,
                       step_dir=args.results_dir / STEPS_RESULTS_SUBDIR)
         return 0
+    if args.guidance_report:
+        report_guidance(args.results_dir / GUIDANCE_RESULTS_SUBDIR)
+        return 0
     if args.stability_report:
         report_stability(args.results_dir / STABILITY_RESULTS_SUBDIR,
                          baseline_dir=args.results_dir / SELECTIVE_RESULTS_SUBDIR)
@@ -874,6 +928,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return run_capture_target(args, target)
     if kind == "style":
         return run_style_target(args, target)
+    if kind == "guidance":
+        return run_guidance_target(args, target)
 
     scenario = target
     disk = engine_build_guard(scenario, allow_build=args.allow_engine_build)

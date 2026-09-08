@@ -8,6 +8,7 @@ so what lands in `docs/gui/` is the window and not whatever else is on the deskt
     uv run python scripts/gui_screenshot.py docs/gui/after.png
     uv run python scripts/gui_screenshot.py docs/gui/after-advanced.png --advanced
     uv run python scripts/gui_screenshot.py docs/gui/after-selective.png --selective
+    uv run python scripts/gui_screenshot.py docs/gui/after-cfg.png --advanced --cfg=full
     uv run python scripts/gui_screenshot.py docs/gui/after-mask-off.png --mask
     uv run python scripts/gui_screenshot.py docs/gui/after-mask-on.png --mask --overlay
     uv run python scripts/gui_screenshot.py docs/gui/after-lora-choice.png \
@@ -126,7 +127,8 @@ def mask_preview(app) -> None:
 
 def capture(out_path: Path, expand_advanced: bool = False,
             selective: bool = False, mask: bool = False,
-            overlay: bool = False, model: str = "", lora: str = "") -> Path:
+            overlay: bool = False, model: str = "", lora: str = "",
+            cfg_type: str = "") -> Path:
     from PIL import ImageGrab
 
     import main_gpu_addon
@@ -135,11 +137,14 @@ def capture(out_path: Path, expand_advanced: bool = False,
     app.geometry("+0+0")
     # Through the window's own handlers, for the reason `--selective` uses a
     # stand-in payload: this loop has no hands. What is photographed is the real
-    # handler's real effect on the real window.
+    # handler's real effect on the real window - for the cfg type, the scale its
+    # companion brings with it and the line under the row (issue #45).
     if model:
         app._on_model_chosen(model)
     if lora:
         app._on_lora_chosen(lora)
+    if cfg_type:
+        app._apply_cfg_type(cfg_type)
     if selective:
         app.target_var.set("person")
         app.style_var.set("wet denim, studio light")
@@ -195,12 +200,17 @@ def _parse(argv: list) -> tuple:
 
 
 def main(argv: list) -> int:
-    positional, seen, values = _parse(argv)
+    # `--cfg=TYPE` is written joined rather than spaced, so it is lifted out
+    # before `_parse` sees the rest (issue #45).
+    cfg_type = next((a.split("=", 1)[1] for a in argv if a.startswith("--cfg=")), "")
+    positional, seen, values = _parse(
+        [a for a in argv if not a.startswith("--cfg=")])
     out = Path(positional[0]) if positional else ROOT / "docs" / "gui" / "app.png"
     saved = capture(out, expand_advanced="--advanced" in seen,
                     selective="--selective" in seen, mask="--mask" in seen,
                     overlay="--overlay" in seen,
-                    model=values["--model"], lora=values["--lora"])
+                    model=values["--model"], lora=values["--lora"],
+                    cfg_type=cfg_type)
     print(f"saved {saved}")
     return 0
 

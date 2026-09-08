@@ -43,6 +43,9 @@ def _namespace() -> Dict[str, Any]:
         # answer from the machine the tier happens to run on.
         resolve_models_dir=lambda **kwargs: Path("."),
         resolve_engines_dir=lambda: Path("."),
+        # `engine_configuration` takes the cfg type since issue #45 - two of the
+        # four compile a larger UNet batch - and its default is the shipped one.
+        DEFAULT_CFG_TYPE=engine_cache.CFG_NONE,
     )
 
 

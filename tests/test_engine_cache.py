@@ -11,10 +11,17 @@ from __future__ import annotations
 
 import hashlib
 import re
+from pathlib import Path
 
+import pytest
 from sourceloader import ROOT
 
 from engine_cache import (
+    CFG_FULL,
+    CFG_INITIALIZE,
+    CFG_NONE,
+    CFG_SELF,
+    CFG_TYPES,
     ENGINE_BUILD_SIZE,
     ENGINE_BUILD_TIME,
     MIN_FREE_BYTES_FOR_ENGINE_BUILD,
@@ -32,6 +39,22 @@ from engine_cache import (
 )
 
 WRAPPER = (ROOT / "wrapper.py").read_text(encoding="utf-8")
+
+
+def pipeline_source() -> str:
+    """StreamDiffusion's own `pipeline.py`, out of the installed package.
+
+    Located rather than imported, and located by the *top-level* package: a
+    `find_spec` for a submodule imports its parent, and `streamdiffusion/__init__`
+    imports torch. This tier has no CUDA device.
+    """
+    import importlib.util
+
+    spec = importlib.util.find_spec("streamdiffusion")
+    assert spec is not None, "streamdiffusion is not installed"
+    locations = list(spec.submodule_search_locations or [])
+    assert locations, "streamdiffusion is not a package"
+    return (Path(locations[0]) / "pipeline.py").read_text(encoding="utf-8")
 
 
 def test_the_directory_name_matches_the_one_the_wrapper_builds():
@@ -199,3 +222,45 @@ def test_enough_space_is_a_comparison_against_that_floor():
 def test_the_cost_quoted_to_a_user_is_a_range_over_the_two_measured_machines():
     assert "5 GB" in ENGINE_BUILD_SIZE
     assert "minutes" in ENGINE_BUILD_TIME
+
+
+# --- classifier-free guidance keys its own batch (issue #45) ------------------
+
+
+def test_the_cfg_type_is_part_of_the_batch_the_unet_is_built_for():
+    """`StreamDiffusion.__init__` derives `trt_unet_batch_size` from `cfg_type`:
+    `initialize` runs one extra unconditional latent through the UNet and `full`
+    runs a second copy of every one. Both are therefore a different engine from
+    the `none` the app ships, and `self` is not."""
+    for cfg_type in (CFG_NONE, CFG_SELF):
+        assert unet_batch_size(1, 1, cfg_type=cfg_type) == 1
+        assert unet_batch_size(1, 4, cfg_type=cfg_type) == 4
+    assert unet_batch_size(1, 1, cfg_type=CFG_INITIALIZE) == 2
+    assert unet_batch_size(1, 4, cfg_type=CFG_INITIALIZE) == 5
+    assert unet_batch_size(1, 1, cfg_type=CFG_FULL) == 2
+    assert unet_batch_size(1, 4, cfg_type=CFG_FULL) == 8
+    assert unet_batch_size(2, 4, cfg_type=CFG_FULL) == 16
+
+
+def test_that_batch_rule_is_the_pipeline_s_own():
+    """Read out of the installed StreamDiffusion rather than restated: this is a
+    mirror of a third-party expression, and the mirror is the only thing that
+    stops it drifting on an upgrade."""
+    source = pipeline_source()
+    assert "self.denoising_steps_num + 1" in source
+    assert "2 * self.denoising_steps_num * self.frame_bff_size" in source
+
+
+def test_without_the_denoising_batch_the_cfg_type_does_not_move_the_batch():
+    """`trt_unet_batch_size = self.frame_bff_size` in that branch, whatever the
+    guidance does - so a cfg arm there keys the engine the app already has."""
+    for cfg_type in CFG_TYPES:
+        assert unet_batch_size(2, 4, use_denoising_batch=False,
+                               cfg_type=cfg_type) == 2
+
+
+def test_an_unknown_cfg_type_is_refused_rather_than_silently_batched_as_none():
+    """A typo that answered "cached" about an engine the build never writes is
+    exactly the failure `engine_cache` exists to prevent."""
+    with pytest.raises(ValueError):
+        unet_batch_size(1, 1, cfg_type="selfish")

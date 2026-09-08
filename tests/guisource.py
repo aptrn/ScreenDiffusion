@@ -40,6 +40,16 @@ def gui_method(name: str) -> ast.FunctionDef:
     raise AssertionError(f"StreamGUI defines no {name}")
 
 
+def method_text(name: str) -> str:
+    """The named method of `StreamGUI` as text, for the checks a walk cannot make.
+
+    `ast.unparse` rather than the file's own bytes: what these assertions are
+    about is the expression, and unparsing normalises the line breaks a long
+    keyword-argument list would otherwise be split across.
+    """
+    return ast.unparse(gui_method(name))
+
+
 def calls_named(node: ast.AST, name: str) -> List[ast.Call]:
     """Every call to `name` anywhere under `node`, by callee name or attribute."""
     return [call for call in ast.walk(node)

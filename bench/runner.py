@@ -107,7 +107,12 @@ def build_stream(scenario: ScenarioConfig, engines_root: Optional[Path] = None):
         use_tiny_vae=scenario.use_tiny_vae,
         engine_dir=str(engines_root),
     )
-    stream.prepare(prompt=scenario.prompt, num_inference_steps=50)
+    # Explicitly, and not on the wrapper's own defaults: `prepare`'s signature says
+    # 1.2 and 1.0, so an arm that asked for guidance 3.0 and left this off would
+    # have rendered at 1.2 and reported 3.0 (issue #45). Under `cfg_type: none` the
+    # pipeline forces the scale to 1.0 itself, so the shipped path is unchanged.
+    stream.prepare(prompt=scenario.prompt, num_inference_steps=50,
+                   guidance_scale=scenario.guidance_scale, delta=scenario.delta)
     return stream
 
 
