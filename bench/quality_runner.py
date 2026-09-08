@@ -1,37 +1,31 @@
-"""The measuring half of the classifier-free-guidance sweep. Touches the GPU. Issue #45.
+"""The measuring half of the step-count sweep. Touches the GPU. Issue #46.
 
 What runs here is the shipped selective path with a committed box track in place of
-the live detector: `region_scheduler`'s own scheduler at K=1,
+the live detector - `region_scheduler`'s own scheduler at K=1,
 `device_compositor.DeviceCompositor`, and the plan `render_plan.plan_from_fields`
-produces from the case's two fields. Only the engine's guidance settings move
-between arms.
+produces from the case's two fields. Only the step count and the batching route
+move between arms.
 
-Five things about the numbers.
+Four things about the numbers.
 
+- **The swap is timed, not inferred.** Every arm is preceded by letting the previous
+  engine go and building this one, which is exactly what
+  `image_generation_process` does when a step count changes. One priming build and
+  teardown happens *before* the first arm, so no arm's figure carries this
+  process's CUDA start-up: every `swap_seconds` in the record is a swap.
+- **`engine_cached` is read before the build**, so an arm that had to compile says
+  so and is left out of the swap figure - it measured a build, which is the other
+  number.
+- **The denoise is one rung for the whole sweep**, opened at the index the case's
+  denoise names, with `render_plan.t_index_ladder` spending the rest after it. More
+  steps at the same opening index is the picture the issue's fifth trap asks for;
+  more steps at a *different* one would be two changes at once.
 - **The boxes come from a committed track**, so every arm renders exactly the same
-  region of exactly the same frame and the difference between two rows is the
-  guidance. Issue #5's second trap, applied a sixth time.
-- **The denoise is one number for the whole sweep.** CFG interacts with it, so an
-  arm that moved both would be measuring two changes at once - the issue's fourth
-  trap - and `set_denoise_ladder` puts the same rung in front of every arm.
-- **The adherence probe is §8.2's identity probe**, asked of the *composited*
-  frame: the detector is given the whole output and asked whether the thing inside
-  the region now reads back as what the prompt asked for. Composited rather than
-  the bare canvas, because that is what a viewer sees and what the bit-identity
-  criterion is about.
-- **The drift control is the capture's own round trip**, measured by running the
-  identical path with the diffusion call taken out. The canvas is the capture here
-  so there is no resize to subtract, but the uint8 -> float -> uint8 conversion is
-  real and it is measured rather than assumed.
-- **An arm that the pipeline refuses is a result.** `initialize` and `full` build a
-  prompt embedding that only exists above guidance 1.0; a configuration that raises
-  is recorded with its reason and the sweep carries on, exactly as issue #38's LoCon
-  arm is.
+  region of exactly the same frame and the difference between two rows is the arm.
 
-Every arm is a fresh `StreamDiffusionWrapper`: `cfg_type` is a constructor argument
-and the batch it derives from it is fixed at construction, so the arms cannot share
-one. The guidance *scale* and `delta` are `prepare()` arguments, which is why they
-are cheap to sweep and the cfg type is not.
+Every arm is a fresh `StreamDiffusionWrapper`: the step count and the batching flag
+are both constructor arguments, and the UNet batch derived from them is fixed at
+construction.
 """
 
 from __future__ import annotations
@@ -45,38 +39,41 @@ from bench.capture_runner import frame_boxes, renders_for
 from bench.clocks import clock_normalization, regime_summary
 from bench.cooldown import DEFAULT_CAP_S, DEFAULT_POLL_INTERVAL_S, DEFAULT_THRESHOLD_C
 from bench.fingerprint import capture_fingerprint, utc_now
-from bench.flicker import flicker_score
-from bench.guidance import (
-    ADHERENCE_CONF,
-    GUIDANCE_README_NAME,
-    ArmSpec,
-    GuidanceArm,
-    GuidanceCase,
-    GuidanceResult,
-    append_guidance_readme_rows,
-    arm_name,
-    engine_keying,
-    recommend_guidance,
-    showcase_specs,
-    uses_delta,
-    write_guidance_result,
-)
-from bench.paths import GUIDANCE_RESULTS_DIR, resolve_engines_dir, resolve_models_dir
+from bench.flicker import flicker_score, response_score
+# One frame of the shipped path, letting an arm's model go before the next is
+# built, and the identity probe that scores what came out. All three are exactly
+# what this sweep needs and none is about guidance, so they are borrowed rather
+# than copied - a second spelling of "render one frame through the compositor" is
+# how two sweeps start measuring two things, and a second spelling of the probe is
+# how spec 8.11 and 8.12 stop sharing one baseline.
+from bench.guidance_runner import adherence_probe, free, render_frame
+from bench.paths import QUALITY_RESULTS_DIR, resolve_engines_dir, resolve_models_dir
 from bench.primitive_results import ClipRecord
 from bench.primitives import clip_path, load_track
 from bench.primitive_runner import (
     COMPARISON_PANEL_WIDTH,
-    labels_in,
     load_identity_detector,
     mean_abs_diff,
     read_clip,
     resize,
-    set_denoise_ladder,
     set_detector_vocabulary,
     sha256_of,
     triptych,
     write_clip,
     write_still,
+)
+from bench.quality import (
+    QUALITY_README_NAME,
+    QualityArm,
+    QualityCase,
+    QualityResult,
+    StepSpec,
+    append_quality_readme_rows,
+    arm_name,
+    engine_keying,
+    recommend_route,
+    swap_summary,
+    write_quality_result,
 )
 from bench.results import filename_timestamp
 from bench.runner import (
@@ -89,86 +86,38 @@ from bench.runner import (
 from bench.scenarios import SCENARIOS
 from bench.selective import background_check
 from bench.selective_runner import background_pixels_changed, capture_tensor
-from bench.steps import step_arm
 
 
-def arm_scenario(case: GuidanceCase, spec: ArmSpec):
-    """The case's base cell at its step count, with one arm's guidance settings.
+def arm_scenario(case: QualityCase, spec: StepSpec, ladder: Sequence[int]):
+    """The case's cell at one arm's step count and route.
 
-    Renamed after the arm, because a scenario is serialised whole into a record and
-    two arms that differ only in a field nobody reads back would be two rows saying
-    the same thing.
+    The schedule goes in through the *constructor* rather than through
+    `set_t_index_list` afterwards: the count is what the pipeline derives its batch
+    and its `x_t_latent_buffer` from, and a count changed after construction is the
+    thing `wrapper.set_t_index_list` cannot do (which is why the worker rebuilds).
     """
-    scenario = step_arm(SCENARIOS[case.base_scenario], case.steps)
+    scenario = SCENARIOS[case.base_scenario]
     return scenario.replace(name=f"{scenario.name}-{arm_name(spec)}",
-                            prompt=case.prompt, cfg_type=spec.cfg_type,
-                            guidance_scale=spec.guidance_scale, delta=spec.delta)
+                            prompt=case.prompt, t_index_list=list(ladder),
+                            use_denoising_batch=spec.use_denoising_batch)
 
 
-def adherence_probe(detector, case, frames: Sequence) -> Tuple[int, int, float]:
-    """How many rendered frames read back as the prompt's concept, and how strongly.
+def build_arm(scenario, engines_root: Path) -> Tuple[object, float]:
+    """Build one arm's engine and say how long it took, with the previous one gone.
 
-    Two numbers rather than one because a fraction over 48 frames saturates: an arm
-    that lands the prompt on every frame and one that barely lands it on every frame
-    both score 100%, and the detector's own confidence separates them.
-
-    `case` is any case carrying `concept` and `reads_back_as` - `GuidanceCase` here
-    and `QualityCase` in `bench.quality_runner`, which borrows this rather than
-    spelling it a second time, because spec 8.11 and 8.12 share one baseline and a
-    probe measured two ways is two baselines.
+    The caller frees the outgoing stream first, so what this clock covers is the
+    load and the prepare - the second half of what the worker's `engine_swap`
+    branch does, and the only half that takes any time.
     """
-    from PIL import Image
-
-    hits, retained, confidences = 0, 0, []
-    for frame in frames:
-        labels = labels_in(detector, Image.fromarray(frame), conf=ADHERENCE_CONF)
-        confidence = labels.get(case.reads_back_as, 0.0)
-        hits += int(case.reads_back_as in labels)
-        retained += int(case.concept in labels)
-        confidences.append(confidence)
-    return hits, retained, round(statistics.fmean(confidences or [0.0]), 4)
-
-
-def render_frame(stream, tensor, compositor, render, canvas: int):
-    """One frame of the shipped path, and the milliseconds it cost.
-
-    The same three stages `bench.capture_runner` times, summed: what this sweep
-    asks of the clock is only whether one arm costs more than another, and the
-    per-stage split is that module's question rather than this one's.
-    """
-    import torch
-
-    from bench.capture_runner import canvas_for
-
-    torch.cuda.synchronize()
     started = time.perf_counter()
-    frame_canvas = canvas_for(tensor, render, canvas)
-    rendered = stream.img2img(frame_canvas, output_type="pt")
-    output = compositor.blend_device(tensor, rendered, render.alpha, render.crop)[-1]
-    torch.cuda.synchronize()
-    return output, (time.perf_counter() - started) * 1000.0
+    stream = build_stream(scenario, engines_root=engines_root)
+    return stream, round(time.perf_counter() - started, 3)
 
 
-def free(stream) -> None:
-    """Let go of one arm before the next one is built.
-
-    `cfg_type` is fixed at construction and so is the UNet batch derived from it,
-    so every arm is its own model; several of them resident at once is a needless
-    several gigabytes.
-    """
-    import gc
-
-    import torch
-
-    del stream
-    gc.collect()
-    torch.cuda.empty_cache()
-
-
-def run_guidance(
-    case: GuidanceCase,
+def run_quality(
+    case: QualityCase,
     cooldown: bool = True,
-    results_dir: Path = GUIDANCE_RESULTS_DIR,
+    results_dir: Path = QUALITY_RESULTS_DIR,
     threshold_c: float = DEFAULT_THRESHOLD_C,
     cap_s: float = DEFAULT_CAP_S,
     poll_interval_s: float = DEFAULT_POLL_INTERVAL_S,
@@ -177,20 +126,20 @@ def run_guidance(
     models_dir: Optional[Path] = None,
     write_clips: bool = True,
     log: Callable[[str], None] = print,
-) -> GuidanceResult:
-    """Render one clip under every cfg arm, score the adherence, write the result."""
+) -> QualityResult:
+    """Render one clip at every step count on both routes; write the result."""
     import numpy as np
     import torch
     from PIL import Image
 
     from compositor import painted_mask
     from detector_worker import frame_to_array
-    from render_plan import t_index_for_denoise
+    from render_plan import t_index_for_denoise, t_index_ladder
 
     from bench.capture_runner import control_frame
 
     # First, so a machine that cannot be fingerprinted fails before it spends
-    # minutes loading models for a result that could never be written.
+    # minutes loading engines for a result that could never be written.
     fingerprint = capture_fingerprint()
     log(f"gpu: {fingerprint.gpu_name} | driver {fingerprint.driver_version} | "
         f"{regime_summary(fingerprint.clock_lock)}")
@@ -213,26 +162,33 @@ def run_guidance(
     detector = load_identity_detector(models_root, log)
     if detector is None:
         raise SystemExit(
-            f"bench: {case.name} scores adherence with the open-vocabulary "
+            f"bench: {case.name} scores what a step buys with the open-vocabulary "
             f"detector, and its weights are not cached. There is no eyeball "
-            f"fallback - the Gate asks for a number per arm.")
+            f"fallback - the Gate asks for a quality figure per arm.")
     set_detector_vocabulary(detector, [case.concept, case.reads_back_as],
                             Image.fromarray(frames[0]))
 
     engines = resolve_engines_dir() if engines_root is None else Path(engines_root)
     specs = case.specs()
-    showcase = showcase_specs(specs)
-    ladder_rung = t_index_for_denoise(case.denoise)
-    log(f"denoise {case.denoise} -> t_index {ladder_rung} over {case.steps} step(s), "
-        f"held fixed across {len(specs)} arms")
+    opening = t_index_for_denoise(case.denoise)
+    log(f"denoise {case.denoise} -> opening t_index {opening}, held across "
+        f"{len(specs)} arms")
 
     cooldown_record = cooldown_gate(cooldown, threshold_c, cap_s, poll_interval_s, log)
     occupancy_record = occupancy_gate(log)
 
+    # The priming build, thrown away: it pays this process's CUDA start-up and the
+    # first read of the model off disk, so every arm's `swap_seconds` below is a
+    # swap between two live engines rather than a cold start wearing that name.
+    primer, prime_seconds = build_arm(
+        arm_scenario(case, specs[0], t_index_ladder(opening, specs[0].steps)), engines)
+    free(primer)
+    log(f"primed in {prime_seconds:.1f} s (thrown away, so no arm carries it)")
+
     torch.cuda.synchronize()
     torch.cuda.reset_peak_memory_stats()
     started_utc = utc_now()
-    arms: List[GuidanceArm] = []
+    arms: List[QualityArm] = []
     panels: List[List] = []
     panel_labels: List[str] = []
     sources: List = []
@@ -241,17 +197,18 @@ def run_guidance(
     with GpuSampler(sample_interval_s) as sampler:
         for spec in specs:
             label = arm_name(spec)
+            ladder = t_index_ladder(opening, spec.steps)
             keying = engine_keying(case, spec, engines)
-            scenario = arm_scenario(case, spec)
-            log(f"arm {label}: {scenario.name} | UNet batch {keying.unet_batch}"
-                f"{' (a build)' if keying.keys_new_engine else ''}")
+            scenario = arm_scenario(case, spec, ladder)
+            log(f"arm {label}: {spec.route}, UNet batch {keying.unet_batch}, "
+                f"engine {'cached' if keying.cached else 'NOT cached - a build'}")
             try:
-                stream = build_stream(scenario, engines_root=engines)
-                set_denoise_ladder(stream, ladder_rung, case.steps)
+                stream, swap_seconds = build_arm(scenario, engines)
             except Exception as error:  # a configuration the pipeline refuses
                 log(f"arm {label}: did not run - {error}")
-                arms.append(_unrun_arm(spec, keying, str(error)))
+                arms.append(_unrun_arm(spec, ladder, keying, str(error)))
                 continue
+            log(f"arm {label}: engine ready in {swap_seconds:.1f} s")
 
             compositor, renders = renders_for(case, plan, regions, canvas, canvas,
                                               indices)
@@ -263,8 +220,7 @@ def run_guidance(
                 # renders paint through, and the drift the round trip costs before
                 # anything is styled. All three are the same for every arm - the
                 # regions come from a committed track and the plan does not move -
-                # so they are measured once, on the first arm that got as far as a
-                # stream, and every arm's figures are net of them.
+                # so they are measured once and every arm's figures are net of them.
                 sources = [frame_to_array(tensor) for tensor in tensors]
                 masks = [painted_mask(render.alpha) if render.alpha is not None
                          else np.zeros((canvas, canvas), dtype=bool)
@@ -277,8 +233,8 @@ def run_guidance(
                      for index, output in enumerate(controls)]), 4)
                 log(f"control: the capture round trip costs {control_change:.2f}/255")
                 # A fresh scheduler and compositor for the timed pass, so this arm
-                # walks the same rotation from the same cursor every other one
-                # does rather than one the control pass had already advanced.
+                # walks the same rotation from the same cursor every other one does
+                # rather than one the control pass had already advanced.
                 compositor, renders = renders_for(case, plan, regions, canvas,
                                                   canvas, indices)
 
@@ -293,16 +249,17 @@ def run_guidance(
                 per_frame_ms.append(frame_ms)
 
             hits, retained, confidence = adherence_probe(detector, case, outputs)
-            arm = _measured_arm(spec, keying, sources, outputs, masks, per_frame_ms,
-                                control_change, hits, retained, confidence)
+            arm = _measured_arm(spec, ladder, keying, swap_seconds, sources, outputs,
+                                masks, per_frame_ms, control_change, hits, retained,
+                                confidence)
             arms.append(arm)
             log(f"arm {label}: {arm.ms_per_frame:.2f} ms/frame, adherence "
-                f"{arm.adherence:.0%} at conf {confidence:.2f}, drift "
-                f"{arm.net_change:.1f}/255, background "
+                f"{arm.adherence:.0%} at conf {confidence:.2f}, net change "
+                f"{arm.net_change:.1f}/255, flicker {arm.flicker:.2f}, response "
+                f"{arm.response:.2f}, background "
                 f"{arm.background.identical_frames}/{arm.background.frames}")
-            if spec in showcase:
-                panels.append(outputs)
-                panel_labels.append(label)
+            panels.append(outputs)
+            panel_labels.append(label)
             free(stream)
     finished_utc = utc_now()
 
@@ -314,7 +271,7 @@ def run_guidance(
         still, clip = _write_artefacts(sources, panels, results_dir, stem,
                                        meta["fps"], log)
 
-    result = GuidanceResult(
+    result = QualityResult(
         case=case,
         clip=ClipRecord(name=case.clip, sha256=sha256_of(path),
                         width=meta["width"], height=meta["height"],
@@ -329,32 +286,37 @@ def run_guidance(
         comparison_still=still, comparison_clip=clip,
     )
     log(f"panels: source | {' | '.join(panel_labels)}")
-    log(f"gate: {recommend_guidance(arms).statement}")
-    written = write_guidance_result(result, results_dir=results_dir,
-                                    timestamp=timestamp)
-    append_guidance_readme_rows(result, results_dir / GUIDANCE_README_NAME,
-                                filename=written.name)
+    log(f"swap: {swap_summary(arms).statement}")
+    recommendation = recommend_route(arms)
+    if recommendation is not None:
+        log(f"gate: {recommendation.statement}")
+    written = write_quality_result(result, results_dir=results_dir,
+                                   timestamp=timestamp)
+    append_quality_readme_rows(result, results_dir / QUALITY_README_NAME,
+                               filename=written.name)
     log(f"{case.name} -> {written.name} ({len(arms)} arms)")
     return result
 
 
-def _unrun_arm(spec: ArmSpec, keying, error: str) -> GuidanceArm:
+def _unrun_arm(spec: StepSpec, ladder: Sequence[int], keying,
+               error: str) -> QualityArm:
     """An arm the pipeline refused, with the reason it gave and no numbers."""
-    return GuidanceArm(
-        cfg_type=spec.cfg_type, guidance_scale=spec.guidance_scale,
-        delta=spec.delta, delta_applies=uses_delta(spec.cfg_type),
-        unet_batch=keying.unet_batch, engine_dir=keying.directory,
-        keys_new_engine=keying.keys_new_engine, engine_cached=keying.cached,
-        ms_per_frame=0.0, adherence_hits=0, adherence_frames=0,
-        adherence_conf=0.0, retained_hits=0, region_change=0.0,
-        control_change=0.0, flicker=0.0,
-        background=background_check([], 0), frames=0, loaded=False, error=error)
+    return QualityArm(
+        steps=spec.steps, use_denoising_batch=spec.use_denoising_batch,
+        t_index_list=list(ladder), unet_batch=keying.unet_batch,
+        engine_dir=keying.directory, engine_cached=bool(keying.cached),
+        keys_new_engine=keying.keys_new_engine, swap_seconds=0.0,
+        ms_per_frame=0.0, adherence_hits=0, adherence_frames=0, adherence_conf=0.0,
+        retained_hits=0, region_change=0.0, control_change=0.0, flicker=0.0,
+        response=0.0, background=background_check([], 0), frames=0, loaded=False,
+        error=error)
 
 
-def _measured_arm(spec: ArmSpec, keying, sources: Sequence, outputs: Sequence,
+def _measured_arm(spec: StepSpec, ladder: Sequence[int], keying,
+                  swap_seconds: float, sources: Sequence, outputs: Sequence,
                   masks: Sequence, per_frame_ms: Sequence[float],
                   control_change: float, hits: int, retained: int,
-                  confidence: float) -> GuidanceArm:
+                  confidence: float) -> QualityArm:
     import numpy as np
 
     region_change = statistics.fmean(
@@ -363,16 +325,17 @@ def _measured_arm(spec: ArmSpec, keying, sources: Sequence, outputs: Sequence,
         or [0.0])
     changed = [background_pixels_changed(source, output, mask)
                for source, output, mask in zip(sources, outputs, masks)]
-    return GuidanceArm(
-        cfg_type=spec.cfg_type, guidance_scale=spec.guidance_scale,
-        delta=spec.delta, delta_applies=uses_delta(spec.cfg_type),
-        unet_batch=keying.unet_batch, engine_dir=keying.directory,
-        keys_new_engine=keying.keys_new_engine, engine_cached=keying.cached,
+    return QualityArm(
+        steps=spec.steps, use_denoising_batch=spec.use_denoising_batch,
+        t_index_list=list(ladder), unet_batch=keying.unet_batch,
+        engine_dir=keying.directory, engine_cached=bool(keying.cached),
+        keys_new_engine=keying.keys_new_engine, swap_seconds=swap_seconds,
         ms_per_frame=round(statistics.fmean(per_frame_ms), 4),
         adherence_hits=hits, adherence_frames=len(outputs),
         adherence_conf=confidence, retained_hits=retained,
         region_change=round(region_change, 4), control_change=control_change,
         flicker=flicker_score(sources, outputs, masks).mean_abs_diff,
+        response=response_score(sources, outputs, masks).mean_abs_diff,
         background=background_check(
             changed,
             min(int(np.count_nonzero(~mask)) for mask in masks) if masks else 0),
@@ -382,7 +345,7 @@ def _measured_arm(spec: ArmSpec, keying, sources: Sequence, outputs: Sequence,
 def _write_artefacts(sources: Sequence, panels: Sequence[Sequence],
                      results_dir: Path, stem: str, fps: float,
                      log: Callable[[str], None]) -> Tuple[str, str]:
-    """source | control | one panel per cfg type, as a still and as a clip."""
+    """source | one panel per arm, as a still and as a clip."""
     strip = triptych(sources, list(panels), panel_width=COMPARISON_PANEL_WIDTH)
     clip = write_clip(strip, results_dir / f"{stem}-arms.mp4", fps).name
     chosen = len(sources) // 2

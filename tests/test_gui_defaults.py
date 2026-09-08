@@ -194,10 +194,24 @@ def test_the_confirmation_goes_through_that_rule_and_asks_the_user():
     assert mentions(confirm, "askokcancel")
 
 
-@pytest.mark.parametrize("handler", ["_add_step", "_remove_step"])
-def test_changing_the_step_count_asks_before_it_happens(handler):
-    """The step *count* keys a distinct engine; a step's *value* is a runtime update."""
-    assert mentions(gui_method(handler), "_confirm_engine_rebuild")
+def test_changing_the_step_count_asks_before_it_happens():
+    """The step *count* keys a distinct engine; a step's *value* is a runtime
+    update. Since issue #46 the count is a ladder rather than two buttons, and it
+    asks only where there is something to ask about - a rung whose engine is
+    already on disk is a load - so the question goes through the configuration
+    lookup first and the warning second."""
+    confirm = gui_method("_confirm_step_change")
+    assert mentions(confirm, "_engine_configuration")
+    assert mentions(confirm, "_confirm_engine_rebuild")
+    assert mentions(gui_method("_apply_steps"), "_confirm_step_change")
+
+
+def test_an_uncached_step_count_is_refused_below_the_free_disk_floor():
+    """The Gate's fourth item (issue #46): the same 20 GB floor Start applies,
+    applied by the control that can now spend it."""
+    confirm = gui_method("_confirm_step_change")
+    assert mentions(confirm, "enough_disk")
+    assert mentions(confirm, "_not_enough_disk_message")
 
 
 def test_start_asks_about_the_engine_this_configuration_actually_needs():

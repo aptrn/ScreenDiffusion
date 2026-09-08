@@ -131,6 +131,18 @@ def test_the_plans_denoise_reaches_the_engine_without_an_engine_rebuild():
         "the denoise update sits in the engine-swap branch")
 
 
+def test_the_plans_denoise_reaches_the_engine_at_any_step_count():
+    """Issue #46 made the count a runtime choice, so the update that carries the
+    plan's strength has to survive one: it spends the count it already has through
+    `t_index_ladder` rather than only firing when the count is 1."""
+    assert len(_calls_named(WORKER, "t_index_ladder")) == 1
+    ladder = WORKER_TEXT.index("t_index_ladder")
+    assert "len(current_t_index_list) == 1" not in WORKER_TEXT, (
+        "the plan's denoise is dropped at every step count but one")
+    assert WORKER_TEXT.index("t_index_for_denoise") > ladder, (
+        "the ladder is built from something other than the plan's own strength")
+
+
 def test_the_hardcoded_demo_plan_is_behind_the_switch():
     """Step 4 drives the path from a hardcoded plan; the app as shipped is
     unchanged until something wires the GUI up, which is a later issue."""

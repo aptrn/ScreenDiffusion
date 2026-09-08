@@ -128,7 +128,7 @@ def mask_preview(app) -> None:
 def capture(out_path: Path, expand_advanced: bool = False,
             selective: bool = False, mask: bool = False,
             overlay: bool = False, model: str = "", lora: str = "",
-            cfg_type: str = "") -> Path:
+            cfg_type: str = "", steps: str = "") -> Path:
     from PIL import ImageGrab
 
     import main_gpu_addon
@@ -145,6 +145,8 @@ def capture(out_path: Path, expand_advanced: bool = False,
         app._on_lora_chosen(lora)
     if cfg_type:
         app._apply_cfg_type(cfg_type)
+    if steps:
+        app._apply_steps(int(steps))
     if selective:
         app.target_var.set("person")
         app.style_var.set("wet denim, studio light")
@@ -176,8 +178,8 @@ def capture(out_path: Path, expand_advanced: bool = False,
 
 
 SWITCHES = ("--advanced", "--selective", "--mask", "--overlay")
-# `--model NAME` / `--lora NAME`: a flag that eats the word after it.
-VALUED = ("--model", "--lora")
+# `--model NAME` / `--lora NAME` / `--steps N`: a flag that eats the word after it.
+VALUED = ("--model", "--lora", "--steps")
 
 
 def _parse(argv: list) -> tuple:
@@ -210,7 +212,7 @@ def main(argv: list) -> int:
                     selective="--selective" in seen, mask="--mask" in seen,
                     overlay="--overlay" in seen,
                     model=values["--model"], lora=values["--lora"],
-                    cfg_type=cfg_type)
+                    cfg_type=cfg_type, steps=values["--steps"])
     print(f"saved {saved}")
     return 0
 

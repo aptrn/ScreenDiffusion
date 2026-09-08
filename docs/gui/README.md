@@ -17,17 +17,18 @@ half of that issue's Gate gets judged.
 | [`after-mask-off.png`](after-mask-off.png) | Issue #47, the default. **Show mask** is off, so the preview is exactly the frame the worker sent. The plan line now says what is happening as well as what is configured: `Restyling 6 regions; everything outside them is the capture, untouched.` |
 | [`after-mask-on.png`](after-mask-on.png) | The same frame with **Show mask** on: the six `lower_half` regions `priority_case_plan()` selected, outlined where they actually are. This is the pair the Gate asks for - and off against on, 4,582 of the preview's 236,440 pixels differ and the rest are identical, which is the outline and nothing else. |
 | [`after-lora-choice.png`](after-lora-choice.png) | Issue #44. **Style LoRAs** is a picker over the LoRA files under the models root, not a file dialog - Browse is still beside it for one that lives elsewhere - and the engine line reads `Engine: cached for sd-v1-5-fp16 at 4 steps with style-loving-vincent.safetensors @ 1.00.` That sentence was unreachable before: the raw path spelling keyed the engine, so the window could never find one the harness had built. |
+| [`after-steps.png`](after-steps.png) | Issue #46. **Denoising Steps** is a ladder rather than `+ Add` / `- Remove`, beside the strength sliders rather than in `Advanced`, and each rung says what clicking it costs *before* it is clicked: this shot is on `4 steps · engine ready`, and the line under the model agrees - `Engine: cached for sd-turbo-fp16 at 4 steps.` A rung with no engine reads `builds an engine` and goes through the rebuild warning and the 20 GB free-disk floor. |
 
 `after.png` and the two beside it were taken with `SD_MODELS_DIR` pointed at the
 main checkout's `models/`, because a fresh worktree has none and the point of the
 shot is what a machine with a model does.
 
-`after-model-sd15.png`, `after-lora-choice.png` and `after-cfg.png` were taken by
-driving `_on_model_chosen` / `_on_lora_chosen` / `_apply_cfg_type` rather than by
-clicking, for the reason the selective shot uses a stand-in payload: this loop has
-no hands. What they photograph is the real handler's real effect on the real
-window - and in the LoRA shot, a real lookup against this machine's real engine
-cache.
+`after-model-sd15.png`, `after-lora-choice.png`, `after-cfg.png` and
+`after-steps.png` were taken by driving `_on_model_chosen` / `_on_lora_chosen` /
+`_apply_cfg_type` / `_apply_steps` rather than by clicking, for the reason the
+selective shot uses a stand-in payload: this loop has no hands. What they
+photograph is the real handler's real effect on the real window - and in the LoRA
+and step shots, a real lookup against this machine's real engine cache.
 
 The two mask shots were taken with `--mask`, which is a step less stand-in than
 `--selective`: the frame in the preview is a real frame of the committed clip
