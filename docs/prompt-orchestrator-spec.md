@@ -1492,6 +1492,39 @@ the row not there at all when there is nothing to read. The status bar still get
 both, but it is shared with the worker's own messages and the next one replaces
 whatever was there - which is the failure mode #22's own notes named.
 
+**The other failure is the one with no error at all** (issue #47). Live testing on
+2026-09-08 found a run with a target set and `1 obj` on the FPS line whose output
+still looked entirely diffused, with nothing in the window saying otherwise - and
+**half of that impression was correct behaviour**. Under `masked` the whole frame
+*is* diffused and the mask decides what is composited back, so at `region:
+full_box` and `box_scale: 1.15` one object filling a 512x512 capture masks nearly
+the whole frame: the selective path and the global path genuinely look the same,
+and no amount of staring at the preview resolves it. Two answers, both shipped:
+
+- **A mask overlay**, `mask_overlay.py`. The worker puts the boxes it actually
+  composited into on the fps payload it already sends - no new channel, and the
+  boxes are the *compositor's* decision, so a `crop` frame reports the one region
+  its single call went to and a `crop` plan the compositor refused reports the
+  masked set it rendered instead. The GUI outlines them on the **preview copy**,
+  after the frame has left the pipeline: an overlay drawn any earlier would reach
+  the output and break §8.8's bit-identity outright. It is off by default, because
+  the preview is the only honest picture of the output there is, and the transform
+  runs on the panel-sized canvas so it costs the same at 1920x1080 as at 512x512.
+  The *payload* carries the boxes whether the switch is on or not - the worker has
+  no reason to know, and the alternative is a control message and an overlay that
+  is a frame late every time it is turned on. What that costs the frame path is a
+  list of at most six 4-tuples onto a dict it already builds and already queues
+  once per frame: microseconds, and not the kind that add up to a millisecond.
+- **Three sentences where there was one.** "No target set", "a target and the
+  detector is holding nothing", and "a target and N regions are being restyled" are
+  three states and the last two used to differ only by a digit. The third now names
+  the regions the *scheduler* handed out - what the frame did, not what the detector
+  saw - and ends on what the mask protects, which is the sentence the docs had and
+  the window did not.
+
+`docs/gui/after-mask-off.png` and `after-mask-on.png` are the pair, and off against
+on 4,582 of the preview's 236,440 pixels differ: the outline and nothing else.
+
 ### 8.8 Does the selective path work end to end? — **yes, measured**
 
 Issue #8, the M1 finish line. The question §5's diagram poses and no component test
@@ -1846,6 +1879,45 @@ a "style strength" slider is a slider over engines and cannot exist on the Tenso
 path — a fixed scale per shipped style is the only expressible form. And neither
 path clears the frame budget on the diffusion call alone at four steps, so shipping
 a style on SD 1.5 is shipping §7.5's 24.4 FPS with it.
+
+#### A release-time set only works if its engines are findable — **issue #44**
+
+Live testing on 2026-09-08 found that **no style LoRA in the window ever found a
+pre-compiled engine**, with one sitting on disk. The cache key was the raw path
+*string*: the same file at the same scale hashed to `c85d6678` spelled with
+backslashes — the engine the harness built — and to `7a007080` spelled with forward
+slashes, which is what Tk's file dialog returns on Windows. So the two producers of
+a `lora_dict` could never meet, and adding one LoRA by two routes cost two ~5 GB
+builds.
+
+`engine_cache.normalize_lora_key` is the fix, and it is in `engine_cache` rather
+than in the window on purpose: that module exists so the harness, the window and
+`wrapper.py` cannot answer this question three ways. `wrapper.py` had the third
+copy — an inline `hashlib.sha1` — and it was the copy that keyed every engine on
+disk; it now calls `engine_cache.lora_fingerprint` like the other two. The
+normalisation is `Path.resolve()`: it absolutises, folds the separators, follows
+links and on Windows returns the file's own case, so the key is the *file* rather
+than the route taken to it. Both halves of an entry are read for what they are —
+the scale as a float, so `1` and `1.0` are one engine and not two `repr`s.
+
+**No committed engine was orphaned**, which was the risk worth checking before the
+change rather than after it: an absolute backslash spelling is already its own
+resolution, so `c85d6678` is still `c85d6678` and the two `sd-v1-5-fp16 … lora-c85d6678`
+directories under `engines/` are found from either spelling now.
+`tests/test_gpu_engine_reuse.py` asks that of this machine's actual cache rather
+than of prose.
+
+The affordance moved with it. The style LoRAs are three files in one known
+directory (`$SD_MODELS_DIR/loras`), so the window picks them from a list —
+`local_lora_paths` / `lora_label` / `_lora_choices`, the same shape as §7.5's base-model
+picker — and a file dialog for three files in a known place is both the wrong
+control and how the wrong spelling got in. Browse stays, because a LoRA outside the
+models root is still a legal answer. The LCM-LoRA sits in the same directory and is
+*not* offered: it is applied by the `use_lcm_lora` switch, and listing it invites
+fusing it twice. And because the scale keys the engine as much as the file does,
+the standing sentence under the model names both — `Engine: cached for sd-v1-5-fp16
+at 4 steps with style-loving-vincent.safetensors @ 1.00.` — and follows the slider
+(`docs/gui/after-lora-choice.png`).
 
 
 ### 8.11 Is the weak prompt adherence the model, or a switch that is off? — **measured**

@@ -14,8 +14,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from guinamespace import helpers
 from guisource import calls_named, gui_method, mentions
-from sourceloader import load_symbols
 
 import engine_cache
 
@@ -23,29 +23,7 @@ MODELS = ("local_model_paths", "model_label", "model_companions", "ModelCompanio
           "MODEL_STEPS_SD15", "MODEL_STEPS_TURBO", "DEFAULT_T_INDEX_LIST")
 ENGINE = ("engine_configuration", "EngineConfiguration", "_engine_missing_warning",
           "_not_enough_disk_message", "engine_rebuild_needed", "TENSORRT",
-          "model_label", "_steps_phrase")
-
-
-def helpers(*names, **extra):
-    namespace = dict(
-        Path=Path, Optional=object, List=list, Tuple=tuple, Union=object,
-        NamedTuple=__import__("typing").NamedTuple,
-        is_diffusers_dir=lambda path: (Path(path) / "model_index.json").is_file(),
-        MODEL_INDEX="model_index.json",
-        LOCAL_MODEL_NAMES=("sd-turbo-fp16", "sd-turbo"),
-        DIFFUSION_CANVAS=512,
-        engine_cache=engine_cache,
-        t_index_ladder=__import__("render_plan").t_index_ladder,
-        resolve_models_dir=lambda **kwargs: Path("."),
-        resolve_engines_dir=lambda: Path("."),
-        ENGINE_BUILD_SIZE=engine_cache.ENGINE_BUILD_SIZE,
-        ENGINE_BUILD_TIME=engine_cache.ENGINE_BUILD_TIME,
-        # `engine_configuration` takes the cfg type since issue #45 - two of the
-        # four compile a larger UNet batch - and its default is the shipped one.
-        DEFAULT_CFG_TYPE=engine_cache.CFG_NONE,
-    )
-    namespace.update(extra)
-    return load_symbols("main_gpu_addon.py", names, namespace)
+          "model_label", "_steps_phrase", "_lora_phrase", "lora_label")
 
 
 def a_model(root: Path, name: str) -> Path:

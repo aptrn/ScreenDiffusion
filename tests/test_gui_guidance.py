@@ -38,7 +38,11 @@ _symbols = load_symbols(
      "EngineConfiguration", "engine_configuration", "GUIDANCE_OFF", "GUIDANCE_WHEN_ON",
      "PLAN_NOTE_COLOR", "SHOW",
      "_as_scale", "cfg_companions", "cfg_keys_new_engine", "cfg_note",
-     "cfg_uses_delta", "guidance_is_off"],
+     "cfg_uses_delta", "guidance_is_off",
+     # What `engine_configuration` and the engine sentence close over since
+     # issue #44 put the fused LoRA set in the same record.
+     "_engine_state_line", "_lora_phrase", "_steps_phrase", "lora_label",
+     "model_label"],
     extra_globals={
         "engine_cache": engine_cache, "Path": __import__("pathlib").Path,
         "Dict": dict, "Optional": object, "DIFFUSION_CANVAS": 512,
@@ -49,7 +53,8 @@ _symbols = load_symbols(
         "CFG_TYPES": CFG_TYPES,
         "ENGINE_BUILD_SIZE": engine_cache.ENGINE_BUILD_SIZE,
         "ENGINE_BUILD_TIME": engine_cache.ENGINE_BUILD_TIME,
-        "NamedTuple": NamedTuple, "Tuple": Tuple,
+        "NamedTuple": NamedTuple, "Tuple": Tuple, "List": list,
+        "LOCAL_MODEL_NAMES": ("sd-turbo-fp16", "sd-turbo"),
     },
 )
 ADVANCED = _symbols["ADVANCED"]
@@ -174,7 +179,12 @@ def test_the_engine_lines_name_the_cfg_type_only_when_it_is_not_the_shipped_one(
         builds=True, steps=1, free_bytes=0, enough_disk=True, cfg_type=CFG_FULL)
     assert configuration.cfg_phrase == f", CFG {CFG_FULL}"
     assert configuration._replace(cfg_type=CFG_NONE).cfg_phrase == ""
-    assert "cfg_phrase" in method_text("_refresh_engine_state")
+    # `_refresh_engine_state` is one line onto `_engine_state_line` since issue
+    # #44, so the sentence itself is what gets read rather than the method's text.
+    line = _symbols["_engine_state_line"]
+    assert f", CFG {CFG_FULL}" in line(configuration)
+    assert "CFG" not in line(configuration._replace(cfg_type=CFG_NONE))
+    assert "_engine_state_line" in method_text("_refresh_engine_state")
     assert "cfg_phrase" in ast.unparse(_engine_missing_warning_node())
 
 

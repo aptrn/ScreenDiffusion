@@ -56,6 +56,11 @@ from detector_worker import BackgroundDetector, UltralyticsDetector, frame_to_ar
 from region_scheduler import RegionScheduler
 from compositor import CROP, MASKED
 from device_compositor import DeviceCompositor, crop_to_canvas, to_canvas
+# What the frame actually restyled, and how to outline it on the preview (issue
+# #47). Stdlib, and the two halves run in the two processes: the worker fills
+# `overlay_status` onto the fps payload it already sends, and the GUI draws with
+# `draw_overlay` on the preview copy, after the frame has left the pipeline.
+from mask_overlay import OVERLAY_SWITCH_TEXT, draw_overlay, overlay_status
 # Temporal stability (issue #32, spec 8.5): the plan's `seed_policy` applied to the
 # engine's latent noise. Stdlib here too - torch lives inside the methods that write
 # a tensor, so the GUI process pays nothing for this import either.
@@ -707,6 +712,76 @@ def cfg_keys_new_engine(cfg_type: str, steps: int, frame_buffer_size: int) -> bo
         frame_buffer_size, steps, cfg_type=cfg_type) != shipped
 
 
+# --- choosing a style LoRA (issue #44, steps 3-5) ----------------------------
+#
+# The same shape as the model picker above, for the same reason: the style LoRAs
+# live in one known directory, there are three of them, and a file browser for
+# three files in a known place is the wrong control. It is also how the wrong path
+# spelling reached the engine key - Tk's dialog returns forward slashes - though
+# what fixed *that* is `engine_cache.normalize_lora_key`, not this list.
+
+# Where a staged LoRA lives, under the models root. `bench.models.LORAS_SUBDIR`
+# spells the same directory, so a machine set up for the harness is one set up
+# for the window.
+LORAS_SUBDIR = "loras"
+
+# What `_add_lora`'s dialog already accepts, as suffixes rather than as a glob -
+# the dropdown and the browser must offer the same set of files.
+LORA_SUFFIXES = (".safetensors", ".bin", ".pt")
+
+# In the same directory and *not* a style: it is fused by the LCM-LoRA switch,
+# which is a separate setting on the worker. Offering it here invites fusing it
+# twice (issue #44's third trap).
+LCM_LORA_FILENAME = "lcm-lora-sdv1-5.safetensors"
+
+# The picker's resting value, and what it shows when the models root holds no
+# style LoRA at all. Neither is a filename: a LoRA is *added* by choosing it, so a
+# menu resting on a name would read as a selection that is not one. Both fall
+# through `_on_lora_chosen`'s search for a listed file and add nothing.
+ADD_LORA_PROMPT = "+ Add a style LoRA"
+NO_LOCAL_LORAS = "no LoRAs in the models root"
+
+# What a newly added LoRA is fused at until the slider is moved. It is also what
+# `bench.scenarios.ScenarioConfig.lora_scale` defaults to, which is the scale the
+# committed style engines were built at - so a listed LoRA reports `cached`
+# without the user having to guess the number back (issue #44's fourth trap).
+DEFAULT_LORA_SCALE = 1.0
+
+
+def local_lora_paths(models_root: _PathArg = None,
+                     environ: Optional[Mapping[str, str]] = None) -> List[str]:
+    """Every style LoRA staged under the models root, in name order."""
+    root = resolve_models_dir(environ=environ) if models_root is None else Path(models_root)
+    try:
+        entries = sorted((root / LORAS_SUBDIR).iterdir())
+    except OSError:
+        # No models root, or no `loras` under it - a machine before setup.
+        return []
+    return [str(path) for path in entries
+            if path.is_file() and path.suffix.lower() in LORA_SUFFIXES
+            and path.name != LCM_LORA_FILENAME]
+
+
+def lora_label(path: _PathArg) -> str:
+    """What a LoRA is called in the picker: its filename, not its whole path."""
+    return Path(str(path)).name if path else ""
+
+
+def _lora_phrase(lora_dict: Optional[Dict[str, float]]) -> str:
+    """` with style-x.safetensors @ 0.90`, or nothing at all when none is fused.
+
+    The scale is in it because the scale keys the engine: a sentence naming only
+    the file would say `cached` about a build at another strength (issue #44's
+    fourth trap). Empty rather than "no LoRAs", so the sentence a user has always
+    read about the base model alone is unchanged.
+    """
+    if not lora_dict:
+        return ""
+    fused = ", ".join(f"{lora_label(path)} @ {scale:.2f}"
+                      for path, scale in sorted(lora_dict.items()))
+    return f" with {fused}"
+
+
 # StreamDiffusion's three acceleration paths. `tensorrt` is the default because it
 # is the only one this repo has ever measured: every figure in spec 7, every
 # committed benchmark and the ~5 GB engine cache under `engines/` belong to that
@@ -783,6 +858,10 @@ class EngineConfiguration(NamedTuple):
     # warning that said only "sd-turbo-fp16 at 1 step" would be describing a
     # configuration that is already built.
     cfg_type: str = DEFAULT_CFG_TYPE
+    # The fused set, already in words - `_lora_phrase` of the `lora_dict` this
+    # configuration was named from, so every sentence about the engine names the
+    # LoRA *and* the scale that keyed it rather than re-deriving them (issue #44).
+    lora_phrase: str = ""
 
     @property
     def cfg_phrase(self) -> str:
@@ -820,12 +899,28 @@ def engine_configuration(model_path: str, acceleration: str, use_lcm_lora: bool,
         cached=cached, builds=engine_rebuild_needed(acceleration) and not cached,
         steps=int(steps), free_bytes=free,
         enough_disk=free >= engine_cache.MIN_FREE_BYTES_FOR_ENGINE_BUILD,
-        cfg_type=cfg_type)
+        cfg_type=cfg_type, lora_phrase=_lora_phrase(lora_dict))
 
 
 def _steps_phrase(steps: int, noun: str = "step") -> str:
     """`1 step` / `4 steps`, so three messages cannot pluralise it three ways."""
     return f"{steps} {noun}{'' if steps == 1 else 's'}"
+
+
+def _engine_state_line(configuration: EngineConfiguration) -> str:
+    """The standing sentence under the model: which engine this needs, and if it exists.
+
+    One builder, so the standing line and the Start warning cannot end up naming
+    the fused LoRA set in only one of the two.
+    """
+    model = model_label(configuration.model_path)
+    steps = _steps_phrase(configuration.steps)
+    cfg = configuration.cfg_phrase
+    fused = configuration.lora_phrase
+    if configuration.cached:
+        return f"Engine: cached for {model} at {steps}{cfg}{fused}."
+    return (f"⚠  No engine yet for {model} at {steps}{cfg}{fused} - "
+            f"Start will build one ({ENGINE_BUILD_TIME}, {ENGINE_BUILD_SIZE}).")
 
 
 def _engine_missing_warning(configuration: EngineConfiguration) -> str:
@@ -835,7 +930,7 @@ def _engine_missing_warning(configuration: EngineConfiguration) -> str:
         f"    {model_label(configuration.model_path) or configuration.model_path}, "
         f"{_steps_phrase(configuration.steps, 'denoising step')}"
         f"{configuration.cfg_phrase}, "
-        f"{DIFFUSION_CANVAS}x{DIFFUSION_CANVAS}\n"
+        f"{DIFFUSION_CANVAS}x{DIFFUSION_CANVAS}{configuration.lora_phrase}\n"
         f"    {configuration.engine_dir}\n\n"
         f"Starting will build one first: about {ENGINE_BUILD_TIME}, and "
         f"{ENGINE_BUILD_SIZE} under {configuration.engines_root}. The window will "
@@ -865,7 +960,7 @@ def _engine_rebuild_warning(setting: str) -> str:
 
 # Offline mode blocks diffusers' repo-id lookup, so prefer a local copy of the
 # LCM-LoRA when one has been staged in the models root.
-LOCAL_LCM_LORA = str(resolve_models_dir() / "loras" / "lcm-lora-sdv1-5.safetensors")
+LOCAL_LCM_LORA = str(resolve_models_dir() / LORAS_SUBDIR / LCM_LORA_FILENAME)
 PREVIEW_GAIN = 1.15
 
 def enforce_offline_mode():
@@ -1107,6 +1202,32 @@ def _plan_update_from_fields(target: str, style: str, prompt: str,
 # is happening", so the line says what *is* happening first.
 GLOBAL_STATE = "Plan: global — the whole frame.  Detection: off (no target)."
 
+# ...and a selective plan whose detector is holding nothing is a third state, not
+# the same one (issue #47, step 4). That frame costs no diffusion call at all - the
+# compositor passes the capture straight through - so "0 objects" is not a detail
+# of an otherwise-working run, it is the entire output. Saying only the count left
+# it reading like "no target set", which is the one thing it is not.
+NOTHING_FOUND = "  Nothing to restyle: the preview is the capture, untouched."
+
+
+def _restyling_phrase(regions: int) -> str:
+    """What a selective frame that *is* restyling something is doing, in words.
+
+    The count of regions rather than of objects held: with more objects than slots
+    the round-robin renders some of them this frame and the rest next frame, and
+    those two numbers are only the same when everything fits.
+
+    It ends on what the mask protects, because that is the half of issue #47 the
+    docs said and the window did not. Under `masked` the whole frame really is
+    diffused and the mask decides what is composited back, so a selective run and
+    a global one can look identical - and a user staring at the preview has no way
+    to resolve that from the picture alone.
+    """
+    plural = "" if regions == 1 else "s"
+    return (f"  Restyling {regions} region{plural}; "
+            f"everything outside them is the capture, untouched.")
+
+
 # A note is not an error. A refusal is drawn in `CUSTOM_COLORS["error"]`.
 PLAN_NOTE_COLOR = "gray70"
 
@@ -1123,6 +1244,12 @@ def _plan_state_line(target: str, running: bool, payload: Any = None) -> str:
     The concept named is the detector's own, not the field's: a target edit is
     debounced and then costs a vocabulary re-encode, so for a moment the two
     disagree and the one worth showing is the one actually being detected.
+
+    Issue #47 step 4 added the third state. "No target set", "a target and the
+    detector is holding nothing", and "a target and N regions are being restyled"
+    are three different things and read as three sentences; the last two are told
+    apart by the *regions* the scheduler handed out, which is what the frame did
+    rather than what the detector saw.
     """
     fields = payload if isinstance(payload, dict) else {}
     concept = target.strip()
@@ -1130,9 +1257,18 @@ def _plan_state_line(target: str, running: bool, payload: Any = None) -> str:
         detected = ", ".join(fields.get("concepts") or ()) or concept
         held = fields["detections"]
         plural = "" if held == 1 else "s"
-        return (f"Plan: selective — every {detected}."
+        line = (f"Plan: selective — every {detected}."
                 f"  Detection: on, {held} object{plural} held, "
                 f"every {fields.get('detect_every_n')} frames.")
+        regions = fields.get("regions")
+        if not held or regions == 0:
+            return line + NOTHING_FOUND
+        if regions is None:
+            # A `global` selection reports no regions at all, and the fps channel
+            # carried counts before it carried a selection. Neither is a claim
+            # that nothing is being restyled, so neither gets one made for it.
+            return line
+        return line + _restyling_phrase(int(regions))
     if not concept:
         return GLOBAL_STATE
     if not running:
@@ -1711,6 +1847,12 @@ def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Qu
                     except Exception: break
                 payload = fps_payload(int(round(fps)), tracks, detect_every_n)
                 payload.update(scheduler.status(selection))
+                # Where the mask was, for the preview overlay (issue #47). A
+                # handful of integers on a channel that already carries a dict,
+                # rather than a second queue: the boxes are tiny beside a frame,
+                # and they are the ones the compositor decided on, not the ones
+                # the plan asked for.
+                payload.update(overlay_status(selection, render, width, height))
                 fps_queue.put(payload)
             except Exception:
                 time.sleep(0.01)
@@ -1929,8 +2071,11 @@ class StreamGUI(ctk.CTk):
         self.model_choice_var = ctk.StringVar(value=model_label(self.model_var.get()))
         self.engine_state_var = ctk.StringVar(value="")
         # Each entry: {"path": str, "scale": float}. Converted to StreamDiffusion's
-        # lora_dict ({path: scale}) at start time.
+        # lora_dict ({path: scale}) at start time. `lora_choice_var` is the picker
+        # above them, which is a verb rather than a state: it rests on its prompt
+        # and choosing a name adds a row (issue #44).
         self.lora_items: List[Dict[str, Any]] = []
+        self.lora_choice_var = ctk.StringVar(value=ADD_LORA_PROMPT)
         self._lora_widgets: List[Any] = []
         self.prompt_var = ctk.StringVar(value="flip book animation, black and white rough sketch, rough drawing")
         self.neg_prompt_var = ctk.StringVar(value="low quality, bad quality, blurry, low resolution")
@@ -1943,8 +2088,16 @@ class StreamGUI(ctk.CTk):
         self.style_var = ctk.StringVar(value="")
         self.plan_state_var = ctk.StringVar(value=GLOBAL_STATE)
         self.plan_note_var = ctk.StringVar(value="")
-        # The newest fps payload, which is where detection's own state comes from.
+        # The newest fps payload, which is where detection's own state comes from -
+        # and, since issue #47, where the mask overlay's boxes come from too.
         self._fps_payload: Any = None
+        # The mask overlay (issue #47). Off by default: the preview is a view of
+        # what leaves the pipeline, and a decoration drawn on it by default makes
+        # the one honest picture of the output into one to be discounted. The last
+        # frame is kept so the switch redraws what is already on screen instead of
+        # waiting for the next one, which on a stopped run never comes.
+        self.overlay_var = ctk.BooleanVar(value=False)
+        self._last_preview: Optional[Image.Image] = None
         # Where the frame's one diffusion call is spent (issue #39).
         self.detail_var = ctk.StringVar(value=DETAIL_ALL_OBJECTS)
         self.seed_var = ctk.StringVar(value="1")
@@ -2404,10 +2557,19 @@ class StreamGUI(ctk.CTk):
             lf.grid_columnconfigure(0, weight=1)
             lh = ctk.CTkFrame(lf, fg_color="transparent")
             lh.grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 0))
-            ctk.CTkLabel(lh, text="LoRAs", font=ctk.CTkFont(weight="bold")).pack(side="left")
-            self._w_lora_add = ctk.CTkButton(lh, text="+ Add LoRA", width=90, command=self._add_lora)
+            ctk.CTkLabel(lh, text="Style LoRAs", font=ctk.CTkFont(weight="bold")).pack(side="left")
+            # Issue #44 step 4: Browse is kept. It is no longer the only way in, so
+            # it is labelled for what it is rather than for what it adds.
+            self._w_lora_add = ctk.CTkButton(lh, text="Browse", width=70, command=self._add_lora)
             self._w_lora_add.pack(side="right")
-            self._register_lockables(self._w_lora_add)
+            # Step 3: the styles are three files in one known directory, so they are
+            # picked from a list. Choosing one adds it - the same one door Browse
+            # goes through (`_add_lora_path`).
+            self._w_lora_combo = ctk.CTkOptionMenu(
+                lh, values=self._lora_choices(), variable=self.lora_choice_var,
+                command=self._on_lora_chosen)
+            self._w_lora_combo.pack(side="right", padx=(0, 6))
+            self._register_lockables(self._w_lora_add, self._w_lora_combo)
             self._loras_holder = ctk.CTkFrame(lf, fg_color="transparent")
             self._loras_holder.grid(row=1, column=0, sticky="ew", padx=6, pady=(4, 6))
             self._loras_holder.grid_columnconfigure(0, weight=1)
@@ -2540,7 +2702,17 @@ class StreamGUI(ctk.CTk):
         right = ctk.CTkFrame(self, corner_radius=12)
         right.grid(row=1, column=1, sticky="nsew", padx=(6, 12), pady=(6, 6))
         right.grid_rowconfigure(0, weight=0); right.grid_rowconfigure(1, weight=1); right.grid_rowconfigure(2, weight=0); right.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(right, text="Preview").grid(row=0, column=0, sticky="w", padx=12, pady=(12, 0))
+        preview_header = ctk.CTkFrame(right, fg_color="transparent")
+        preview_header.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 0))
+        ctk.CTkLabel(preview_header, text="Preview").pack(side="left")
+        # Issue #47: outline what is actually being restyled. Not a lockable - a
+        # live run is exactly when a user needs to judge whether the mask is where
+        # they think it is - and drawn on the preview copy in this process, never
+        # on the frame the worker composited.
+        self._w_overlay_switch = ctk.CTkSwitch(
+            preview_header, text=OVERLAY_SWITCH_TEXT, variable=self.overlay_var,
+            command=self._on_overlay_toggled)
+        self._w_overlay_switch.pack(side="right")
         self.preview_container = ctk.CTkFrame(right, corner_radius=8, width=self.preview_dim, height=self.preview_dim)
         self.preview_container.grid(row=1, column=0, sticky="n", padx=12, pady=(8, 12))
         self.preview_container.grid_propagate(False)
@@ -2896,30 +3068,70 @@ class StreamGUI(ctk.CTk):
 
     # ---------------- LoRA management ----------------
 
+    def _lora_choices(self, paths: Optional[List[str]] = None) -> List[str]:
+        """What the picker offers: every style LoRA staged under the models root.
+
+        Three files in one known directory, which is what issue #44 replaced a file
+        browser with. Browse is still beside it, for a LoRA that lives elsewhere.
+        Entry 0 is the resting value either way, which is what `_on_lora_chosen`
+        snaps back to - so `paths` is taken from a caller that has already listed
+        the directory rather than listed again.
+        """
+        if paths is None:
+            paths = local_lora_paths()
+        if not paths:
+            return [NO_LOCAL_LORAS]
+        return [ADD_LORA_PROMPT] + [lora_label(path) for path in paths]
+
+    def _on_lora_chosen(self, label: str):
+        """A LoRA picked from the list of what is on disk (issue #44, step 3).
+
+        The menu snaps back to its prompt: what it did was add a row below, and a
+        menu left showing a filename would claim to be the fused set - which it is
+        not, since more than one LoRA can be listed.
+        """
+        paths = local_lora_paths()
+        self.lora_choice_var.set(self._lora_choices(paths)[0])
+        for path in paths:
+            if lora_label(path) == label:
+                self._add_lora_path(path)
+                return
+
+    def _add_lora_path(self, path: str):
+        """Add one LoRA, unless that file is already fused. The one door.
+
+        Duplicates are matched on `engine_cache.normalize_lora_key`, not on the raw
+        string: two spellings of one file key a single engine (issue #44) but would
+        be two `lora_dict` entries, and the wrapper fuses every entry - so the same
+        weights would go in twice at the same scale.
+        """
+        if self.running: return
+        key = engine_cache.normalize_lora_key(path)
+        if any(engine_cache.normalize_lora_key(item["path"]) == key
+               for item in self.lora_items):
+            return
+        self.lora_items.append({"path": path, "scale": DEFAULT_LORA_SCALE})
+        self._build_loras_ui()
+        self._refresh_engine_state()
+
     def _add_lora(self):
+        """Browse - kept, because a LoRA outside the models root is a legal answer."""
         if self.running: return
         paths = filedialog.askopenfilenames(
             title="Select LoRA file(s)",
-            filetypes=[("LoRA weights", "*.safetensors *.bin *.pt"), ("All files", "*.*")],
+            initialdir=str(resolve_models_dir() / LORAS_SUBDIR),
+            filetypes=[("LoRA weights", " ".join(f"*{s}" for s in LORA_SUFFIXES)),
+                       ("All files", "*.*")],
         )
-        if not paths: return
-        existing = {item["path"] for item in self.lora_items}
-        added = 0
-        for path in paths:
-            # lora_dict is keyed by path, so duplicates would silently collapse.
-            if path in existing:
-                continue
-            self.lora_items.append({"path": path, "scale": 1.0})
-            existing.add(path)
-            added += 1
-        if added:
-            self._build_loras_ui()
+        for path in paths or ():
+            self._add_lora_path(path)
 
     def _remove_lora(self, index: int):
         if self.running: return
         if 0 <= index < len(self.lora_items):
             self.lora_items.pop(index)
             self._build_loras_ui()
+            self._refresh_engine_state()
 
     def _on_lora_scale_changed(self, index: int, value, disp_var):
         try:
@@ -2929,6 +3141,9 @@ class StreamGUI(ctk.CTk):
         if 0 <= index < len(self.lora_items):
             self.lora_items[index]["scale"] = scale
         disp_var.set(f"{scale:.2f}")
+        # The scale keys the engine as much as the file does, so the standing
+        # sentence has to follow the slider (issue #44's fourth trap).
+        self._refresh_engine_state()
 
     def _build_loras_ui(self):
         # Rows are rebuilt wholesale, so keep their widgets out of self._lockables
@@ -3064,24 +3279,15 @@ class StreamGUI(ctk.CTk):
             note.grid_remove()
 
     def _refresh_engine_state(self):
-        """The standing line under the model: which engine this needs, and if it exists."""
+        """Draw that sentence for whatever the window currently adds up to.
+
+        Called by every control that keys an engine - the model, and since issue
+        #44 the LoRA set and each LoRA's scale - so what it says is the question
+        Start is about to ask on disk.
+        """
         configuration = self._engine_configuration()
-        if configuration is None:
-            self.engine_state_var.set("")
-            return
-        model = model_label(configuration.model_path)
-        # The cfg type is in the phrase only when it is not the shipped one, for
-        # the reason it is in the warning: `full` at one step needs a batch-2
-        # engine, and a line reading "no engine for sd-turbo-fp16 at 1 step" would
-        # be denying the existence of one that is built (issue #45).
-        what = (f"{model} at {_steps_phrase(configuration.steps)}"
-                f"{configuration.cfg_phrase}")
-        if configuration.cached:
-            self.engine_state_var.set(f"Engine: cached for {what}.")
-        else:
-            self.engine_state_var.set(
-                f"⚠  No engine yet for {what} - Start will build one "
-                f"({ENGINE_BUILD_TIME}, {ENGINE_BUILD_SIZE}).")
+        self.engine_state_var.set(
+            "" if configuration is None else _engine_state_line(configuration))
 
     def _engine_configuration(self) -> Optional[EngineConfiguration]:
         """What the settings in the window add up to, or None on a path that builds
@@ -3205,17 +3411,21 @@ class StreamGUI(ctk.CTk):
         if self.running: self._send_region_update()
 
     def _poll_queues(self):
-        if self.out_q is not None:
-            try:
-                while True:
-                    pil = self.out_q.get_nowait()
-                    if isinstance(pil, Image.Image): self._update_preview(pil)
-            except Exception: pass
+        # The fps queue first, and the frames after it. The worker puts the two
+        # halves of one frame on the two queues, and since issue #47 the payload
+        # carries the boxes the preview outlines - so draining it second would
+        # outline the previous frame's regions on this frame's picture.
         if self.fps_q is not None:
             try:
                 while True:
                     self._fps_payload = self.fps_q.get_nowait()
                     self.fps_var.set(_format_fps(self._fps_payload))
+            except Exception: pass
+        if self.out_q is not None:
+            try:
+                while True:
+                    pil = self.out_q.get_nowait()
+                    if isinstance(pil, Image.Image): self._update_preview(pil)
             except Exception: pass
         self._refresh_plan_state()
         if self.status_q is not None:
@@ -3230,14 +3440,32 @@ class StreamGUI(ctk.CTk):
 
     def _update_preview(self, pil_img: Image):
         dim = self.preview_dim
+        self._last_preview = pil_img
         canvas = Image.new("RGB", (dim, dim), (30, 30, 30))
         img = pil_img.copy()
         img.thumbnail((dim, dim), PIL.Image.BICUBIC)
         x = (dim - img.width) // 2
         y = (dim - img.height) // 2
         canvas.paste(img, (x, y))
+        # The mask overlay (issue #47), on the panel-sized canvas and only when it
+        # was asked for. Off, nothing below this line runs and the preview is byte
+        # for byte what it always was. On, it is a few rectangles on a 512 px
+        # image whatever the capture size - the boxes are capture pixels, so the
+        # drawn image's own size and the letterbox offset are what maps them.
+        if self.overlay_var.get():
+            draw_overlay(canvas, self._fps_payload, img.width, img.height, (x, y))
         self._ctk_img = ctk.CTkImage(light_image=canvas, dark_image=canvas, size=(dim, dim))
         self.preview_panel.configure(image=self._ctk_img)
+
+    def _on_overlay_toggled(self):
+        """Redraw the frame already on screen under the new setting.
+
+        A stopped run holds its last frame and a running one is 33 ms away from
+        its next, so a switch that only took effect on the following frame would
+        read as broken in the one case and laggy in the other.
+        """
+        if self._last_preview is not None:
+            self._update_preview(self._last_preview)
 
     def do_quit(self):
         if not messagebox.askyesno("Quit", "Are you sure you want to quit and stop all workers?"): return

@@ -27,7 +27,8 @@ CUSTOM_COLORS = {"success": "#10B981", "error": "#EF4444", "surface": "#374151"}
 
 _symbols = load_symbols(
     "main_gpu_addon.py",
-    ["ADVANCED", "GLOBAL_STATE", "PLAN_NOTE_COLOR", "PlanUpdate", "SHOW", "_plan_note",
+    ["ADVANCED", "GLOBAL_STATE", "NOTHING_FOUND", "PLAN_NOTE_COLOR", "PlanUpdate",
+     "SHOW", "_plan_note", "_restyling_phrase",
      "DETAIL_ALL_OBJECTS", "DETAIL_ONE_OBJECT", "DETAIL_PRESETS", "detail_plan",
      "_plan_state_line", "_plan_status_line", "_plan_update_from_fields"],
     extra_globals={"plan_from_fields": plan_from_fields, "NamedTuple": NamedTuple,

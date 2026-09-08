@@ -296,6 +296,25 @@ names the measured cost before the change, and only on the acceleration path tha
 compiles one. `scripts/gui_screenshot.py` photographs the window; `docs/gui/` holds
 before and after.
 
+**The preview says where the mask is** (issue #47, spec 8.7). `mask_overlay.py` is
+both halves. The worker puts the boxes it *composited into* on the fps payload it
+already sends (`overlay_status`, one key, no new channel), and they are the
+compositor's decision rather than the plan's - a `crop` frame reports the one region
+its single call went to, and a `crop` plan the compositor refused reports the masked
+set it actually rendered. The GUI outlines them with `draw_overlay` on the **preview
+copy**, in the GUI process, after the frame has left the pipeline: an overlay drawn
+any earlier would reach the output and break the bit-identity criterion outright. It
+is behind a **Show mask** switch beside the preview and is **off by default**, so
+the preview stays a true view of what the worker sent; the drawing runs on the
+panel-sized canvas, so it costs the same at 1920x1080 as at 512x512. The same issue
+split the plan-state line into three readings that used to be one - no target set, a
+target with the detector holding nothing (`NOTHING_FOUND`, and that frame costs no
+diffusion call at all), and a target with N regions being restyled
+(`_restyling_phrase`, counting the regions the *scheduler* handed out rather than
+the objects the detector saw). Under `masked` the whole frame is diffused and only
+the composite is selective, which is why the two paths look alike and why the line
+now ends on what the mask protects.
+
 **The base model is a picker, and Start looks on disk** (issue #38, step 6).
 `local_model_paths()` offers every diffusers folder under the models root and
 `model_companions()` applies what the chosen one cannot render without - LCM-LoRA
@@ -310,9 +329,26 @@ guessing from whether a setting is at its default - the old check fired on a
 non-default batch size or any listed LoRA and never on a model change, which is the
 one setting that guarantees a different engine. It refuses outright below the 20 GB
 free-disk floor. `engine_cache.py` is that naming rule, stdlib, shared with
-`bench.cli`'s build guard and held to `create_prefix` by
-`tests/test_engine_cache.py`: a build the window allows and the harness refuses is
-two rules, not one.
+`bench.cli`'s build guard **and with `wrapper.py` itself** since issue #44, and held
+to `create_prefix` by `tests/test_engine_cache.py`: a build the window allows and
+the harness refuses is two rules, not one.
+
+**A style LoRA is picked from a list, and one file is one engine** (issue #44,
+spec 8.10). `local_lora_paths()` / `lora_label()` offer every LoRA staged under
+`$SD_MODELS_DIR/loras`, mirroring the model picker; Browse stays for one that lives
+elsewhere, and `LCM_LORA_FILENAME` is *not* offered because the `use_lcm_lora`
+switch already applies it and listing it invites double-fusing. `_add_lora_path` is
+the one door both go through. The engine sentence under the model names the fused
+LoRA *and* its scale (`_lora_phrase`) and follows the slider, because the scale
+keys the engine as much as the file does. What made all of that necessary:
+`lora_fingerprint` hashed the **raw path string**, so the window's forward slashes
+(Tk's dialog) and the harness's backslashes (`pathlib`) were two ~5 GB engines and
+no style LoRA in the window ever found a pre-compiled one.
+`engine_cache.normalize_lora_key` resolves the path and reads the scale as a float;
+an absolute backslash spelling is already its own resolution, so **no committed
+engine was orphaned** - `tests/test_gpu_engine_reuse.py` asks that of the real
+cache. Do not fix a spelling mismatch by respelling paths at a call site: an
+unnormalised string as a cache key is the defect.
 
 They talk only over `multiprocessing.Queue`s. Live changes reach the worker as
 `control_queue` messages (`set_prompt`, `set_region`, `set_t_index_list`, …); adding a
