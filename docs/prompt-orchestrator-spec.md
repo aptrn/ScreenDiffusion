@@ -2075,6 +2075,70 @@ SD-Turbo and everything above it destroys the frame, which is narrow enough that
 slider over it would want bounds rather than the 0–20 a diffusers user expects.
 
 
+### 8.12 Choosing quality at runtime: what a step buys, and who pays — **measured**
+
+Issue #46. Asked for directly in live testing on 2026-09-08: more denoising steps,
+a better picture, at the cost of frame rate, **chosen while the app is running**.
+The machinery already existed — a step-count change sends `set_t_index_list`,
+`_control_transition` flags `engine_swap`, and the worker tears the stream down and
+builds another — and the control was simply hidden behind `SHOW["step_count"]`.
+What had never been decided is how the change is *paid for*, and the two ways are
+different products.
+
+**Route A, a pre-built ladder.** `use_denoising_batch` on, which is what the app
+ships and what every figure in this document was measured under. The step count is
+part of the engine key (`engine_cache.unet_batch_size` is `frame_buffer_size ×
+steps`), so each rung is its own ~5 GB build — but a rung that is already built is a
+*load*, and `wrapper.py` compiles only `if not os.path.exists(unet_path)`.
+
+**Route B, `use_denoising_batch` off.** The UNet batch is `frame_buffer_size`
+whatever the step count, so the count stops keying the engine at all: any rung, no
+builds ever, uniformly slower.
+
+**Route B did not exist and had to be built first.** `wrapper.py` raised
+`NotImplementedError("img2img mode must use denoising batch for now")`, and it was
+right about the implementation behind it: upstream's unbatched branch does
+`self.init_noise = x_t_latent`, overwriting the prepared noise field with the
+current frame's noised latent, which is harmless for txt2img — the branch's own use
+— and wrong for img2img, where `encode_image` reads `init_noise[0]` on the next
+call. It also redraws `torch.randn_like` at every intermediate rung, which is a
+fresh noise field per step per frame and the opposite of what §8.5 measured this
+app's steadiness rests on. `wrapper.unbatched_predict_x0` is the route implemented
+as the batched path's own analogue: the prepared field is left alone and read at
+every rung, the way the batched path reads `init_noise[i]` at rung `i`.
+
+**The two routes do not compute the same thing, and that is the finding no
+millisecond shows.** With batching on, `predict_x0_batch` puts every rung in one
+UNet batch and carries `x_t_latent_buffer` *across frames*: a frame's later rungs
+are spent on earlier frames' latents, so an N-step batched render answers N−1
+frames late. That is why §7.2 measured four steps at 1.87× a one-step call rather
+than ~4×, and it is why `response` — the flicker metric over the pixels that moved
+in the source (§8.5) — is in the table beside `flicker`. Route B spends every rung
+on the frame it was given and pays for it in full.
+
+**What is scored.** §8.2's identity probe again, on §8.11's clip, prompt, region
+and denoise, so this block restates that one's baseline rather than opening a
+second: the fraction of rendered frames the detector reads back as what the prompt
+asked for, with its confidence beside it. The denoise is held at
+`render_plan.DEFAULT_DENOISE` across every arm and only the opening index is used —
+`render_plan.t_index_ladder` spends the extra steps after it — because more steps at
+a *different* strength is two changes at once.
+
+**The swap is timed rather than inferred.** "Seconds, not minutes" was a reading of
+an `os.path.exists` call, and the window is about to quote it. Every arm of the run
+is preceded by letting the previous engine go and building this one, which is what
+`image_generation_process` does when a step count changes; one priming build and
+teardown happens before the first arm, so no arm's figure carries the process's own
+CUDA start-up.
+
+`uv run python -m bench steps-dog`; regenerate with
+`uv run python -m bench --quality-report`.
+
+<!-- BEGIN STEP QUALITY -->
+no step-quality sweep committed yet (issue #46)
+<!-- END STEP QUALITY -->
+
+
 ## 9. Risks
 
 | Risk                                              | Impact                  | Mitigation                                             |

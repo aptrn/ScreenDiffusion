@@ -26,6 +26,7 @@ from bench.cli import (  # noqa: E402
     report_models,
     report_portability,
     report_primitives,
+    report_quality,
     report_selective,
     report_stability,
     report_steps,
@@ -39,6 +40,7 @@ from bench.paths import (  # noqa: E402
     GUIDANCE_RESULTS_DIR,
     MODEL_RESULTS_DIR,
     PRIMITIVE_RESULTS_DIR,
+    QUALITY_RESULTS_DIR,
     RESULTS_DIR,
     SELECTIVE_RESULTS_DIR,
     STABILITY_RESULTS_DIR,
@@ -67,6 +69,7 @@ BLOCKS = {
     "BASE MODEL": (report_models, MODEL_RESULTS_DIR),
     "STYLE LORAS": (report_styles, STYLE_RESULTS_DIR),
     "GUIDANCE": (report_guidance, GUIDANCE_RESULTS_DIR),
+    "STEP QUALITY": (report_quality, QUALITY_RESULTS_DIR),
 }
 
 

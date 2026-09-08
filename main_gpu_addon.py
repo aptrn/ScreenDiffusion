@@ -949,6 +949,72 @@ def _not_enough_disk_message(engines_root: _PathArg, free_bytes: int) -> str:
         f"Stopping before the build rather than partway through it.")
 
 
+# --- choosing quality at runtime (issue #46, spec 8.12) ----------------------
+#
+# More steps, a better picture, fewer frames per second - picked while the app is
+# running. The rungs come from `engine_cache.STEP_LADDER`, shared with the sweep
+# that measured them, so the window cannot offer a quality nobody priced.
+#
+# Every rung on the shipped batched route is its own TensorRT engine, so the one
+# thing the control must say *before* the click is which rungs are already built:
+# a cached rung is a load and an uncached one is the minutes `_engine_missing_
+# warning` describes. That is `step_choices`, and it is the whole of the issue's
+# "cached counts distinguished from uncached ones before the click".
+
+STEP_LADDER = engine_cache.STEP_LADDER
+
+
+class StepChoice(NamedTuple):
+    """One rung of the quality ladder, as the picker offers it."""
+
+    steps: int
+    cached: bool
+    label: str
+
+
+def step_label(steps: int, cached: bool, builds_engines: bool = True) -> str:
+    """What one rung is called in the picker.
+
+    `builds_engines` is false on the acceleration paths that compile nothing: there
+    every rung is equally reachable, and annotating them all "engine ready" would
+    be describing an engine that does not exist.
+    """
+    phrase = _steps_phrase(steps)
+    if not builds_engines:
+        return phrase
+    return f"{phrase} · {'engine ready' if cached else 'builds an engine'}"
+
+
+def step_choices(model_path: str, acceleration: str, use_lcm_lora: bool,
+                 frame_buffer_size: int,
+                 lora_dict: Optional[Dict[str, float]] = None,
+                 engines_root: _PathArg = None,
+                 cfg_type: str = DEFAULT_CFG_TYPE,
+                 rungs: Sequence[int] = STEP_LADDER) -> List[StepChoice]:
+    """Every rung the window offers, and whether this machine can render it at once.
+
+    One lookup per rung through `engine_configuration`, which is the same door
+    Start goes through - so a rung labelled "engine ready" is the directory the
+    worker will find rather than a guess from whether a setting is at its default.
+    """
+    builds = engine_rebuild_needed(acceleration)
+    choices = []
+    for steps in rungs:
+        cached = builds and engine_configuration(
+            model_path=model_path, acceleration=acceleration,
+            use_lcm_lora=use_lcm_lora, steps=steps,
+            frame_buffer_size=frame_buffer_size, lora_dict=lora_dict,
+            engines_root=engines_root, cfg_type=cfg_type).cached
+        choices.append(StepChoice(steps=steps, cached=cached,
+                                  label=step_label(steps, cached, builds)))
+    return choices
+
+
+def steps_of_label(label: str, choices: Sequence[StepChoice]) -> Optional[int]:
+    """The rung a picked label names, or None for one this ladder does not offer."""
+    return next((choice.steps for choice in choices if choice.label == label), None)
+
+
 def _engine_rebuild_warning(setting: str) -> str:
     """What the user is asked before a change that keys a different engine."""
     return (f"Changing the {setting} keys a different TensorRT engine.\n\n"
@@ -1330,18 +1396,24 @@ SHOW = {
     # unusable. The default does not move; what ships is the choice.
     "cfg_type": True, "guidance_scale": True, "delta": True,
     "similar_image_filter": False,
-    "offline": False, "lora": True, "use_lcm_lora": True, "step_count": False,
+    # The step count (issue #46). On, and beside the strength sliders rather than
+    # in `Advanced`: it is the quality/frame-rate trade a user asked for by name,
+    # and the picker says which rungs are already built before one is clicked.
+    "offline": False, "lora": True, "use_lcm_lora": True, "step_count": True,
 }
 
 # The engine knobs (issue #40, step 2). Each is a property of how the app runs
 # rather than of what it makes, and four of them key a distinct TensorRT engine.
 # They are built inside the collapsed "Advanced" section instead of beside the two
 # fields that *are* the product's interface. `SHOW` still decides whether one
-# exists at all, which is why `step_count` is False: changing the number of
-# denoising steps rebuilds the engine, while the sliders that set their values -
-# the live strength control - stay in the primary panel.
+# exists at all.
+#
+# `step_count` was here and is not any more (issue #46). It keys an engine like the
+# rest, but unlike the rest it is a choice about what the app *makes* - the quality
+# a user trades frame rate for - so it sits beside the strength sliders with a
+# label that says what the rung costs, rather than behind a disclosure.
 ADVANCED = ("seed", "frame_buffer_size", "acceleration", "use_lcm_lora",
-            "use_denoising_batch", "step_count",
+            "use_denoising_batch",
             "cfg_type", "guidance_scale", "delta")
 
 ADVANCED_CLOSED = "▸  Advanced  —  engine settings"
@@ -1740,12 +1812,18 @@ def image_generation_process(out_queue: Queue, fps_queue: Queue, close_queue: Qu
                     # update and not an engine rebuild. A plan with no target
                     # carries the schema's default rather than a strength anyone
                     # typed, so it leaves the t_index slider where the user put it.
+                    # The count is kept and only the values move, at any rung of
+                    # issue #46's ladder: `t_index_ladder` opens where the plan's
+                    # denoise says and spends the rest of the steps after it, which
+                    # is the same schedule the window builds for that strength.
                     honoured = frame_plan.plan.honoured_target
-                    if honoured is not None and len(current_t_index_list) == 1:
-                        wanted = _clamp_t_index(
-                            t_index_for_denoise(frame_plan.plan.effective_denoise))
-                        if wanted != current_t_index_list[0]:
-                            current_t_index_list = [wanted]
+                    if honoured is not None:
+                        wanted = t_index_ladder(
+                            _clamp_t_index(t_index_for_denoise(
+                                frame_plan.plan.effective_denoise)),
+                            len(current_t_index_list))
+                        if wanted != current_t_index_list:
+                            current_t_index_list = wanted
                             try: stream.set_t_index_list(current_t_index_list)
                             except Exception: pass
                 detect_every_n = frame_plan.plan.settings.detect_every_n
@@ -2129,6 +2207,11 @@ class StreamGUI(ctk.CTk):
         self.offline_var = ctk.BooleanVar(value=True)
         self._debounce_prompt = self._debounce_neg = self._debounce_region = self._debounce_plan = None
         self.t_index_list: List[int] = list(DEFAULT_T_INDEX_LIST)
+        # The quality ladder's picker (issue #46). Its resting value is the rung
+        # the schedule above is at, annotated with whether that engine exists -
+        # `_refresh_step_choices` is the one place that sentence is built.
+        self.step_count_var = ctk.StringVar(
+            value=step_label(len(self.t_index_list), False))
         self._lockables: List[ctk.CTkBaseClass] = []
         self._step_sliders: List[ctk.CTkSlider] = []
         self.capwin: Optional[FloatingCaptureWindow] = None
@@ -2585,7 +2668,18 @@ class StreamGUI(ctk.CTk):
         step_header = ctk.CTkFrame(steps_frame, fg_color="transparent")
         step_header.pack(fill="x", pady=(0, 5))
         ctk.CTkLabel(step_header, text="Denoising Steps", font=ctk.CTkFont(weight="bold")).pack(side="left")
-        ctk.CTkLabel(step_header, text="higher index = less denoise", text_color="gray70").pack(side="right")
+        if SHOW.get("step_count", True):
+            # The quality/frame-rate trade, picked at runtime (issue #46). Each
+            # label says whether that rung's engine exists, so the cost of the
+            # click is on the button before it is clicked; an uncached rung still
+            # goes through `_confirm_engine_rebuild` and the free-disk floor.
+            self._w_step_count = ctk.CTkOptionMenu(
+                step_header, values=self._step_labels(),
+                variable=self.step_count_var, command=self._on_quality_chosen,
+                width=190)
+            self._w_step_count.pack(side="right")
+        else:
+            ctk.CTkLabel(step_header, text="higher index = less denoise", text_color="gray70").pack(side="right")
         self._steps_holder = ctk.CTkFrame(steps_frame)
         self._steps_holder.pack(fill="both", expand=True, pady=5)
         self._build_steps_ui()
@@ -2641,15 +2735,6 @@ class StreamGUI(ctk.CTk):
             self._w_denoise_switch = ctk.CTkSwitch(g2, text="Denoising batch", variable=self.denoise_batch_var)
             self._w_denoise_switch.grid(row=1, column=col, sticky="w"); col += 1
             self._register_lockables(self._w_denoise_switch)
-        if SHOW.get("step_count", False):
-            steps_row = ctk.CTkFrame(adv_body, fg_color="transparent")
-            steps_row.grid(row=2, column=0, sticky="ew", pady=(0, 6))
-            ctk.CTkLabel(steps_row, text="Denoising step count").pack(side="left")
-            self._w_step_add = ctk.CTkButton(steps_row, text="+ Add", width=50, command=self._add_step)
-            self._w_step_add.pack(side="right", padx=(5,0))
-            self._w_step_remove = ctk.CTkButton(steps_row, text="- Remove", width=60, command=self._remove_step)
-            self._w_step_remove.pack(side="right")
-            self._register_lockables(self._w_step_add, self._w_step_remove)
         g3 = ctk.CTkFrame(adv_body); g3.grid(row=3, column=0, sticky="ew", pady=(0,6))
         for i in range(6): g3.grid_columnconfigure(i, weight=1)
         col = 0
@@ -2837,27 +2922,91 @@ class StreamGUI(ctk.CTk):
         return bool(messagebox.askokcancel("TensorRT engine build required",
                                            _engine_rebuild_warning(setting)))
 
-    def _add_step(self):
-        if self.running: return
-        if not self._confirm_engine_rebuild("step count"): return
-        # Automatically make the new step 10 less than the last one to prevent duplicates
-        last_val = self.t_index_list[-1] if self.t_index_list else 40
-        new_val = max(2, last_val - 10)
-        
-        self.t_index_list.append(new_val)
+    def _step_choices(self) -> List[StepChoice]:
+        """The ladder as this window's own settings make it - one lookup per rung."""
+        return step_choices(
+            model_path=self.model_var.get(), acceleration=self.accel_var.get(),
+            use_lcm_lora=bool(self.use_lcm_lora_var.get()),
+            frame_buffer_size=self._frame_buffer_size(),
+            lora_dict=self._lora_dict() or None, cfg_type=self.cfg_type_var.get())
+
+    def _step_labels(self) -> List[str]:
+        return [choice.label for choice in self._step_choices()]
+
+    def _refresh_step_choices(self):
+        """Redraw the ladder, keeping the rung that is set.
+
+        Called by everything that keys an engine - the model, the LoRA set, the
+        batch size, the cfg type - because every one of them changes which rungs
+        are already built, and a stale "engine ready" is the one thing this control
+        must never say.
+        """
+        menu = getattr(self, "_w_step_count", None)
+        if menu is None:
+            return
+        choices = self._step_choices()
+        menu.configure(values=[choice.label for choice in choices])
+        current = len(self.t_index_list)
+        chosen = next((choice for choice in choices if choice.steps == current), None)
+        self.step_count_var.set(
+            chosen.label if chosen is not None
+            else step_label(current, False,
+                            engine_rebuild_needed(self.accel_var.get())))
+
+    def _on_quality_chosen(self, label: str):
+        """A rung picked from the ladder (issue #46).
+
+        A refusal puts the picker back on the rung that is actually set, rather
+        than leaving it showing a quality that was never adopted - the shape
+        `_on_cfg_type` takes for the same reason.
+        """
+        steps = steps_of_label(label, self._step_choices())
+        if steps is None or not self._apply_steps(steps):
+            self._refresh_step_choices()
+
+    def _apply_steps(self, steps: int) -> bool:
+        """Set the denoising step count, asking first if it is not already built.
+
+        The strength does not move with it: the ladder opens at the index the
+        sliders are already on and `render_plan.t_index_ladder` spends the extra
+        steps after it, so more steps is more steps and not also more denoise.
+        """
+        if steps == len(self.t_index_list):
+            return True
+        if not self._confirm_step_change(steps):
+            return False
+        opening = self.t_index_list[0] if self.t_index_list else DEFAULT_T_INDEX_LIST[0]
+        self.t_index_list = t_index_ladder(opening, steps)
         self._build_steps_ui()
-        if self.running: 
+        # Redraws the ladder too, so the picker's own label follows the rung.
+        self._refresh_engine_state()
+        self._refresh_cfg_note()
+        if self.running and getattr(self, "control_q", None):
+            # The worker tears the engine down and builds the new one; a rung that
+            # is already compiled is a load, which is what the label promised.
             try: self.control_q.put_nowait({"type": "set_t_index_list", "t_index_list": list(self.t_index_list)})
             except Exception: pass
+        return True
 
-    def _remove_step(self):
-        if len(self.t_index_list) > 1:
-            if not self._confirm_engine_rebuild("step count"): return
-            self.t_index_list.pop()
-            self._build_steps_ui()
-            if self.running: 
-                try: self.control_q.put_nowait({"type": "set_t_index_list", "t_index_list": list(self.t_index_list)})
-                except Exception: pass
+    def _confirm_step_change(self, steps: int) -> bool:
+        """Say what this rung costs before it is adopted, and refuse a full volume.
+
+        Silence is only allowed where there is nothing to warn about: a rung whose
+        engine is on disk, or an acceleration path that compiles nothing. Anything
+        else goes through the same warning and the same 20 GB floor Start uses -
+        a control that quietly rebuilds is the regression `_confirm_engine_available`
+        exists to prevent.
+        """
+        configuration = self._engine_configuration(steps=steps)
+        if configuration is None or configuration.cached:
+            return True
+        if not configuration.enough_disk:
+            messagebox.showerror(
+                "Not enough disk space",
+                _not_enough_disk_message(configuration.engines_root,
+                                         configuration.free_bytes))
+            return False
+        return self._confirm_engine_rebuild("step count")
 
     def _build_steps_ui(self):
         for child in self._steps_holder.winfo_children(): child.destroy()
@@ -3283,21 +3432,30 @@ class StreamGUI(ctk.CTk):
 
         Called by every control that keys an engine - the model, and since issue
         #44 the LoRA set and each LoRA's scale - so what it says is the question
-        Start is about to ask on disk.
+        Start is about to ask on disk. The quality ladder is redrawn with it for
+        the same reason (issue #46): every one of those settings changes which
+        rungs are already built.
         """
         configuration = self._engine_configuration()
         self.engine_state_var.set(
             "" if configuration is None else _engine_state_line(configuration))
+        self._refresh_step_choices()
 
-    def _engine_configuration(self) -> Optional[EngineConfiguration]:
+    def _engine_configuration(self,
+                              steps: Optional[int] = None
+                              ) -> Optional[EngineConfiguration]:
         """What the settings in the window add up to, or None on a path that builds
-        nothing at all."""
+        nothing at all.
+
+        `steps` asks the same question about a rung that is not set yet, which is
+        what the quality picker needs before it adopts one (issue #46).
+        """
         if not engine_rebuild_needed(self.accel_var.get()):
             return None
         return engine_configuration(
             model_path=self.model_var.get(), acceleration=self.accel_var.get(),
             use_lcm_lora=bool(self.use_lcm_lora_var.get()),
-            steps=len(self.t_index_list),
+            steps=len(self.t_index_list) if steps is None else int(steps),
             frame_buffer_size=self._frame_buffer_size(),
             lora_dict=self._lora_dict() or None,
             cfg_type=self.cfg_type_var.get())

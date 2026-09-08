@@ -50,6 +50,12 @@ from bench.models import (
     lora_dict_for,
     with_style,
 )
+from bench.quality import (
+    CASES as QUALITY_CASES,
+    QualityCase,
+    format_quality_report,
+    load_quality_results,
+)
 from bench.paths import (
     CADENCE_RESULTS_SUBDIR,
     CAPTURE_RESULTS_SUBDIR,
@@ -57,6 +63,7 @@ from bench.paths import (
     GUIDANCE_RESULTS_SUBDIR,
     MODEL_RESULTS_SUBDIR,
     PRIMITIVE_RESULTS_SUBDIR,
+    QUALITY_RESULTS_SUBDIR,
     RESULTS_DIR,
     SELECTIVE_RESULTS_DIR,
     SELECTIVE_RESULTS_SUBDIR,
@@ -166,6 +173,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="report the classifier-free-guidance block spec 8.11 "
                              "carries - whether turning CFG on makes the prompt "
                              "land, and what it costs - and exit")
+    parser.add_argument("--quality-report", action="store_true",
+                        help="print the step-count block spec 8.12 carries: what "
+                             "a denoising step buys, what a cached-engine swap "
+                             "costs, and which of the two routes ships (issue #46)")
     parser.add_argument("--style-report", action="store_true",
                         help="report the style-LoRA block spec 8.10 carries - "
                              "which LoRAs load on SD 1.5, which visibly change "
@@ -327,7 +338,7 @@ def _swap_case(case: SwapCase, args: argparse.Namespace) -> SwapCase:
 def resolve_target(args: argparse.Namespace) -> Tuple[str, Target]:
     """The scenario, detector or case `args.scenario` names, with overrides applied.
 
-    One positional slot for all eight registries. A run measures one thing, the
+    One positional slot for all nine registries. A run measures one thing, the
     kinds of name cannot collide, and someone holding a name should not have to know
     which of eight flags it belongs behind.
 
@@ -361,6 +372,9 @@ def resolve_target(args: argparse.Namespace) -> Tuple[str, Target]:
     if args.scenario in STYLE_CASES:
         case = STYLE_CASES[args.scenario]
         return "style", (case.replace(frames=args.frames) if args.frames else case)
+    if args.scenario in QUALITY_CASES:
+        case = QUALITY_CASES[args.scenario]
+        return "quality", (case.replace(frames=args.frames) if args.frames else case)
     if args.scenario in GUIDANCE_CASES:
         case = GUIDANCE_CASES[args.scenario]
         return "guidance", (case.replace(frames=args.frames) if args.frames else case)
@@ -623,6 +637,16 @@ def report_guidance(results_dir: Path, out: TextIO = sys.stdout) -> None:
     out.write(format_guidance_report(load_guidance_results(results_dir)) + "\n")
 
 
+def report_quality(results_dir: Path, out: TextIO = sys.stdout) -> None:
+    """The step-count block spec 8.12 carries (issue #46).
+
+    What a second, fourth and eighth denoising step buys, what switching to an
+    already-built engine costs, and which of the two ways of paying for a runtime
+    step count the committed arms recommend.
+    """
+    out.write(format_quality_report(load_quality_results(results_dir)) + "\n")
+
+
 def report_stability(results_dir: Path, out: TextIO = sys.stdout,
                      baseline_dir: Path = SELECTIVE_RESULTS_DIR) -> None:
     """The temporal-stability block spec 8.5 carries (issue #32).
@@ -666,6 +690,10 @@ def list_targets(out: TextIO = sys.stdout) -> None:
         out.write(f"{name}\tcapture case\t{case.clip}\t{geometries}"
                   f"\t{'/'.join(case.primitives)} at K={case.max_instances}"
                   f"\tcrop against masked, per stage\n")
+    for name, case in QUALITY_CASES.items():
+        out.write(f"{name}\tstep-quality case\t{case.clip}\t{case.base_scenario}"
+                  f"\t{len(case.specs())} step arms over both routes"
+                  f"\twhat a denoising step buys and how it is paid for\n")
     for name, case in GUIDANCE_CASES.items():
         out.write(f"{name}\tguidance case\t{case.clip}\t{case.base_scenario}"
                   f"\t{len(case.specs())} cfg arms at {case.steps} step(s)"
@@ -858,6 +886,37 @@ def run_guidance_target(args: argparse.Namespace, case: GuidanceCase) -> int:
     return 0
 
 
+def run_quality_target(args: argparse.Namespace, case: QualityCase) -> int:
+    """Sweep the step count over both routes (issue #46). Imported late.
+
+    Every arm goes through the engine-build guard, because on this case they are
+    TensorRT arms and half of them key a batch the machine may never have compiled
+    - which is exactly the cost the recommendation weighs. The guard is asked once
+    per arm rather than once for the case: a run that would compile three engines
+    should say so three times before it starts, not after the first one.
+    """
+    from bench.quality_runner import arm_scenario, run_quality
+
+    from render_plan import t_index_for_denoise, t_index_ladder
+
+    opening = t_index_for_denoise(case.denoise)
+    for spec in case.specs():
+        engine_build_guard(arm_scenario(case, spec, t_index_ladder(opening,
+                                                                  spec.steps)),
+                           allow_build=args.allow_engine_build)
+
+    run_quality(
+        case,
+        cooldown=args.cooldown,
+        results_dir=args.results_dir / QUALITY_RESULTS_SUBDIR,
+        threshold_c=args.cooldown_threshold,
+        cap_s=args.cooldown_cap,
+        poll_interval_s=args.cooldown_poll,
+        write_clips=args.write_clips,
+    )
+    return 0
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -903,6 +962,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.guidance_report:
         report_guidance(args.results_dir / GUIDANCE_RESULTS_SUBDIR)
         return 0
+    if args.quality_report:
+        report_quality(args.results_dir / QUALITY_RESULTS_SUBDIR)
+        return 0
     if args.stability_report:
         report_stability(args.results_dir / STABILITY_RESULTS_SUBDIR,
                          baseline_dir=args.results_dir / SELECTIVE_RESULTS_SUBDIR)
@@ -930,6 +992,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return run_style_target(args, target)
     if kind == "guidance":
         return run_guidance_target(args, target)
+    if kind == "quality":
+        return run_quality_target(args, target)
 
     scenario = target
     disk = engine_build_guard(scenario, allow_build=args.allow_engine_build)

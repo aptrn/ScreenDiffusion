@@ -228,13 +228,17 @@ def test_every_advanced_control_is_one_show_knows_about():
 
 
 def test_the_engine_knobs_the_issue_named_are_all_demoted():
-    assert {"seed", "acceleration", "frame_buffer_size", "use_lcm_lora",
-            "step_count"} <= set(ADVANCED)
+    assert {"seed", "acceleration", "frame_buffer_size",
+            "use_lcm_lora"} <= set(ADVANCED)
 
 
-def test_the_step_count_is_off_by_default_and_the_sliders_are_not():
-    """Changing the count rebuilds the engine; moving a value is a runtime update."""
-    assert SHOW["step_count"] is False
+def test_the_step_count_is_reachable_and_is_not_an_engine_knob():
+    """Issue #46 moved it out. It keys an engine like the knobs in `Advanced`,
+    but unlike them it is a choice about what the app makes - the quality a user
+    trades frame rate for - so it sits beside the strength sliders with a label
+    that says what the rung costs."""
+    assert SHOW["step_count"] is True
+    assert "step_count" not in ADVANCED
 
 
 def test_the_two_fields_are_built_before_any_engine_knob():
@@ -254,7 +258,6 @@ ADVANCED_WIDGETS = {
     "acceleration": "_w_accel_combo",
     "use_lcm_lora": "_w_lcm_switch",
     "use_denoising_batch": "_w_denoise_switch",
-    "step_count": "_w_step_add",
     # The three guidance controls (issue #45): engine settings like the rest, and
     # two of the four cfg types compile their own UNet batch.
     "cfg_type": "_w_cfg_combo",

@@ -1,4 +1,5 @@
-﻿import gc
+import functools
+import gc
 import os
 import sys
 from pathlib import Path
@@ -82,6 +83,66 @@ def _broadcast_list(vals: Optional[List[float]], n: int, default: float = 1.0) -
     if len(vals) >= n:
         return vals[:n]
     return [vals[0]] * n
+# --- the unbatched denoising route (issue #46) --------------------------------
+#
+# `use_denoising_batch` decides whether the denoising steps go through the UNet as
+# one batch of N or as N calls of one. It matters far past the milliseconds,
+# because with it *off* the step count stops keying the engine: `trt_unet_batch_size`
+# is `frame_buffer_size` whatever the count, so every rung of a quality ladder runs
+# on the one engine that is already built. That is the second of the two ways issue
+# #46 can pay for a runtime step count, and it could not be measured, because
+# `__init__` refused it outright for img2img.
+#
+# The refusal was right about upstream's implementation and wrong about the idea.
+# `StreamDiffusion.predict_x0_batch`'s unbatched branch does `self.init_noise =
+# x_t_latent` - it overwrites the prepared noise field with the *current frame's*
+# noised latent, and `encode_image` reads `init_noise[0]` on the next call. That is
+# harmless for txt2img, which the branch was written for and which never encodes an
+# image; for img2img it means every frame after the first is noised with the last
+# frame's latent. It also re-draws `torch.randn_like` at every intermediate rung,
+# which is a fresh noise field per step per frame - the opposite of what this app's
+# temporal-stability story rests on (spec 8.5: the shipped field is drawn once and
+# pinned to the canvas).
+#
+# So the route is implemented here rather than declared impossible, as the batched
+# path's own analogue: the prepared field is left alone and read at every rung, the
+# way the batched path reads `init_noise[i]` at rung i.
+
+
+def unbatched_predict_x0(stream, x_t_latent: torch.Tensor) -> torch.Tensor:
+    """Denoise one frame through `stream`'s whole ladder, one UNet call per rung.
+
+    The batched path pipelines: it puts every rung in one batch, so a frame's later
+    rungs are spent on *earlier* frames' latents and the answer comes out N-1 frames
+    late. This one spends every rung on the frame it was given, which is why it is
+    worth measuring against and not only worth costing.
+    """
+    rungs = len(stream.sub_timesteps_tensor)
+    x_0_pred = x_t_latent
+    for idx in range(rungs):
+        t_list = stream.sub_timesteps_tensor[idx].view(1).repeat(stream.frame_bff_size)
+        x_0_pred, _ = stream.unet_step(x_t_latent, t_list, idx)
+        if idx + 1 < rungs:
+            x_t_latent = stream.alpha_prod_t_sqrt[idx + 1] * x_0_pred
+            if stream.do_add_noise:
+                # `init_noise[0:1]`, not a fresh `randn_like`: one field, drawn once
+                # in `prepare` and pinned to the canvas, is what `seeding.py` writes
+                # into and what every flicker figure in this repo was measured on.
+                x_t_latent = (x_t_latent + stream.beta_prod_t_sqrt[idx + 1]
+                              * stream.init_noise[0:1])
+    return x_0_pred
+
+
+def enable_unbatched_img2img(stream) -> None:
+    """Bind `unbatched_predict_x0` over the pipeline's own, on this instance only.
+
+    An instance attribute rather than a subclass or a patched module: the pipeline
+    is constructed inside `_load_model` and shared with the accelerated paths, and
+    the shipped configuration must reach exactly the code it reached before.
+    """
+    stream.predict_x0_batch = functools.partial(unbatched_predict_x0, stream)
+
+
 def rebuild_tensors_for_tlist(self, new_t_list: List[int]):
     """
     Rebuild tensors for new t_list (compatibility with original script)
@@ -202,11 +263,10 @@ class StreamDiffusionWrapper:
                         "txt2img mode cannot use denoising batch with frame_buffer_size > 1."
                     )
 
-        if mode == "img2img":
-            if not use_denoising_batch:
-                raise NotImplementedError(
-                    "img2img mode must use denoising batch for now."
-                )
+        # img2img unbatched used to raise here. It is supported now, by
+        # `enable_unbatched_img2img` below - see the note beside it for what
+        # upstream's own branch does to `init_noise` and why this one does not.
+        self.use_unbatched_img2img = mode == "img2img" and not use_denoising_batch
 
         self.device = device
         self.dtype = dtype
@@ -243,6 +303,9 @@ class StreamDiffusionWrapper:
             seed=seed,
             engine_dir=engine_dir,
         )
+
+        if self.use_unbatched_img2img:
+            enable_unbatched_img2img(self.stream)
 
         if device_ids is not None:
             self.stream.unet = torch.nn.DataParallel(

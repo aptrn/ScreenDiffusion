@@ -171,6 +171,15 @@ def unet_batch_size(frame_buffer_size: int, steps: int,
     return count * frames
 
 
+# The denoising step counts a user may pick at runtime, and the rungs a release
+# builds engines for (issue #46, spec 8.12). Here rather than in the window because
+# it is the same question this module already exists to answer once: on the batched
+# route each rung is its own engine, so the list of rungs the window offers and the
+# list the harness sweeps have to be one list or the window offers a quality nobody
+# ever measured. 1 is what the app ships and what every committed figure belongs to.
+STEP_LADDER = (1, 2, 4, 8)
+
+
 def engine_dir_name(model_id_or_path: _PathLike, use_lcm_lora: bool,
                     use_tiny_vae: bool, unet_batch: int, width: int, height: int,
                     lora_dict: Optional[Mapping[str, float]] = None,

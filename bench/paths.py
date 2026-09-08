@@ -87,6 +87,12 @@ STYLE_RESULTS_DIR = RESULTS_DIR / STYLE_RESULTS_SUBDIR
 GUIDANCE_RESULTS_SUBDIR = "guidance"
 GUIDANCE_RESULTS_DIR = RESULTS_DIR / GUIDANCE_RESULTS_SUBDIR
 
+# The step-quality sweep (issue #46) is a record shape of its own - one row per
+# (step count, batching route), with the seconds a swap to that arm's engine cost -
+# so it gets its own directory like every other shape does.
+QUALITY_RESULTS_SUBDIR = "quality"
+QUALITY_RESULTS_DIR = RESULTS_DIR / QUALITY_RESULTS_SUBDIR
+
 SD_MODELS_DIR_ENV = "SD_MODELS_DIR"
 SD_ENGINES_DIR_ENV = "SD_ENGINES_DIR"
 
