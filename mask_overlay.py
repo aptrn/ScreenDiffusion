@@ -34,11 +34,18 @@ from typing import Any, Dict, Sequence, Tuple
 
 from detection import Box
 from region_scheduler import Selection
+# The compositor spells its two selective actions with the plan's own names
+# (`compositor.MASKED is render_plan.MASKED`), so comparing a `FrameRender.action`
+# against these is comparing like with like. They come from `render_plan`, which is
+# stdlib, rather than from `compositor`, which would pull numpy into a module that
+# has no use for it - and the render itself is annotated `Any` for the same reason:
+# naming `FrameRender` is that import.
 from render_plan import CROP, INVERSE, MASKED
 
 # The one key the overlay rides under on the fps payload. Nested rather than
-# flattened beside `fps` and `detections`, so a reader can tell "this frame sent no
-# overlay" from "this payload predates the overlay" with one `in`.
+# flattened beside `fps` and `detections`, so the boxes, the geometry they were
+# measured against and the action that produced them arrive together or not at all,
+# and one `in` decides whether this frame has anything to draw.
 OVERLAY_KEY = "restyled"
 
 # Cyan, and nothing else in this window is. The overlay has to be findable against
@@ -109,10 +116,6 @@ def overlay_status(selection: Selection, render: Any,
 # --- the GUI's half ----------------------------------------------------------
 
 
-def _clip(value: int, low: int, high: int) -> int:
-    return low if value < low else (high if value > high else value)
-
-
 def _span(low: int, high: int, floor: int, ceiling: int) -> Tuple[int, int]:
     """`low`..`high` clipped into `floor`..`ceiling`, and never zero wide.
 
@@ -120,8 +123,8 @@ def _span(low: int, high: int, floor: int, ceiling: int) -> Tuple[int, int]:
     and a rectangle of zero width would read as "this object is not in the plan" -
     so it keeps a pixel, taken from whichever side has room for one.
     """
-    low = _clip(low, floor, ceiling)
-    high = _clip(high, floor, ceiling)
+    low = min(max(low, floor), ceiling)
+    high = min(max(high, floor), ceiling)
     if high > low:
         return low, high
     return (low - 1, high) if high >= ceiling else (low, high + 1)
@@ -150,7 +153,10 @@ def overlay_boxes(payload: Any, width: int, height: int,
     frame_width, frame_height = int(frame[0]), int(frame[1])
     if frame_width <= 0 or frame_height <= 0:
         return ()
+    # The drawn image's own corners on the preview canvas: the capture's (0, 0)
+    # and its far corner, once scaled and letterboxed.
     left, top = int(origin[0]), int(origin[1])
+    right, bottom = left + width, top + height
     scale_x = width / frame_width
     scale_y = height / frame_height
     rectangles = []
@@ -161,12 +167,12 @@ def overlay_boxes(payload: Any, width: int, height: int,
         y0 = top + int(round(int(box[1]) * scale_y))
         x1 = left + int(round(int(box[2]) * scale_x))
         y1 = top + int(round(int(box[3]) * scale_y))
-        if x1 <= left or y1 <= top or x0 >= left + width or y0 >= top + height:
+        if x1 <= left or y1 <= top or x0 >= right or y0 >= bottom:
             # Wholly off the preview. Only reachable from a stale payload, since
             # the scheduler clips every region to the frame it selected on.
             continue
-        x0, x1 = _span(x0, x1, left, left + width)
-        y0, y1 = _span(y0, y1, top, top + height)
+        x0, x1 = _span(x0, x1, left, right)
+        y0, y1 = _span(y0, y1, top, bottom)
         rectangles.append((x0, y0, x1, y1))
     return tuple(rectangles)
 

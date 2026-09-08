@@ -1023,6 +1023,7 @@ def _restyling_phrase(regions: int) -> str:
     return (f"  Restyling {regions} region{plural}; "
             f"everything outside them is the capture, untouched.")
 
+
 # A note is not an error. A refusal is drawn in `CUSTOM_COLORS["error"]`.
 PLAN_NOTE_COLOR = "gray70"
 

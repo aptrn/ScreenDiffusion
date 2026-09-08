@@ -13,22 +13,19 @@ because `StreamGUI` cannot be instantiated in this tier.
 """
 
 import ast
-from typing import Any, Dict, NamedTuple, Optional, Sequence, Tuple
-
-from mask_overlay import OVERLAY_SWITCH_TEXT
+from typing import Any, Dict
 
 from guisource import assignment_to, calls_named, gui_method, mentions
+from mask_overlay import OVERLAY_SWITCH_TEXT
 from sourceloader import load_symbols
 from test_selective_render_wiring import WORKER
 
-CUSTOM_COLORS = {"success": "#10B981", "error": "#EF4444", "surface": "#374151"}
-
+# The four sentences are pure and close over nothing but the annotation on
+# `_plan_state_line`'s own signature.
 _symbols = load_symbols(
     "main_gpu_addon.py",
     ["GLOBAL_STATE", "NOTHING_FOUND", "_plan_state_line", "_restyling_phrase"],
-    extra_globals={"NamedTuple": NamedTuple, "Optional": Optional, "Dict": Dict,
-                   "Any": Any, "Tuple": Tuple, "Sequence": Sequence,
-                   "CUSTOM_COLORS": CUSTOM_COLORS},
+    extra_globals={"Any": Any},
 )
 GLOBAL_STATE = _symbols["GLOBAL_STATE"]
 NOTHING_FOUND = _symbols["NOTHING_FOUND"]

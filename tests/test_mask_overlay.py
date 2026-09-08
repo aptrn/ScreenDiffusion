@@ -14,7 +14,7 @@ lets the whole overlay be held here rather than behind a GPU marker.
 """
 
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image, ImageColor, ImageDraw
 
 from compositor import CROP, FULL_FRAME, MASKED, PASSTHROUGH, Compositor
 from detection import Box, Track, Tracks
@@ -218,11 +218,12 @@ def test_the_overlay_is_an_outline_and_never_a_fill():
     assert fills == [None]
 
 
-def test_the_outline_reaches_the_pixels_and_leaves_the_middle_alone():
+def test_the_outline_reaches_the_pixels_in_the_one_colour_the_module_names():
     image = Image.new("RGB", (64, 48), (0, 0, 0))
     assert draw_overlay(image, payload_of((8, 8, 40, 40), frame=(64, 48)), 64, 48) == 1
     pixels = np.asarray(image)
-    assert pixels[8, 8].tolist() != [0, 0, 0], "no rectangle was drawn"
+    assert pixels[8, 8].tolist() == list(ImageColor.getrgb(OVERLAY_COLOR)), \
+        "no rectangle was drawn, or not in OVERLAY_COLOR"
     assert pixels[24, 24].tolist() == [0, 0, 0], "the region was filled over"
 
 
@@ -239,7 +240,3 @@ def test_every_region_gets_its_own_rectangle():
     image = Image.new("RGB", (64, 48), (0, 0, 0))
     payload = payload_of((2, 2, 20, 20), (30, 10, 60, 40))
     assert draw_overlay(image, payload, 64, 48) == 2
-
-
-def test_the_colour_is_one_constant_rather_than_a_literal_per_call():
-    assert isinstance(OVERLAY_COLOR, str) and OVERLAY_COLOR.startswith("#")

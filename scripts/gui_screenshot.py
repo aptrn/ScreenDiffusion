@@ -56,6 +56,18 @@ MASK_CLIP = "people"
 MASK_FRAME = 36
 
 
+def refresh_plan_state_as_running(app) -> None:
+    """Draw the plan line the way a live run draws it, without one.
+
+    `_refresh_plan_state` reads `running` to tell "detection starts with
+    generation" from "detection is on", and nothing here starts a worker - so the
+    flag is raised for the one call and lowered again.
+    """
+    app.running = True
+    app._refresh_plan_state()
+    app.running = False
+
+
 def mask_preview(app) -> None:
     """Put a real frame and its real selection in front of the window.
 
@@ -103,9 +115,7 @@ def mask_preview(app) -> None:
     app.target_var.set(track["target"])
     app.style_var.set(plan.effective_prompt)
     app._fps_payload = payload
-    app.running = True
-    app._refresh_plan_state()
-    app.running = False
+    refresh_plan_state_as_running(app)
     app._update_preview(Image.fromarray(frame[:, :, ::-1]))
 
 
@@ -122,9 +132,7 @@ def capture(out_path: Path, expand_advanced: bool = False,
         app.target_var.set("person")
         app.style_var.set("wet denim, studio light")
         app._fps_payload = dict(SAMPLE_PAYLOAD)
-        app.running = True
-        app._refresh_plan_state()
-        app.running = False
+        refresh_plan_state_as_running(app)
     if mask:
         app.overlay_var.set(bool(overlay))
         mask_preview(app)
