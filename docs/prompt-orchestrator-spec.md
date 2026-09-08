@@ -1880,6 +1880,45 @@ path — a fixed scale per shipped style is the only expressible form. And neith
 path clears the frame budget on the diffusion call alone at four steps, so shipping
 a style on SD 1.5 is shipping §7.5's 24.4 FPS with it.
 
+#### A release-time set only works if its engines are findable — **issue #44**
+
+Live testing on 2026-09-08 found that **no style LoRA in the window ever found a
+pre-compiled engine**, with one sitting on disk. The cache key was the raw path
+*string*: the same file at the same scale hashed to `c85d6678` spelled with
+backslashes — the engine the harness built — and to `7a007080` spelled with forward
+slashes, which is what Tk's file dialog returns on Windows. So the two producers of
+a `lora_dict` could never meet, and adding one LoRA by two routes cost two ~5 GB
+builds.
+
+`engine_cache.normalize_lora_key` is the fix, and it is in `engine_cache` rather
+than in the window on purpose: that module exists so the harness, the window and
+`wrapper.py` cannot answer this question three ways. `wrapper.py` had the third
+copy — an inline `hashlib.sha1` — and it was the copy that keyed every engine on
+disk; it now calls `engine_cache.lora_fingerprint` like the other two. The
+normalisation is `Path.resolve()`: it absolutises, folds the separators, follows
+links and on Windows returns the file's own case, so the key is the *file* rather
+than the route taken to it. Both halves of an entry are read for what they are —
+the scale as a float, so `1` and `1.0` are one engine and not two `repr`s.
+
+**No committed engine was orphaned**, which was the risk worth checking before the
+change rather than after it: an absolute backslash spelling is already its own
+resolution, so `c85d6678` is still `c85d6678` and the two `sd-v1-5-fp16 … lora-c85d6678`
+directories under `engines/` are found from either spelling now.
+`tests/test_gpu_engine_reuse.py` asks that of this machine's actual cache rather
+than of prose.
+
+The affordance moved with it. The style LoRAs are three files in one known
+directory (`$SD_MODELS_DIR/loras`), so the window picks them from a list —
+`local_lora_paths` / `lora_label` / `_lora_choices`, the same shape as §7.5's base-model
+picker — and a file dialog for three files in a known place is both the wrong
+control and how the wrong spelling got in. Browse stays, because a LoRA outside the
+models root is still a legal answer. The LCM-LoRA sits in the same directory and is
+*not* offered: it is applied by the `use_lcm_lora` switch, and listing it invites
+fusing it twice. And because the scale keys the engine as much as the file does,
+the standing sentence under the model names both — `Engine: cached for sd-v1-5-fp16
+at 4 steps with style-loving-vincent.safetensors @ 1.00.` — and follows the slider
+(`docs/gui/after-lora-choice.png`).
+
 
 ## 9. Risks
 

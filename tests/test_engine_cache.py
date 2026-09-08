@@ -27,6 +27,7 @@ from engine_cache import (
     is_turbo_model,
     lora_fingerprint,
     model_key,
+    normalize_lora_key,
     unet_batch_size,
 )
 
@@ -57,9 +58,11 @@ def test_the_directory_name_matches_the_one_the_wrapper_builds():
 
 
 def test_the_lora_fingerprint_is_the_wrapper_s_sha1_of_the_fused_set():
+    """The hash is unchanged; what goes into it is the normalised set (issue #44)."""
     lora = {"C:/loras/vincent.safetensors": 0.9}
+    normalised = {normalize_lora_key(name): scale for name, scale in lora.items()}
     expected = hashlib.sha1(
-        repr(sorted(lora.items())).encode("utf-8")).hexdigest()[:8]
+        repr(sorted(normalised.items())).encode("utf-8")).hexdigest()[:8]
     assert lora_fingerprint(lora) == expected
     assert lora_fingerprint(None) == NO_LORA
     assert lora_fingerprint({}) == NO_LORA
@@ -68,6 +71,77 @@ def test_the_lora_fingerprint_is_the_wrapper_s_sha1_of_the_fused_set():
 def test_two_scales_of_one_lora_are_two_engines():
     """Which is the whole reason a style is a release-time decision on this path."""
     assert lora_fingerprint({"a": 0.5}) != lora_fingerprint({"a": 0.9})
+
+
+# --- one file is one key, however its path was spelled (issue #44) ------------
+
+
+def test_the_two_windows_spellings_of_one_file_are_one_engine(tmp_path):
+    """The defect. Tk's file dialog returns forward slashes on Windows and
+    `pathlib` returns backslashes, so the window could never find an engine the
+    harness had built - and adding one LoRA by two routes cost two ~5 GB builds."""
+    lora = tmp_path / "loras" / "style-loving-vincent.safetensors"
+    lora.parent.mkdir(parents=True)
+    lora.write_bytes(b"")
+    backslashes = str(lora)
+    forward_slashes = backslashes.replace("\\", "/")
+
+    assert backslashes != forward_slashes, "no separator to disagree about here"
+    assert (lora_fingerprint({backslashes: 1.0})
+            == lora_fingerprint({forward_slashes: 1.0}))
+
+
+def test_the_route_taken_to_a_file_is_not_part_of_its_key(tmp_path):
+    """A relative spelling, and a detour through `..`, name the same engine."""
+    lora = tmp_path / "loras" / "style.safetensors"
+    lora.parent.mkdir(parents=True)
+    lora.write_bytes(b"")
+    detour = tmp_path / "loras" / ".." / "loras" / "style.safetensors"
+
+    assert lora_fingerprint({str(lora): 0.9}) == lora_fingerprint({str(detour): 0.9})
+
+
+def test_the_scale_is_read_as_a_number_rather_than_as_whatever_was_typed():
+    """`1` and `1.0` are one scale. They are two `repr`s, and the key is a hash of
+    one - the same defect as the two separators, on the other half of the pair."""
+    lora = r"C:\loras\a.safetensors"
+    assert lora_fingerprint({lora: 1}) == lora_fingerprint({lora: 1.0})
+
+
+def test_normalising_does_not_rename_an_already_normal_key(tmp_path):
+    """Issue #44's second trap: the committed style engines are keyed on the
+    absolute backslash spelling `bench.models.lora_path` produces, so the
+    normalisation has to leave that spelling exactly where it was or orphan
+    ~5 GB apiece. Checked as the hash the old rule computed, not as prose."""
+    lora = tmp_path / "loras" / "style-loving-vincent.safetensors"
+    lora.parent.mkdir(parents=True)
+    lora.write_bytes(b"")
+    fused = {str(lora): 1.0}
+    old_rule = hashlib.sha1(
+        repr(sorted(fused.items())).encode("utf-8")).hexdigest()[:8]
+
+    assert lora_fingerprint(fused) == old_rule
+
+
+def test_a_repo_id_is_a_name_and_is_not_absolutised(tmp_path, monkeypatch):
+    """`stream.load_lora` also takes a Hugging Face id, and `org/model` is the same
+    shape as `loras/style.safetensors`. Absolutising it would key the engine on the
+    working directory the app happened to be started from."""
+    monkeypatch.chdir(tmp_path)
+    first = lora_fingerprint({"latent-consistency/lcm-lora-sdv1-5": 1.0})
+    (tmp_path / "elsewhere").mkdir()
+    monkeypatch.chdir(tmp_path / "elsewhere")
+
+    assert lora_fingerprint({"latent-consistency/lcm-lora-sdv1-5": 1.0}) == first
+
+
+def test_the_wrapper_asks_engine_cache_rather_than_hashing_its_own():
+    """The issue's first trap. The fingerprint is shared with the harness and the
+    window, so a second copy inside `wrapper.py` is exactly the two-rules bug this
+    module exists to prevent - and it was the copy that keyed the engines."""
+    assert "from engine_cache import" in WRAPPER
+    assert "lora_fingerprint(lora_dict)" in WRAPPER
+    assert "hashlib.sha1" not in WRAPPER
 
 
 def test_the_step_count_is_part_of_the_batch_the_unet_is_built_for():

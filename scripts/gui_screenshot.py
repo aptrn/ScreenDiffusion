@@ -10,6 +10,11 @@ so what lands in `docs/gui/` is the window and not whatever else is on the deskt
     uv run python scripts/gui_screenshot.py docs/gui/after-selective.png --selective
     uv run python scripts/gui_screenshot.py docs/gui/after-mask-off.png --mask
     uv run python scripts/gui_screenshot.py docs/gui/after-mask-on.png --mask --overlay
+    uv run python scripts/gui_screenshot.py docs/gui/after-lora-choice.png \
+        --model sd-v1-5-fp16 --lora style-loving-vincent.safetensors
+
+`--model` and `--lora` drive `_on_model_chosen` / `_on_lora_chosen`, the window's
+own handlers, because this loop has no hands to click a menu with.
 
 `--selective` fills the two fields and hands the window a **stand-in** fps payload -
 the shape `detection.fps_payload` puts on the queue - so the detection readout can
@@ -121,13 +126,20 @@ def mask_preview(app) -> None:
 
 def capture(out_path: Path, expand_advanced: bool = False,
             selective: bool = False, mask: bool = False,
-            overlay: bool = False) -> Path:
+            overlay: bool = False, model: str = "", lora: str = "") -> Path:
     from PIL import ImageGrab
 
     import main_gpu_addon
 
     app = main_gpu_addon.StreamGUI()
     app.geometry("+0+0")
+    # Through the window's own handlers, for the reason `--selective` uses a
+    # stand-in payload: this loop has no hands. What is photographed is the real
+    # handler's real effect on the real window.
+    if model:
+        app._on_model_chosen(model)
+    if lora:
+        app._on_lora_chosen(lora)
     if selective:
         app.target_var.set("person")
         app.style_var.set("wet denim, studio light")
@@ -158,13 +170,37 @@ def capture(out_path: Path, expand_advanced: bool = False,
     return out_path
 
 
+SWITCHES = ("--advanced", "--selective", "--mask", "--overlay")
+# `--model NAME` / `--lora NAME`: a flag that eats the word after it.
+VALUED = ("--model", "--lora")
+
+
+def _parse(argv: list) -> tuple:
+    """`(positional args, switches seen, {valued flag: its word})`.
+
+    Consumed by position rather than by value, so a positional output path that
+    happens to read like a flag's word is still the output path.
+    """
+    positional, seen, values = [], set(), {flag: "" for flag in VALUED}
+    remaining = list(argv)
+    while remaining:
+        item = remaining.pop(0)
+        if item in VALUED:
+            values[item] = remaining.pop(0) if remaining else ""
+        elif item in SWITCHES:
+            seen.add(item)
+        else:
+            positional.append(item)
+    return positional, seen, values
+
+
 def main(argv: list) -> int:
-    flags = {"--advanced", "--selective", "--mask", "--overlay"}
-    args = [a for a in argv if a not in flags]
-    out = Path(args[0]) if args else ROOT / "docs" / "gui" / "app.png"
-    saved = capture(out, expand_advanced="--advanced" in argv,
-                    selective="--selective" in argv, mask="--mask" in argv,
-                    overlay="--overlay" in argv)
+    positional, seen, values = _parse(argv)
+    out = Path(positional[0]) if positional else ROOT / "docs" / "gui" / "app.png"
+    saved = capture(out, expand_advanced="--advanced" in seen,
+                    selective="--selective" in seen, mask="--mask" in seen,
+                    overlay="--overlay" in seen,
+                    model=values["--model"], lora=values["--lora"])
     print(f"saved {saved}")
     return 0
 

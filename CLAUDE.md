@@ -308,9 +308,26 @@ guessing from whether a setting is at its default - the old check fired on a
 non-default batch size or any listed LoRA and never on a model change, which is the
 one setting that guarantees a different engine. It refuses outright below the 20 GB
 free-disk floor. `engine_cache.py` is that naming rule, stdlib, shared with
-`bench.cli`'s build guard and held to `create_prefix` by
-`tests/test_engine_cache.py`: a build the window allows and the harness refuses is
-two rules, not one.
+`bench.cli`'s build guard **and with `wrapper.py` itself** since issue #44, and held
+to `create_prefix` by `tests/test_engine_cache.py`: a build the window allows and
+the harness refuses is two rules, not one.
+
+**A style LoRA is picked from a list, and one file is one engine** (issue #44,
+spec 8.10). `local_lora_paths()` / `lora_label()` offer every LoRA staged under
+`$SD_MODELS_DIR/loras`, mirroring the model picker; Browse stays for one that lives
+elsewhere, and `LCM_LORA_FILENAME` is *not* offered because the `use_lcm_lora`
+switch already applies it and listing it invites double-fusing. `_add_lora_path` is
+the one door both go through. The engine sentence under the model names the fused
+LoRA *and* its scale (`_lora_phrase`) and follows the slider, because the scale
+keys the engine as much as the file does. What made all of that necessary:
+`lora_fingerprint` hashed the **raw path string**, so the window's forward slashes
+(Tk's dialog) and the harness's backslashes (`pathlib`) were two ~5 GB engines and
+no style LoRA in the window ever found a pre-compiled one.
+`engine_cache.normalize_lora_key` resolves the path and reads the scale as a float;
+an absolute backslash spelling is already its own resolution, so **no committed
+engine was orphaned** - `tests/test_gpu_engine_reuse.py` asks that of the real
+cache. Do not fix a spelling mismatch by respelling paths at a call site: an
+unnormalised string as a cache key is the defect.
 
 They talk only over `multiprocessing.Queue`s. Live changes reach the worker as
 `control_queue` messages (`set_prompt`, `set_region`, `set_t_index_list`, …); adding a
